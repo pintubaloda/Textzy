@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Textzy.Api.Data;
 using Textzy.Api.Middleware;
 using Textzy.Api.Providers;
@@ -20,9 +21,11 @@ builder.Services.AddCors(options =>
     });
 });
 
-var controlConnection = builder.Configuration.GetConnectionString("Default")
+var rawControlConnection = builder.Configuration.GetConnectionString("Default")
     ?? builder.Configuration["DATABASE_URL"]
     ?? throw new InvalidOperationException("Connection string is missing. Set ConnectionStrings__Default or DATABASE_URL.");
+
+var controlConnection = NormalizeConnectionString(rawControlConnection);
 
 if (builder.Environment.IsProduction() &&
     (controlConnection.Contains("Host=localhost", StringComparison.OrdinalIgnoreCase) ||
@@ -96,3 +99,44 @@ app.UseMiddleware<AuthMiddleware>();
 app.MapControllers();
 app.MapHub<Textzy.Api.Services.InboxHub>("/hubs/inbox");
 app.Run();
+
+static string NormalizeConnectionString(string raw)
+{
+    var value = (raw ?? string.Empty).Trim().Trim('"', '\'');
+    if (string.IsNullOrWhiteSpace(value))
+        throw new InvalidOperationException("Database connection string is empty.");
+
+    // Defensive cleanup in case env was pasted as a labeled line.
+    if (value.StartsWith("External Database URL", StringComparison.OrdinalIgnoreCase) ||
+        value.StartsWith("Internal Database URL", StringComparison.OrdinalIgnoreCase))
+    {
+        var idx = value.IndexOf("://", StringComparison.Ordinal);
+        if (idx > 0)
+        {
+            var schemeStart = value.LastIndexOf(' ', idx);
+            value = value[(schemeStart >= 0 ? schemeStart + 1 : 0)..].Trim();
+        }
+    }
+
+    if (value.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
+        value.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
+    {
+        try
+        {
+            return new NpgsqlConnectionStringBuilder(value).ConnectionString;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException("Invalid Postgres URL in ConnectionStrings__Default/DATABASE_URL.", ex);
+        }
+    }
+
+    try
+    {
+        return new NpgsqlConnectionStringBuilder(value).ConnectionString;
+    }
+    catch (Exception ex)
+    {
+        throw new InvalidOperationException("Invalid key/value Postgres connection string in ConnectionStrings__Default/DATABASE_URL.", ex);
+    }
+}
