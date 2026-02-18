@@ -1,0 +1,49 @@
+services:
+  - type: web
+    name: textzy-backend
+    runtime: docker
+    rootDir: backend-dotnet
+    dockerContext: backend-dotnet
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://0.0.0.0:$PORT
+      - key: ConnectionStrings__Default
+        fromDatabase:
+          name: textzy-postgres
+          property: connectionString
+      - key: AllowedOrigins
+        value: https://textzy-frontend.onrender.com
+      - key: WhatsApp__AppId
+        sync: false
+      - key: WhatsApp__AppSecret
+        sync: false
+      - key: WhatsApp__VerifyToken
+        sync: false
+      - key: WhatsApp__EmbeddedSignupConfigId
+        sync: false
+
+  - type: web
+    name: textzy-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE
+        value: https://textzy-backend.onrender.com
+      - key: VITE_FACEBOOK_APP_ID
+        sync: false
+      - key: VITE_WABA_EMBEDDED_CONFIG_ID
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  - type: pserv
+    name: textzy-postgres
+    plan: free
+    ipAllowList: []

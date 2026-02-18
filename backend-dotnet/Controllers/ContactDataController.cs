@@ -1,0 +1,88 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Textzy.Api.Data;
+using Textzy.Api.Models;
+using Textzy.Api.Services;
+using static Textzy.Api.Services.PermissionCatalog;
+
+namespace Textzy.Api.Controllers;
+
+[ApiController]
+[Route("api/contact-data")]
+public class ContactDataController(TenantDbContext db, TenancyContext tenancy, RbacService rbac) : ControllerBase
+{
+    [HttpPost("import/csv")]
+    public async Task<IActionResult> ImportCsv([FromForm] IFormFile file, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(ContactsWrite)) return Forbid();
+        if (file is null || file.Length == 0) return BadRequest("CSV file required.");
+
+        using var reader = new StreamReader(file.OpenReadStream());
+        var content = await reader.ReadToEndAsync(ct);
+        var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var imported = 0;
+
+        foreach (var line in lines.Skip(1))
+        {
+            var cols = line.Split(',');
+            if (cols.Length < 2) continue;
+            var name = cols[0].Trim();
+            var phone = cols[1].Trim();
+            var optIn = cols.Length > 2 ? cols[2].Trim().ToLowerInvariant() : "unknown";
+            db.Contacts.Add(new Contact { Id = Guid.NewGuid(), TenantId = tenancy.TenantId, Name = name, Phone = phone, OptInStatus = optIn });
+            imported++;
+        }
+
+        await db.SaveChangesAsync(ct);
+        return Ok(new { imported });
+    }
+
+    [HttpPost("contacts/{contactId:guid}/custom-fields")]
+    public async Task<IActionResult> UpsertCustomField(Guid contactId, [FromBody] ContactCustomField field, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(ContactsWrite)) return Forbid();
+        var existing = await db.ContactCustomFields.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.ContactId == contactId && x.FieldKey == field.FieldKey, ct);
+        if (existing is null)
+        {
+            existing = new ContactCustomField { Id = Guid.NewGuid(), TenantId = tenancy.TenantId, ContactId = contactId, FieldKey = field.FieldKey, FieldValue = field.FieldValue };
+            db.ContactCustomFields.Add(existing);
+        }
+        else
+        {
+            existing.FieldValue = field.FieldValue;
+            existing.UpdatedAtUtc = DateTime.UtcNow;
+        }
+        await db.SaveChangesAsync(ct);
+        return Ok(existing);
+    }
+
+    [HttpPost("segments")]
+    public async Task<IActionResult> CreateSegment([FromBody] ContactSegment segment, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(ContactsWrite)) return Forbid();
+        segment.Id = Guid.NewGuid();
+        segment.TenantId = tenancy.TenantId;
+        db.ContactSegments.Add(segment);
+        await db.SaveChangesAsync(ct);
+        return Ok(segment);
+    }
+
+    [HttpGet("segments")]
+    public IActionResult ListSegments()
+    {
+        if (!rbac.HasPermission(ContactsRead)) return Forbid();
+        return Ok(db.ContactSegments.Where(x => x.TenantId == tenancy.TenantId).OrderBy(x => x.Name).ToList());
+    }
+
+    [HttpPost("contacts/{contactId:guid}/opt-in")]
+    public async Task<IActionResult> SetOptIn(Guid contactId, [FromBody] Dictionary<string, string> body, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(ContactsWrite)) return Forbid();
+        var status = body.TryGetValue("status", out var s) ? s.ToLowerInvariant() : "unknown";
+        var c = await db.Contacts.FirstOrDefaultAsync(x => x.Id == contactId && x.TenantId == tenancy.TenantId, ct);
+        if (c is null) return NotFound();
+        c.OptInStatus = status;
+        await db.SaveChangesAsync(ct);
+        return Ok(c);
+    }
+}
