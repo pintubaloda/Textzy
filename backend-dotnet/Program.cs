@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.HttpOverrides;
 using Npgsql;
 using Textzy.Api.Data;
 using Textzy.Api.Middleware;
@@ -62,6 +63,14 @@ builder.Services.AddHostedService<BroadcastWorker>();
 
 var app = builder.Build();
 
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+};
+forwardedHeadersOptions.KnownNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeadersOptions);
+
 using (var scope = app.Services.CreateScope())
 {
     var controlDb = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
@@ -92,7 +101,10 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsProduction())
+{
+    app.UseHttpsRedirection();
+}
 app.UseCors("frontend");
 app.UseMiddleware<TenantMiddleware>();
 app.UseMiddleware<AuthMiddleware>();
