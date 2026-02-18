@@ -15,15 +15,15 @@ public class PermissionsController(AuthContext auth) : ControllerBase
         {
             roles = new[]
             {
-                RoleOwner,
-                RoleAdmin,
-                RoleManager,
-                RoleSupport,
-                RoleMarketing,
-                RoleFinance,
-                RoleSuperAdmin
+                RolePermissionCatalog.Owner,
+                RolePermissionCatalog.Admin,
+                RolePermissionCatalog.Manager,
+                RolePermissionCatalog.Support,
+                RolePermissionCatalog.Marketing,
+                RolePermissionCatalog.Finance,
+                RolePermissionCatalog.SuperAdmin
             },
-            permissions = All
+            permissions = PermissionCatalog.All
         });
     }
 }
