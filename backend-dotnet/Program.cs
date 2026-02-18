@@ -21,7 +21,8 @@ builder.Services.AddCors(options =>
 });
 
 var controlConnection = builder.Configuration.GetConnectionString("Default")
-    ?? throw new InvalidOperationException("Connection string 'Default' is missing.");
+    ?? builder.Configuration["DATABASE_URL"]
+    ?? throw new InvalidOperationException("Connection string is missing. Set ConnectionStrings__Default or DATABASE_URL.");
 
 builder.Services.AddDbContext<ControlDbContext>(opt => opt.UseNpgsql(controlConnection));
 builder.Services.AddDbContext<TenantDbContext>((sp, opt) =>
@@ -54,15 +55,24 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var controlDb = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
     controlDb.Database.EnsureCreated();
     SeedData.InitializeControl(controlDb, controlConnection);
 
     var tenants = controlDb.Tenants.ToList();
     foreach (var tenant in tenants)
     {
-        using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
-        tenantDb.Database.EnsureCreated();
-        SeedData.InitializeTenant(tenantDb, tenant.Id);
+        try
+        {
+            var tenantConn = string.IsNullOrWhiteSpace(tenant.DataConnectionString) ? controlConnection : tenant.DataConnectionString;
+            using var tenantDb = SeedData.CreateTenantDbContext(tenantConn);
+            tenantDb.Database.EnsureCreated();
+            SeedData.InitializeTenant(tenantDb, tenant.Id);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Skipping tenant seed for {TenantSlug} due to DB connectivity/config issue.", tenant.Slug);
+        }
     }
 }
 
