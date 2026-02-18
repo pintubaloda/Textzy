@@ -43,7 +43,6 @@ services:
         source: /*
         destination: /index.html
 
-  - type: pserv
-    name: textzy-postgres
+databases:
+  - name: textzy-postgres
     plan: free
-    ipAllowList: []
