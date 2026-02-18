@@ -11,9 +11,7 @@ services:
       - key: ASPNETCORE_URLS
         value: http://0.0.0.0:$PORT
       - key: ConnectionStrings__Default
-        fromDatabase:
-          name: textzy-postgres
-          property: connectionString
+        value: postgresql://textzy_user:EUbfzu5OBSXfDia3P8FhSFGdByHgMs5w@dpg-d6aro9oboq4c73djbcv0-a/textzy
       - key: AllowedOrigins
         value: https://textzy-frontend.onrender.com
       - key: WhatsApp__AppId
@@ -42,7 +40,3 @@ services:
       - type: rewrite
         source: /*
         destination: /index.html
-
-databases:
-  - name: textzy-postgres
-    plan: free
