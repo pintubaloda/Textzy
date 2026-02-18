@@ -24,6 +24,13 @@ var controlConnection = builder.Configuration.GetConnectionString("Default")
     ?? builder.Configuration["DATABASE_URL"]
     ?? throw new InvalidOperationException("Connection string is missing. Set ConnectionStrings__Default or DATABASE_URL.");
 
+if (builder.Environment.IsProduction() &&
+    (controlConnection.Contains("Host=localhost", StringComparison.OrdinalIgnoreCase) ||
+     controlConnection.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase)))
+{
+    throw new InvalidOperationException("Production DB connection is pointing to localhost. Set ConnectionStrings__Default or DATABASE_URL to external Postgres.");
+}
+
 builder.Services.AddDbContext<ControlDbContext>(opt => opt.UseNpgsql(controlConnection));
 builder.Services.AddDbContext<TenantDbContext>((sp, opt) =>
 {
