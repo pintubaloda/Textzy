@@ -77,8 +77,8 @@ export default function ProjectSelectPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#24285f] relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(196,38,255,0.25),transparent_40%),radial-gradient(circle_at_bottom_left,rgba(25,120,255,0.2),transparent_40%)]" />
+    <div className="min-h-screen bg-slate-900 relative overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.3),transparent_40%),radial-gradient(circle_at_bottom_left,rgba(251,191,36,0.2),transparent_40%)]" />
       <div className="relative z-10 px-6 py-10 lg:px-16">
         <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-8 items-center min-h-[78vh]">
           <div className="text-white space-y-6">
@@ -96,7 +96,7 @@ export default function ProjectSelectPage() {
                   className="h-14 pl-12 rounded-full border-white/20 bg-white/10 text-white placeholder:text-slate-300"
                 />
               </div>
-              <Button onClick={onCreate} disabled={creating} className="w-full h-14 rounded-full text-xl bg-fuchsia-500 hover:bg-fuchsia-600 text-white">
+              <Button onClick={onCreate} disabled={creating} className="w-full h-14 rounded-full text-xl bg-orange-500 hover:bg-orange-600 text-white">
                 {creating ? "Creating..." : "Create new"}
               </Button>
             </div>
@@ -105,7 +105,7 @@ export default function ProjectSelectPage() {
           <div className="space-y-4">
             <div className="grid md:grid-cols-2 gap-4">
               {slides.map((p, idx) => (
-                <Card key={`${p.slug}-${idx}`} className={`rounded-3xl border-white/20 ${idx === 1 ? "bg-white text-slate-900 scale-105" : "bg-white/10 text-white"}`}>
+                <Card key={`${p.slug}-${idx}`} className={`rounded-3xl border-white/20 ${idx === 1 ? "bg-white text-slate-900 scale-105 shadow-2xl shadow-orange-500/20" : "bg-white/10 text-white"}`}>
                   <CardContent className="p-6 space-y-4">
                     <div className="flex items-center gap-3">
                       <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${idx === 1 ? "bg-slate-100" : "bg-white/20"}`}>
@@ -128,7 +128,7 @@ export default function ProjectSelectPage() {
                     <Button
                       onClick={() => onView(p.slug)}
                       disabled={switchingSlug === p.slug || loading || p.slug === "first"}
-                      className="w-full rounded-full bg-fuchsia-500 hover:bg-fuchsia-600 text-white"
+                      className="w-full rounded-full bg-orange-500 hover:bg-orange-600 text-white"
                     >
                       {switchingSlug === p.slug ? "Opening..." : "View"}
                     </Button>
