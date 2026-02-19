@@ -199,15 +199,29 @@ public class AuthController(
             slug = $"{baseSlug}-{index++}";
         }
 
-        var seedConnection = db.Tenants.OrderBy(t => t.CreatedAtUtc).Select(t => t.DataConnectionString).FirstOrDefault()
+        var seedConnection = !string.IsNullOrWhiteSpace(tenancy.DataConnectionString)
+            ? tenancy.DataConnectionString
+            : db.Tenants.OrderBy(t => t.CreatedAtUtc).Select(t => t.DataConnectionString).FirstOrDefault()
             ?? db.Database.GetConnectionString()
             ?? string.Empty;
         if (string.IsNullOrWhiteSpace(seedConnection))
             return BadRequest("Unable to resolve project data connection.");
 
+        var tenantId = Guid.NewGuid();
+        try
+        {
+            using var tenantDb = SeedData.CreateTenantDbContext(seedConnection);
+            tenantDb.Database.EnsureCreated();
+            SeedData.InitializeTenant(tenantDb, tenantId);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest($"Project DB initialization failed: {ex.Message}");
+        }
+
         var tenant = new Tenant
         {
-            Id = Guid.NewGuid(),
+            Id = tenantId,
             Name = name,
             Slug = slug,
             DataConnectionString = seedConnection
@@ -221,10 +235,6 @@ public class AuthController(
             Role = "owner"
         });
         await db.SaveChangesAsync(ct);
-
-        using var tenantDb = SeedData.CreateTenantDbContext(seedConnection);
-        tenantDb.Database.EnsureCreated();
-        SeedData.InitializeTenant(tenantDb, tenant.Id);
 
         var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
         return Ok(new { tenant.Id, tenant.Name, tenant.Slug, role = "owner", accessToken = token });

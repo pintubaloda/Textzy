@@ -36,6 +36,7 @@ import {
   Moon,
   Sun,
   UsersRound,
+  Check,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { authProjects, clearSession, getSession, initializeMe, switchProject } from "@/lib/api";
@@ -138,19 +139,28 @@ const DashboardLayout = () => {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="hidden md:flex" data-testid="project-switch-btn">
-                {session.projectName || session.tenantSlug || "Select Project"}
+              <Button variant="outline" className="hidden md:flex border-orange-200 bg-orange-50 text-orange-700" data-testid="project-switch-btn">
+                Project: {session.projectName || session.tenantSlug || "Select"}
                 <ChevronDown className="w-4 h-4 ml-2" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-72">
-              <DropdownMenuLabel>Switch Project</DropdownMenuLabel>
+              <DropdownMenuLabel>Switch Project / Company</DropdownMenuLabel>
               <DropdownMenuSeparator />
               {projects.map((p) => (
                 <DropdownMenuItem key={p.slug} onClick={() => handleProjectSwitch(p.slug)} disabled={switchingProject === p.slug}>
-                  <div className="flex w-full items-center justify-between">
-                    <span>{p.name}</span>
-                    <span className="text-xs text-slate-400">{p.slug === session.tenantSlug ? "Current" : p.role}</span>
+                  <div className="flex w-full items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{p.name}</p>
+                      <p className="text-xs text-slate-400 truncate">{p.slug}</p>
+                    </div>
+                    {p.slug === session.tenantSlug ? (
+                      <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-green-100 text-green-700">
+                        <Check className="w-3 h-3" /> Current
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400">{p.role}</span>
+                    )}
                   </div>
                 </DropdownMenuItem>
               ))}
