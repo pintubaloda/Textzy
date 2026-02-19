@@ -13,9 +13,9 @@ export function configureApiClient({ getSessionFn, onSessionUpdateFn, onAuthFail
 async function baseFetch(path, options = {}, useAuth = true) {
   const { token, tenantSlug } = getSession()
   const headers = {
-    ...(options.headers || {}),
-    'X-Tenant-Slug': tenantSlug || 'demo-retail'
+    ...(options.headers || {})
   }
+  if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
 
   if (useAuth && token) headers.Authorization = `Bearer ${token}`
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
@@ -67,12 +67,11 @@ export async function apiPostForm(path, formData) {
 }
 
 export async function authLogin({ email, password, tenantSlug }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Tenant-Slug': tenantSlug
-    },
+    headers,
     body: JSON.stringify({ email, password })
   })
 

@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthProvider'
 
 export default function SmsShell({ children }) {
-  const { session, logout, setTenantSlug } = useAuth()
+  const { session, logout } = useAuth()
 
   return (
     <div className="module-stage">
@@ -11,10 +11,7 @@ export default function SmsShell({ children }) {
           <div className="waba-brand">Textzy SMS</div>
           <p className="sidebar-meta">{session.email || 'Not logged in'}</p>
           <p className="sidebar-meta">Role: {session.role || '-'}</p>
-          <select className="sidebar-select" value={session.tenantSlug} onChange={(e) => setTenantSlug(e.target.value)}>
-            <option value="demo-retail">demo-retail</option>
-            <option value="demo-d2c">demo-d2c</option>
-          </select>
+          <p className="sidebar-meta">Project: {session.tenantSlug || '-'}</p>
           <nav>
             <NavLink to="/modules/sms/customize">Customization</NavLink>
             <NavLink to="/modules/sms/flows">Active Flows</NavLink>

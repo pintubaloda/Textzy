@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { useAuth } from '../../auth/AuthProvider'
 
 export default function WabaShell({ children }) {
-  const { session, logout, setTenantSlug } = useAuth()
+  const { session, logout } = useAuth()
 
   return (
     <div className="module-stage">
@@ -11,10 +11,7 @@ export default function WabaShell({ children }) {
           <div className="waba-brand">ByeWind</div>
           <p className="sidebar-meta">{session.email || 'Not logged in'}</p>
           <p className="sidebar-meta">Role: {session.role || '-'}</p>
-          <select className="sidebar-select" value={session.tenantSlug} onChange={(e) => setTenantSlug(e.target.value)}>
-            <option value="demo-retail">demo-retail</option>
-            <option value="demo-d2c">demo-d2c</option>
-          </select>
+          <p className="sidebar-meta">Project: {session.tenantSlug || '-'}</p>
           <nav>
             <NavLink to="/modules/waba/dashboard">Dashboards</NavLink>
             <NavLink to="/modules/waba/templates">Templates</NavLink>
