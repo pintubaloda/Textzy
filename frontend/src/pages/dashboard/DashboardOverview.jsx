@@ -16,6 +16,10 @@ import {
   Plus,
   Calendar,
   MoreVertical,
+  QrCode,
+  PhoneCall,
+  Bot,
+  Plug,
 } from "lucide-react";
 import {
   AreaChart,
@@ -176,6 +180,61 @@ const DashboardOverview = () => {
           </Button>
         </div>
       </div>
+
+      <section className="rounded-3xl p-6 md:p-8 bg-gradient-to-br from-[#2d2f6f] via-[#3b3a84] to-[#2a2c66] text-white relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(200,80,255,0.2),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(80,140,255,0.2),transparent_35%)]" />
+        <div className="relative z-10 space-y-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="px-4 py-2 rounded-full bg-white/10">WhatsApp Business API Status: <b className="text-fuchsia-200">Pending</b></div>
+            <Button className="rounded-full bg-fuchsia-500 hover:bg-fuchsia-600 text-white">Apply Now</Button>
+            <div className="px-4 py-2 rounded-full bg-white/10">TRIAL(Pro + Flows)</div>
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2 rounded-2xl border border-white/20 bg-white/5 p-5">
+              <h3 className="text-3xl font-heading font-semibold mb-3">Setup FREE WhatsApp Business Account</h3>
+              <div className="rounded-lg border border-white/20 p-3 mb-4">Apply for WhatsApp Business API</div>
+              <p className="text-white/80 mb-2">Click on Continue With Facebook to apply for WhatsApp Business API</p>
+              <p className="text-white/80">Requirement: Registered Business & Working Website.</p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Button variant="outline" className="border-white/30 text-white bg-white/10 hover:bg-white/20">Schedule Meeting</Button>
+                <Button className="bg-fuchsia-500 hover:bg-fuchsia-600 text-white">Continue with Facebook</Button>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/20 bg-white/5 p-5 text-center">
+              <QrCode className="w-28 h-28 mx-auto mb-3 text-white/90" />
+              <p className="text-xl font-semibold">Project Business Name</p>
+              <p className="text-white/80 mt-2">+91 72496 30121</p>
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="rounded-2xl p-5 bg-gradient-to-r from-fuchsia-500 to-purple-500">
+              <p className="text-white/90">Total Messages</p>
+              <p className="text-4xl font-bold mt-2">{computedStats.total}</p>
+            </div>
+            <div className="rounded-2xl p-5 bg-gradient-to-r from-emerald-400 to-cyan-400">
+              <p className="text-white/90">WhatsApp Sent</p>
+              <p className="text-4xl font-bold mt-2">{computedStats.wa}</p>
+            </div>
+            <div className="rounded-2xl p-5 bg-gradient-to-r from-blue-400 to-indigo-500">
+              <p className="text-white/90">SMS Sent</p>
+              <p className="text-4xl font-bold mt-2">{computedStats.sms}</p>
+            </div>
+            <div className="rounded-2xl p-5 bg-gradient-to-r from-orange-400 to-amber-500">
+              <p className="text-white/90">Active Contacts</p>
+              <p className="text-4xl font-bold mt-2">{computedStats.contacts}</p>
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
+            <button className="rounded-xl border border-white/20 bg-white/10 p-4 text-left"><PhoneCall className="w-5 h-5 mb-1" />Add WhatsApp Contacts</button>
+            <button className="rounded-xl border border-white/20 bg-white/10 p-4 text-left"><Users className="w-5 h-5 mb-1" />Add Team Members</button>
+            <button className="rounded-xl border border-white/20 bg-white/10 p-4 text-left"><Plug className="w-5 h-5 mb-1" />Explore Integrations</button>
+            <button className="rounded-xl border border-white/20 bg-white/10 p-4 text-left"><Bot className="w-5 h-5 mb-1" />Chatbot Setup</button>
+          </div>
+        </div>
+      </section>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

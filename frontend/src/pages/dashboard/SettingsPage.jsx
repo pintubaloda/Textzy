@@ -14,26 +14,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  User,
-  Building,
-  Bell,
-  Shield,
-  Globe,
-  Palette,
-  Key,
-  Mail,
-  Phone,
-  Upload,
-  Save,
-  MessageSquare,
-  Instagram,
-  ChevronRight,
-  ExternalLink,
-  Loader2,
-} from "lucide-react";
+import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { wabaExchangeCode, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
 
@@ -185,29 +168,6 @@ const SettingsPage = () => {
         }}
         className="space-y-6"
       >
-        <TabsList className="bg-slate-100">
-          <TabsTrigger value="profile" className="gap-2">
-            <User className="w-4 h-4" />
-            Profile
-          </TabsTrigger>
-          <TabsTrigger value="company" className="gap-2">
-            <Building className="w-4 h-4" />
-            Company
-          </TabsTrigger>
-          <TabsTrigger value="notifications" className="gap-2">
-            <Bell className="w-4 h-4" />
-            Notifications
-          </TabsTrigger>
-          <TabsTrigger value="security" className="gap-2">
-            <Shield className="w-4 h-4" />
-            Security
-          </TabsTrigger>
-          <TabsTrigger value="whatsapp" className="gap-2">
-            <MessageSquare className="w-4 h-4" />
-            WhatsApp
-          </TabsTrigger>
-        </TabsList>
-
         {/* Profile Tab */}
         <TabsContent value="profile">
           <Card className="border-slate-200">
