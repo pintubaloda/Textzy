@@ -1,52 +1,59 @@
-import { useEffect } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
+import { Toaster } from "@/components/ui/sonner";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+// Landing Page
+import LandingPage from "@/pages/LandingPage";
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
+// Auth Pages
+import LoginPage from "@/pages/auth/LoginPage";
+import RegisterPage from "@/pages/auth/RegisterPage";
+import ForgotPasswordPage from "@/pages/auth/ForgotPasswordPage";
 
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
+// Dashboard Pages
+import DashboardLayout from "@/layouts/DashboardLayout";
+import DashboardOverview from "@/pages/dashboard/DashboardOverview";
+import InboxPage from "@/pages/dashboard/InboxPage";
+import ContactsPage from "@/pages/dashboard/ContactsPage";
+import CampaignsPage from "@/pages/dashboard/CampaignsPage";
+import TemplatesPage from "@/pages/dashboard/TemplatesPage";
+import AutomationsPage from "@/pages/dashboard/AutomationsPage";
+import AnalyticsPage from "@/pages/dashboard/AnalyticsPage";
+import IntegrationsPage from "@/pages/dashboard/IntegrationsPage";
+import BillingPage from "@/pages/dashboard/BillingPage";
+import SettingsPage from "@/pages/dashboard/SettingsPage";
+import AdminPage from "@/pages/dashboard/AdminPage";
+import TeamPage from "@/pages/dashboard/TeamPage";
 
 function App() {
   return (
     <div className="App">
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
+          {/* Public Routes */}
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+
+          {/* Dashboard Routes */}
+          <Route path="/dashboard" element={<DashboardLayout />}>
+            <Route index element={<DashboardOverview />} />
+            <Route path="inbox" element={<InboxPage />} />
+            <Route path="contacts" element={<ContactsPage />} />
+            <Route path="campaigns" element={<CampaignsPage />} />
+            <Route path="templates" element={<TemplatesPage />} />
+            <Route path="automations" element={<AutomationsPage />} />
+            <Route path="analytics" element={<AnalyticsPage />} />
+            <Route path="integrations" element={<IntegrationsPage />} />
+            <Route path="billing" element={<BillingPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="team" element={<TeamPage />} />
+            <Route path="admin" element={<AdminPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
+      <Toaster position="top-right" richColors />
     </div>
   );
 }
