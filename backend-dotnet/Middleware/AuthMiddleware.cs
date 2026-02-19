@@ -51,11 +51,22 @@ public class AuthMiddleware(RequestDelegate next)
             }
             tenancy.SetTenant(sessionTenant.Id, sessionTenant.Slug, sessionTenant.DataConnectionString);
         }
-        else if (session.TenantId != tenancy.TenantId)
+        else if (!isProjectPath && session.TenantId != tenancy.TenantId)
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             await context.Response.WriteAsync("Session tenant mismatch.");
             return;
+        }
+        else if (isProjectPath && session.TenantId != tenancy.TenantId)
+        {
+            var sessionTenant = db.Tenants.FirstOrDefault(t => t.Id == session.TenantId);
+            if (sessionTenant is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsync("Session tenant not found.");
+                return;
+            }
+            tenancy.SetTenant(sessionTenant.Id, sessionTenant.Slug, sessionTenant.DataConnectionString);
         }
 
         var user = db.Users.FirstOrDefault(u => u.Id == session.UserId && u.IsActive);
