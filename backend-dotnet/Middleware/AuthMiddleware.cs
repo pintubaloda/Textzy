@@ -11,6 +11,8 @@ public class AuthMiddleware(RequestDelegate next)
     {
         var path = context.Request.Path.Value ?? string.Empty;
         var isAuthPath = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase);
+        var isProjectPath = path.StartsWith("/api/auth/projects", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/auth/switch-project", StringComparison.OrdinalIgnoreCase);
         var isPublicTenantPath = path.StartsWith("/api/tenants", StringComparison.OrdinalIgnoreCase);
         var isSwaggerPath = path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase);
         var isWabaWebhookPath = path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase);
@@ -61,6 +63,13 @@ public class AuthMiddleware(RequestDelegate next)
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             await context.Response.WriteAsync("User not active.");
+            return;
+        }
+
+        if (isProjectPath)
+        {
+            auth.Set(user.Id, session.TenantId, user.Email, user.IsSuperAdmin ? RolePermissionCatalog.SuperAdmin : "owner");
+            await _next(context);
             return;
         }
 
