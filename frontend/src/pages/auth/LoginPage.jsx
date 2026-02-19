@@ -32,7 +32,12 @@ const LoginPage = () => {
       await initializeMe();
       setLoading(false);
       toast.success("Welcome back! Redirecting to dashboard...");
-      navigate("/dashboard");
+      navigate("/dashboard", { replace: true });
+      setTimeout(() => {
+        if (window.location.pathname !== "/dashboard") {
+          window.location.assign("/dashboard");
+        }
+      }, 120);
     } catch {
       setLoading(false);
       toast.error("Login failed. Check email/password.");
