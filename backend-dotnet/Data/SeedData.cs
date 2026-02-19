@@ -34,11 +34,12 @@ public static class SeedData
             db.Tenants.Add(tenantB);
         }
 
+        var hasher = new PasswordHasher();
+        var (hash, salt) = hasher.HashPassword("ChangeMe@123");
+
         var user = db.Users.FirstOrDefault(u => u.Email == "admin@textzy.local");
         if (user is null)
         {
-            var hasher = new PasswordHasher();
-            var (hash, salt) = hasher.HashPassword("ChangeMe@123");
             user = new User
             {
                 Id = Guid.NewGuid(),
@@ -50,6 +51,14 @@ public static class SeedData
                 IsSuperAdmin = true
             };
             db.Users.Add(user);
+        }
+        else
+        {
+            // Keep demo login deterministic across environments.
+            user.PasswordHash = hash;
+            user.PasswordSalt = salt;
+            user.IsActive = true;
+            user.IsSuperAdmin = true;
         }
 
         var mappings = new (Guid TenantId, string Role)[]
