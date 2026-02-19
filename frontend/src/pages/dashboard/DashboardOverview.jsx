@@ -12,6 +12,7 @@ import {
   MessageCircle,
   Plus,
   Calendar,
+  MoreVertical,
   QrCode,
   PhoneCall,
   Bot,
