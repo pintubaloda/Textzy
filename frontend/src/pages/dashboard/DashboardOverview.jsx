@@ -10,36 +10,17 @@ import {
   TrendingDown,
   ArrowRight,
   MessageCircle,
-  CheckCheck,
-  Clock,
-  AlertCircle,
   Plus,
   Calendar,
-  MoreVertical,
   QrCode,
   PhoneCall,
   Bot,
   Plug,
 } from "lucide-react";
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-} from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useEffect, useMemo, useState } from "react";
 import { apiGet } from "@/lib/api";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const DashboardOverview = () => {
   const [messages, setMessages] = useState([]);
@@ -97,23 +78,6 @@ const DashboardOverview = () => {
       icon: Users,
       color: "purple",
     },
-  ];
-
-  const messageData = [
-    { name: "Mon", whatsapp: 4000, sms: 2400 },
-    { name: "Tue", whatsapp: 3000, sms: 1398 },
-    { name: "Wed", whatsapp: 2000, sms: 9800 },
-    { name: "Thu", whatsapp: 2780, sms: 3908 },
-    { name: "Fri", whatsapp: 1890, sms: 4800 },
-    { name: "Sat", whatsapp: 2390, sms: 3800 },
-    { name: "Sun", whatsapp: 3490, sms: 4300 },
-  ];
-
-  const deliveryData = [
-    { name: "Delivered", value: 92, color: "#22C55E" },
-    { name: "Read", value: 78, color: "#3B82F6" },
-    { name: "Failed", value: 3, color: "#EF4444" },
-    { name: "Pending", value: 5, color: "#F59E0B" },
   ];
 
   const recentCampaigns = (campaigns || []).slice(0, 3).map((c) => ({
@@ -248,111 +212,6 @@ const DashboardOverview = () => {
           </div>
         </div>
       </section>
-
-      {/* Charts Row */}
-      <div className="grid lg:grid-cols-3 gap-6">
-        {/* Message Trends Chart */}
-        <Card className="lg:col-span-2 border-slate-200" data-testid="message-trends-chart">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Message Trends</CardTitle>
-                <CardDescription>WhatsApp and SMS messages over time</CardDescription>
-              </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon">
-                    <MoreVertical className="w-4 h-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem>Export CSV</DropdownMenuItem>
-                  <DropdownMenuItem>View Details</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={messageData}>
-                  <defs>
-                    <linearGradient id="colorWhatsapp" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#25D366" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#25D366" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorSms" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#F97316" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#F97316" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                  <XAxis dataKey="name" stroke="#64748B" fontSize={12} />
-                  <YAxis stroke="#64748B" fontSize={12} />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#fff",
-                      border: "1px solid #E2E8F0",
-                      borderRadius: "8px",
-                    }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="whatsapp"
-                    stroke="#25D366"
-                    fillOpacity={1}
-                    fill="url(#colorWhatsapp)"
-                    strokeWidth={2}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="sms"
-                    stroke="#F97316"
-                    fillOpacity={1}
-                    fill="url(#colorSms)"
-                    strokeWidth={2}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="flex items-center justify-center gap-6 mt-4">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-[#25D366]"></div>
-                <span className="text-sm text-slate-600">WhatsApp</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-orange-500"></div>
-                <span className="text-sm text-slate-600">SMS</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Delivery Stats */}
-        <Card className="border-slate-200" data-testid="delivery-stats">
-          <CardHeader>
-            <CardTitle>Delivery Stats</CardTitle>
-            <CardDescription>Today's message delivery breakdown</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {deliveryData.map((item, index) => (
-              <div key={index}>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    {item.name === "Delivered" && <CheckCheck className="w-4 h-4 text-green-500" />}
-                    {item.name === "Read" && <CheckCheck className="w-4 h-4 text-blue-500" />}
-                    {item.name === "Failed" && <AlertCircle className="w-4 h-4 text-red-500" />}
-                    {item.name === "Pending" && <Clock className="w-4 h-4 text-yellow-500" />}
-                    <span className="text-sm font-medium text-slate-700">{item.name}</span>
-                  </div>
-                  <span className="text-sm font-semibold text-slate-900">{item.value}%</span>
-                </div>
-                <Progress value={item.value} className="h-2" />
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
 
       {/* Bottom Row */}
       <div className="grid lg:grid-cols-2 gap-6">
