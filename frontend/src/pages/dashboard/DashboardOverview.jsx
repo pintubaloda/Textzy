@@ -181,6 +181,38 @@ const DashboardOverview = () => {
         </div>
       </div>
 
+      {/* KPI Cards - Top */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+        {stats.map((stat, index) => (
+          <Card key={index} className="relative overflow-hidden border-slate-200 bg-white shadow-sm" data-testid={`stat-card-${index}`}>
+            <div className="absolute -top-14 -right-14 w-44 h-44 rounded-full bg-slate-100/80" />
+            <CardContent className="pt-7 pb-7 relative z-10">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-2xl text-slate-600 mb-2">{stat.title}</p>
+                  <p className="text-5xl leading-none font-bold text-slate-900 mt-2">{stat.value}</p>
+                  <div className={`flex items-center gap-1 mt-5 text-xl ${stat.trend === "up" ? "text-green-600" : "text-red-500"}`}>
+                    {stat.trend === "up" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                    {stat.change} vs last week
+                  </div>
+                </div>
+                <div className={`w-20 h-20 rounded-2xl flex items-center justify-center ${
+                  stat.color === "orange" ? "bg-orange-100" :
+                  stat.color === "green" ? "bg-green-100" :
+                  stat.color === "blue" ? "bg-blue-100" : "bg-purple-100"
+                }`}>
+                  <stat.icon className={`w-8 h-8 ${
+                    stat.color === "orange" ? "text-orange-500" :
+                    stat.color === "green" ? "text-green-500" :
+                    stat.color === "blue" ? "text-blue-500" : "text-purple-500"
+                  }`} />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
       <section className="rounded-3xl p-6 md:p-8 bg-gradient-to-br from-[#2d2f6f] via-[#3b3a84] to-[#2a2c66] text-white relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(200,80,255,0.2),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(80,140,255,0.2),transparent_35%)]" />
         <div className="relative z-10 space-y-5">
@@ -235,37 +267,6 @@ const DashboardOverview = () => {
           </div>
         </div>
       </section>
-
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {stats.map((stat, index) => (
-          <Card key={index} className="border-slate-200 stats-card" data-testid={`stat-card-${index}`}>
-            <CardContent className="pt-6">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-slate-600 mb-1">{stat.title}</p>
-                  <p className="text-2xl font-bold text-slate-900">{stat.value}</p>
-                  <div className={`flex items-center gap-1 mt-2 text-sm ${stat.trend === "up" ? "text-green-600" : "text-red-600"}`}>
-                    {stat.trend === "up" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                    {stat.change} vs last week
-                  </div>
-                </div>
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                  stat.color === "orange" ? "bg-orange-100" :
-                  stat.color === "green" ? "bg-green-100" :
-                  stat.color === "blue" ? "bg-blue-100" : "bg-purple-100"
-                }`}>
-                  <stat.icon className={`w-6 h-6 ${
-                    stat.color === "orange" ? "text-orange-600" :
-                    stat.color === "green" ? "text-green-600" :
-                    stat.color === "blue" ? "text-blue-600" : "text-purple-600"
-                  }`} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
 
       {/* Charts Row */}
       <div className="grid lg:grid-cols-3 gap-6">
