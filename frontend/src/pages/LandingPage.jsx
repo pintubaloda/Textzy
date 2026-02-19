@@ -1,110 +1,105 @@
 import { Link } from 'react-router-dom'
 
-const features = [
-  { title: 'WhatsApp Business API', text: 'Embedded Signup onboarding, real WABA discovery, template + session messaging, and webhook handling.' },
-  { title: 'SMS Engagement Engine', text: 'Transactional and campaign SMS flows with queueing, throttling, retries, and delivery controls.' },
-  { title: 'Unified Agent Inbox', text: 'Real-time inbox with assignment, notes, SLA visibility, and typing indicators for faster support.' },
-  { title: 'Multi-Tenant Security', text: 'Tenant-aware auth, opaque session token flow, role-based permissions, and strict isolation controls.' }
+const metrics = [
+  { label: 'Messages / day', value: '1.9M+' },
+  { label: 'Delivery success', value: '99.2%' },
+  { label: 'Active tenants', value: '126+' },
+  { label: 'Avg response SLA', value: '< 2 min' }
 ]
 
-const plans = [
-  { name: 'Starter', price: '₹2,999', points: ['1 WABA', '2 Agents', '5,000 msgs/mo'] },
-  { name: 'Growth', price: '₹9,999', points: ['5 WABA/SMS channels', '10 Agents', '50,000 msgs/mo'] },
-  { name: 'Scale', price: 'Custom', points: ['Unlimited modules', 'Dedicated infra options', 'Priority onboarding'] }
+const pillars = [
+  {
+    title: 'WhatsApp Onboarding + API',
+    text: 'Embedded Signup, real WABA/phone discovery, secure webhook validation, and 24h session + template controls.'
+  },
+  {
+    title: 'Realtime Inbox Operations',
+    text: 'Unified conversation workspace with assignment, internal notes, typing indicators, and SLA tracking.'
+  },
+  {
+    title: 'Campaign & Broadcast Engine',
+    text: 'Queue-driven sends with throttling, retries, compliance checks, and role-aware operational controls.'
+  },
+  {
+    title: 'Tenant Security + RBAC',
+    text: 'Opaque session tokens, tenant context resolution, strict permission catalog, and module-level access gates.'
+  }
 ]
 
 export default function LandingPage() {
   return (
-    <main className="lp-wrap">
-      <header className="lp-header">
-        <div className="lp-logo">Textzy</div>
-        <nav className="lp-nav">
+    <main className="modern-wrap">
+      <header className="modern-header glass">
+        <div className="modern-logo">TEXTZY</div>
+        <nav>
+          <a href="#platform">Platform</a>
           <a href="#features">Features</a>
-          <a href="#modules">Modules</a>
           <a href="#pricing">Pricing</a>
           <a href="#contact">Contact</a>
         </nav>
-        <div className="lp-actions">
-          <Link className="ghost" to="/login">Sign In</Link>
-          <Link className="primary" to="/modules/waba/dashboard">Launch App</Link>
+        <div className="modern-header-actions">
+          <Link className="ghost" to="/login">Sign in</Link>
+          <Link className="primary" to="/login">Start Free</Link>
         </div>
       </header>
 
-      <section className="lp-hero">
-        <div>
-          <p className="lp-kicker">Multi-Channel Communication Platform</p>
-          <h1>Grow with WhatsApp + SMS automation on one multi-tenant platform.</h1>
-          <p className="lp-sub">Built for agencies and businesses that need secure tenant isolation, embedded Meta onboarding, campaign orchestration, and real-time support inbox operations.</p>
-          <div className="lp-cta-row">
-            <Link className="primary" to="/login">Get Started</Link>
-            <a className="ghost" href="#modules">Explore Modules</a>
+      <section className="modern-hero" id="platform">
+        <div className="modern-left">
+          <p className="tag">Omnichannel Customer Communication</p>
+          <h1>Modern messaging infrastructure for WhatsApp + SMS businesses.</h1>
+          <p className="subtitle">
+            Launch secure multi-tenant communication products with embedded onboarding, campaign automation,
+            real-time inbox operations, and production-grade API control.
+          </p>
+          <div className="modern-cta">
+            <Link className="primary" to="/login">Launch Workspace</Link>
+            <Link className="ghost" to="/modules/waba/frames">View Product Screens</Link>
           </div>
         </div>
-        <aside className="lp-hero-card">
-          <h3>Live Platform Snapshot</h3>
-          <div className="lp-stat"><span>Tenants</span><b>126</b></div>
-          <div className="lp-stat"><span>Messages / day</span><b>1.9M</b></div>
-          <div className="lp-stat"><span>Delivery success</span><b>99.2%</b></div>
-          <div className="lp-stat"><span>Active agents</span><b>342</b></div>
-        </aside>
-      </section>
-
-      <section className="lp-band" id="features">
-        {features.map((f) => (
-          <article key={f.title} className="lp-feature">
-            <h3>{f.title}</h3>
-            <p>{f.text}</p>
-          </article>
-        ))}
-      </section>
-
-      <section className="lp-modules" id="modules">
-        <article className="lp-module-card">
-          <h2>WhatsApp Business Module</h2>
-          <p>Embedded Signup, WABA linkage, templates lifecycle, session window logic, webhook security, and inbox for agent workflows.</p>
-          <ul>
-            <li>WABA onboarding and token exchange</li>
-            <li>Template states + versioning controls</li>
-            <li>Real-time conversations with assignment and notes</li>
-          </ul>
-        </article>
-        <article className="lp-module-card">
-          <h2>SMS Module</h2>
-          <p>Template-driven campaigns, custom flow builder inputs, sender controls, and delivery operations from one centralized workspace.</p>
-          <ul>
-            <li>Campaign queue with retry/throttling</li>
-            <li>Flow builder with reusable input definitions</li>
-            <li>Channel-level analytics hooks</li>
-          </ul>
-        </article>
-      </section>
-
-      <section className="lp-pricing" id="pricing">
-        <h2>Simple plans for every growth stage</h2>
-        <div className="lp-plan-grid">
-          {plans.map((p) => (
-            <article key={p.name} className="lp-plan">
-              <h3>{p.name}</h3>
-              <p className="lp-price">{p.price}<span>/mo</span></p>
-              {p.points.map((pt) => <p key={pt}>{pt}</p>)}
-              <Link className="primary" to="/login">Choose {p.name}</Link>
-            </article>
+        <div className="modern-right glass">
+          <h3>Live Operations</h3>
+          {metrics.map((m) => (
+            <div className="metric" key={m.label}>
+              <span>{m.label}</span>
+              <b>{m.value}</b>
+            </div>
           ))}
         </div>
       </section>
 
-      <section className="lp-final" id="contact">
-        <h2>Ready to launch your tenant workspace?</h2>
-        <p>Deploy Textzy with your own domains, onboarding, and messaging operations.</p>
-        <Link className="primary" to="/login">Book Demo / Login</Link>
+      <section className="modern-grid" id="features">
+        {pillars.map((p) => (
+          <article className="glass card" key={p.title}>
+            <h3>{p.title}</h3>
+            <p>{p.text}</p>
+          </article>
+        ))}
       </section>
 
-      <footer className="lp-footer">
+      <section className="modern-stack" id="pricing">
+        <article className="glass strip">
+          <div>
+            <h2>Built for module-wise scale</h2>
+            <p>Start with WABA onboarding + inbox, then add SMS, automation, templates, and campaign orchestration.</p>
+          </div>
+          <Link className="primary" to="/login">Explore Platform</Link>
+        </article>
+
+        <article className="glass strip" id="contact">
+          <div>
+            <h2>Deploy on your infrastructure stack</h2>
+            <p>Works with your external PostgreSQL, Render deployment, Meta embedded signup, and RBAC policies.</p>
+          </div>
+          <Link className="ghost" to="/login">Book Demo</Link>
+        </article>
+      </section>
+
+      <footer className="modern-footer">
         <span>© {new Date().getFullYear()} Textzy</span>
         <div>
+          <a href="#platform">Platform</a>
           <a href="#features">Features</a>
           <a href="#pricing">Pricing</a>
-          <a href="#contact">Contact</a>
         </div>
       </footer>
     </main>
