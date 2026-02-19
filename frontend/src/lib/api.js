@@ -6,16 +6,16 @@ const STORAGE_KEY = 'textzy.session.v1'
 export function getSession() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { token: '', tenantSlug: 'demo-retail', role: '', email: '' }
+    if (!raw) return { token: '', tenantSlug: '', role: '', email: '' }
     const p = JSON.parse(raw)
     return {
       token: p.token || '',
-      tenantSlug: p.tenantSlug || 'demo-retail',
+      tenantSlug: p.tenantSlug || '',
       role: p.role || '',
       email: p.email || ''
     }
   } catch {
-    return { token: '', tenantSlug: 'demo-retail', role: '', email: '' }
+    return { token: '', tenantSlug: '', role: '', email: '' }
   }
 }
 
@@ -33,9 +33,9 @@ export function clearSession() {
 async function baseFetch(path, options = {}, useAuth = true) {
   const s = getSession()
   const headers = {
-    ...(options.headers || {}),
-    'X-Tenant-Slug': s.tenantSlug || 'demo-retail'
+    ...(options.headers || {})
   }
+  if (s.tenantSlug) headers['X-Tenant-Slug'] = s.tenantSlug
 
   if (useAuth && s.token) headers.Authorization = `Bearer ${s.token}`
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
@@ -89,12 +89,11 @@ export async function apiDelete(path) {
 }
 
 export async function authLogin({ email, password, tenantSlug }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Tenant-Slug': tenantSlug || 'demo-retail'
-    },
+    headers,
     body: JSON.stringify({ email, password })
   })
   if (!res.ok) {

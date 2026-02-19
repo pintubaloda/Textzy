@@ -17,16 +17,36 @@ public class AuthController(
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
-        if (!tenancy.IsSet) return BadRequest("Missing tenant context.");
-
         var user = db.Users.FirstOrDefault(u => u.Email == request.Email && u.IsActive);
         if (user is null || !hasher.Verify(request.Password, user.PasswordHash, user.PasswordSalt))
             return Unauthorized("Invalid credentials.");
 
-        var hasAccess = db.TenantUsers.Any(tu => tu.UserId == user.Id && tu.TenantId == tenancy.TenantId);
-        if (!user.IsSuperAdmin && !hasAccess) return Forbid();
+        Guid tenantId;
+        if (tenancy.IsSet)
+        {
+            var hasAccess = db.TenantUsers.Any(tu => tu.UserId == user.Id && tu.TenantId == tenancy.TenantId);
+            if (!user.IsSuperAdmin && !hasAccess) return Forbid();
+            tenantId = tenancy.TenantId;
+        }
+        else
+        {
+            if (user.IsSuperAdmin)
+            {
+                tenantId = db.Tenants.OrderBy(t => t.CreatedAtUtc).Select(t => t.Id).FirstOrDefault();
+                if (tenantId == Guid.Empty) return BadRequest("No tenant available for super admin.");
+            }
+            else
+            {
+                tenantId = db.TenantUsers
+                    .Where(tu => tu.UserId == user.Id)
+                    .OrderBy(tu => tu.CreatedAtUtc)
+                    .Select(tu => tu.TenantId)
+                    .FirstOrDefault();
+                if (tenantId == Guid.Empty) return Forbid();
+            }
+        }
 
-        var token = await sessions.CreateSessionAsync(user.Id, tenancy.TenantId, ct);
+        var token = await sessions.CreateSessionAsync(user.Id, tenantId, ct);
         return Ok(new AuthTokenResponse { AccessToken = token });
     }
 

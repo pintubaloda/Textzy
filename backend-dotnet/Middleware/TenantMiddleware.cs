@@ -18,7 +18,8 @@ public class TenantMiddleware(RequestDelegate next)
         var path = context.Request.Path.Value ?? string.Empty;
         var isSwaggerPath = path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase);
         var isWabaWebhook = path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase);
-        if (isSwaggerPath || isWabaWebhook)
+        var isAuthLogin = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase);
+        if (isSwaggerPath || isWabaWebhook || isAuthLogin)
         {
             await _next(context);
             return;
@@ -26,6 +27,12 @@ public class TenantMiddleware(RequestDelegate next)
 
         if (!context.Request.Headers.TryGetValue("X-Tenant-Slug", out var tenantSlug))
         {
+            var authHeader = context.Request.Headers.Authorization.ToString();
+            if (authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                await _next(context);
+                return;
+            }
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             await context.Response.WriteAsync("Missing X-Tenant-Slug header.");
             return;

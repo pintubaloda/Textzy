@@ -16,7 +16,6 @@ const LoginPage = () => {
   const [formData, setFormData] = useState({
     email: "",
     password: "",
-    tenantSlug: "demo-retail",
     rememberMe: false,
   });
 
@@ -28,9 +27,8 @@ const LoginPage = () => {
       const login = await authLogin({
         email: formData.email,
         password: formData.password,
-        tenantSlug: formData.tenantSlug,
       });
-      setSession({ token: login.accessToken, tenantSlug: formData.tenantSlug });
+      setSession({ token: login.accessToken });
       await initializeMe();
       setLoading(false);
       toast.success("Welcome back! Redirecting to dashboard...");
@@ -62,19 +60,6 @@ const LoginPage = () => {
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="tenantSlug">Tenant</Label>
-                  <Input
-                    id="tenantSlug"
-                    type="text"
-                    placeholder="demo-retail"
-                    value={formData.tenantSlug}
-                    onChange={(e) => setFormData({ ...formData, tenantSlug: e.target.value })}
-                    required
-                    data-testid="login-tenant-input"
-                  />
-                </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
                   <Input
