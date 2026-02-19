@@ -37,7 +37,7 @@ public class SessionService(ControlDbContext db)
         var now = DateTime.UtcNow;
         return db.SessionTokens.FirstOrDefault(s =>
             s.TokenHash == hash &&
-            !s.IsRevoked &&
+            s.RevokedAtUtc == null &&
             s.ExpiresAtUtc > now);
     }
 
