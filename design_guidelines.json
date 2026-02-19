@@ -1,0 +1,141 @@
+{
+  "identity": {
+    "name": "Textzy",
+    "persona": "The Modern Connector",
+    "tone": "Professional, Efficient, Trustworthy, Energetic",
+    "aesthetic": "Clean SaaS, High-Contrast, Indian Tech Premium",
+    "primary_color": "Orange",
+    "theme_strategy": "Light Mode Default (Trust) with Dark Mode Toggle (Power Users)"
+  },
+  "typography": {
+    "font_family_heading": "Manrope, sans-serif",
+    "font_family_body": "Inter, sans-serif",
+    "font_weights": {
+      "heading": "700",
+      "subheading": "600",
+      "body": "400",
+      "bold": "600"
+    },
+    "scale": {
+      "h1": "text-4xl md:text-5xl lg:text-6xl tracking-tight font-bold",
+      "h2": "text-3xl md:text-4xl tracking-tight font-bold",
+      "h3": "text-2xl font-semibold tracking-tight",
+      "body_lg": "text-lg leading-relaxed",
+      "body": "text-base leading-relaxed text-slate-600 dark:text-slate-300",
+      "caption": "text-sm text-slate-500"
+    },
+    "import_url": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap"
+  },
+  "colors": {
+    "primary": {
+      "DEFAULT": "#F97316",
+      "hover": "#EA580C",
+      "active": "#C2410C",
+      "foreground": "#FFFFFF",
+      "faint": "#FFF7ED"
+    },
+    "secondary": {
+      "DEFAULT": "#0F172A",
+      "foreground": "#FFFFFF"
+    },
+    "accent": {
+      "DEFAULT": "#38BDF8",
+      "foreground": "#0F172A"
+    },
+    "neutral": {
+      "50": "#F8FAFC",
+      "100": "#F1F5F9",
+      "200": "#E2E8F0",
+      "900": "#0F172A"
+    },
+    "status": {
+      "success": "#22C55E",
+      "error": "#EF4444",
+      "warning": "#F59E0B",
+      "info": "#3B82F6"
+    },
+    "whatsapp": "#25D366"
+  },
+  "visual_enhancers": {
+    "radius": "rounded-lg",
+    "shadows": {
+      "card": "shadow-[0_2px_8px_rgba(0,0,0,0.08)]",
+      "dropdown": "shadow-[0_4px_16px_rgba(0,0,0,0.12)]",
+      "glow": "shadow-[0_0_20px_rgba(249,115,22,0.3)]"
+    },
+    "gradients": {
+      "hero": "bg-gradient-to-br from-orange-50 via-white to-orange-50 dark:from-slate-900 dark:via-slate-900 dark:to-orange-900/20",
+      "button": "bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700"
+    },
+    "glass": "bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl border border-white/20"
+  },
+  "layout_strategies": {
+    "marketing": "Tetris Grid - Asymmetric bento styling. Large hero visuals mixed with small feature cards.",
+    "dashboard_overview": "Bento Grid - High density. Key metrics (SMS balance, Campaigns) in large blocks. Real-time feed in tall narrow blocks.",
+    "inbox": "Three-Pane Layout: [Sidebar (Nav)] - [Conversation List (30%)] - [Chat Area + Details (Flex)]",
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"
+  },
+  "components": {
+    "buttons": {
+      "primary": "rounded-lg font-medium transition-all duration-200 shadow-sm active:scale-95",
+      "ghost": "hover:bg-orange-50 text-orange-700 dark:hover:bg-orange-900/20 dark:text-orange-400"
+    },
+    "cards": {
+      "style": "bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden"
+    },
+    "inputs": {
+      "style": "h-11 rounded-lg border-slate-200 focus:border-orange-500 focus:ring-orange-500/20"
+    },
+    "charts": {
+      "library": "Recharts (via Shadcn)",
+      "palette": ["#F97316", "#3B82F6", "#10B981", "#64748B"]
+    }
+  },
+  "image_assets": {
+    "hero_background": {
+      "url": "https://images.pexels.com/photos/17483870/pexels-photo-17483870.png",
+      "alt": "Abstract digital connectivity network",
+      "usage": "Hero section background with opacity or blend mode"
+    },
+    "team_collaboration": {
+      "url": "https://images.pexels.com/photos/7580644/pexels-photo-7580644.jpeg",
+      "alt": "Indian business team discussing strategy",
+      "usage": "About us or Enterprise features section"
+    },
+    "customer_support": {
+      "url": "https://images.pexels.com/photos/7682350/pexels-photo-7682350.jpeg",
+      "alt": "Smiling customer support agent with headset",
+      "usage": "Testimonials or Support features section"
+    },
+    "office_vibe": {
+      "url": "https://images.pexels.com/photos/8867376/pexels-photo-8867376.jpeg",
+      "alt": "Cheerful support agents working",
+      "usage": "Careers or Culture section"
+    }
+  },
+  "icons": {
+    "primary_set": "Lucide React",
+    "special_set": "Simple Icons (for WhatsApp, Facebook logos)",
+    "usage": "Use stroke-width={1.5} for a clean, modern look"
+  },
+  "instructions_to_main_agent": [
+    "Install 'lucide-react' for icons immediately.",
+    "Add the custom fonts to index.css via @import.",
+    "Configure tailwind.config.js to include the custom 'orange' primary palette.",
+    "Implement the 'Three-Pane' layout for the Inbox page specifically.",
+    "Ensure 'DLT' related terms (Entity ID, Template ID) are present in the SMS/Template forms.",
+    "Use the provided image URLs for the landing page. Do not use placeholders.",
+    "Interactive elements MUST have data-testid attributes.",
+    "Use 'sonner' for all toast notifications.",
+    "Do not use gradients for text. Keep text high-contrast."
+  ],
+  "universal_guidelines": [
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts. Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition (e.g., transition: all).",
+    "You MUST NOT center align the app container.",
+    "Every interaction needs micro-animations - hover states, transitions.",
+    "Use 2-3x more spacing than feels comfortable."
+  ]
+}
