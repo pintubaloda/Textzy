@@ -11,4 +11,17 @@ public class TenantWabaConfig
     public string AccessToken { get; set; } = string.Empty;
     public bool IsActive { get; set; }
     public DateTime ConnectedAtUtc { get; set; } = DateTime.UtcNow;
+    public string OnboardingState { get; set; } = "requested";
+    public DateTime? OnboardingStartedAtUtc { get; set; }
+    public DateTime? CodeReceivedAtUtc { get; set; }
+    public DateTime? ExchangedAtUtc { get; set; }
+    public DateTime? AssetsLinkedAtUtc { get; set; }
+    public DateTime? WebhookSubscribedAtUtc { get; set; }
+    public DateTime? WebhookVerifiedAtUtc { get; set; }
+    public string LastError { get; set; } = string.Empty;
+    public string LastGraphError { get; set; } = string.Empty;
+    public string BusinessVerificationStatus { get; set; } = string.Empty;
+    public string PhoneQualityRating { get; set; } = string.Empty;
+    public string PhoneNameStatus { get; set; } = string.Empty;
+    public bool PermissionAuditPassed { get; set; }
 }

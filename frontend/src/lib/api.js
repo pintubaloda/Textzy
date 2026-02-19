@@ -70,7 +70,10 @@ export async function apiGet(path) {
 
 export async function apiPost(path, body) {
   const res = await apiRequest(path, { method: 'POST', body: JSON.stringify(body) })
-  if (!res.ok) throw new Error(`POST ${path} failed (${res.status})`)
+  if (!res.ok) {
+    const msg = await res.text()
+    throw new Error(msg || `POST ${path} failed (${res.status})`)
+  }
   const text = await res.text()
   return text ? JSON.parse(text) : null
 }
@@ -124,4 +127,20 @@ export function requireAuthOrRedirect(navigate) {
 
 export function notifyApiError(message) {
   toast.error(message)
+}
+
+export async function wabaStartOnboarding() {
+  return apiPost('/api/waba/onboarding/start', {})
+}
+
+export async function wabaGetOnboardingStatus() {
+  return apiGet('/api/waba/onboarding/status')
+}
+
+export async function wabaExchangeCode(code) {
+  return apiPost('/api/waba/embedded-signup/exchange', { code })
+}
+
+export async function wabaRecheckOnboarding() {
+  return apiPost('/api/waba/onboarding/recheck', {})
 }

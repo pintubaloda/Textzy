@@ -161,6 +161,8 @@ public static class SeedData
             Id = Guid.NewGuid(),
             TenantId = tenantId,
             IsActive = false,
+            OnboardingState = "requested",
+            OnboardingStartedAtUtc = DateTime.UtcNow,
             BusinessAccountName = "Pending",
             DisplayPhoneNumber = "Pending"
         });

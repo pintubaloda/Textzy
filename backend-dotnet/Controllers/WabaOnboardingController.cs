@@ -1,6 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Textzy.Api.Data;
 using Textzy.Api.DTOs;
 using Textzy.Api.Services;
 using static Textzy.Api.Services.PermissionCatalog;
@@ -10,26 +8,31 @@ namespace Textzy.Api.Controllers;
 [ApiController]
 [Route("api/waba")]
 public class WabaOnboardingController(
-    TenantDbContext tenantDb,
-    TenancyContext tenancy,
     WhatsAppCloudService whatsapp,
     RbacService rbac) : ControllerBase
 {
+    [HttpPost("onboarding/start")]
+    public async Task<IActionResult> Start(CancellationToken ct)
+    {
+        if (!rbac.HasPermission(InboxWrite)) return Forbid();
+        var cfg = await whatsapp.StartOnboardingAsync(ct);
+        return Ok(new { state = cfg.OnboardingState, startedAtUtc = cfg.OnboardingStartedAtUtc });
+    }
+
+    [HttpGet("onboarding/status")]
+    public async Task<IActionResult> OnboardingStatus(CancellationToken ct)
+    {
+        if (!rbac.HasPermission(InboxRead)) return Forbid();
+        return Ok(await whatsapp.GetOnboardingStatusAsync(ct));
+    }
+
     [HttpGet("status")]
     public async Task<IActionResult> Status(CancellationToken ct)
     {
         if (!rbac.HasPermission(InboxRead)) return Forbid();
-        var cfg = await tenantDb.Set<Textzy.Api.Models.TenantWabaConfig>()
-            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId, ct);
+        var payload = await whatsapp.GetOnboardingStatusAsync(ct);
 
-        return Ok(new
-        {
-            isConnected = cfg is not null && cfg.IsActive,
-            businessName = cfg?.BusinessAccountName,
-            phone = cfg?.DisplayPhoneNumber,
-            wabaId = cfg?.WabaId,
-            connectedAtUtc = cfg?.ConnectedAtUtc
-        });
+        return Ok(payload);
     }
 
     [HttpPost("embedded-signup/exchange")]
@@ -54,5 +57,12 @@ public class WabaOnboardingController(
         {
             return BadRequest(ex.Message);
         }
+    }
+
+    [HttpPost("onboarding/recheck")]
+    public async Task<IActionResult> Recheck(CancellationToken ct)
+    {
+        if (!rbac.HasPermission(InboxWrite)) return Forbid();
+        return Ok(await whatsapp.GetOnboardingStatusAsync(ct));
     }
 }

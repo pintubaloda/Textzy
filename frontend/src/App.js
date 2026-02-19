@@ -21,6 +21,7 @@ import TemplatesPage from "@/pages/dashboard/TemplatesPage";
 import AutomationsPage from "@/pages/dashboard/AutomationsPage";
 import AnalyticsPage from "@/pages/dashboard/AnalyticsPage";
 import IntegrationsPage from "@/pages/dashboard/IntegrationsPage";
+import WhatsAppOnboardingPage from "@/pages/dashboard/WhatsAppOnboardingPage";
 import BillingPage from "@/pages/dashboard/BillingPage";
 import SettingsPage from "@/pages/dashboard/SettingsPage";
 import AdminPage from "@/pages/dashboard/AdminPage";
@@ -48,6 +49,7 @@ function App() {
             <Route path="automations" element={<AutomationsPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="integrations" element={<IntegrationsPage />} />
+            <Route path="whatsapp-onboarding" element={<WhatsAppOnboardingPage />} />
             <Route path="billing" element={<BillingPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="team" element={<TeamPage />} />

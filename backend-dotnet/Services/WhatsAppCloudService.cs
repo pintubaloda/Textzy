@@ -25,6 +25,16 @@ public class WhatsAppCloudService(
         public string DisplayPhoneNumber { get; init; } = string.Empty;
     }
 
+    private sealed class OnboardingAudit
+    {
+        public bool WebhookSubscribed { get; init; }
+        public bool PermissionAuditPassed { get; init; }
+        public string BusinessVerificationStatus { get; init; } = string.Empty;
+        public string PhoneQualityRating { get; init; } = string.Empty;
+        public string PhoneNameStatus { get; init; } = string.Empty;
+        public List<string> Warnings { get; init; } = [];
+    }
+
     public async Task<object> DebugProbeAsync(string accessToken, CancellationToken ct = default)
     {
         var steps = new List<object>();
@@ -121,13 +131,27 @@ public class WhatsAppCloudService(
         await tenantDb.SaveChangesAsync(ct);
     }
 
+    public async Task<TenantWabaConfig> StartOnboardingAsync(CancellationToken ct = default)
+    {
+        var config = await tenantDb.Set<TenantWabaConfig>().FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId, ct);
+        if (config is null)
+        {
+            config = new TenantWabaConfig { Id = Guid.NewGuid(), TenantId = tenancy.TenantId };
+            tenantDb.Set<TenantWabaConfig>().Add(config);
+        }
+
+        config.OnboardingState = "requested";
+        config.OnboardingStartedAtUtc = DateTime.UtcNow;
+        config.LastError = string.Empty;
+        await tenantDb.SaveChangesAsync(ct);
+        return config;
+    }
+
     public async Task<TenantWabaConfig> ExchangeEmbeddedCodeAsync(string code, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(code)) throw new InvalidOperationException("Code is required.");
-
-        var accessToken = await ResolveAccessTokenAsync(code, ct);
-        var discovered = await DiscoverWabaAssetsAsync(accessToken, ct)
-            ?? throw new InvalidOperationException("Code exchange succeeded but WABA/phone discovery failed. Verify app scopes and embedded signup completion.");
+        if (code.StartsWith("EA", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Strict embedded signup requires authorization code exchange. Direct access token payloads are not allowed.");
 
         var config = await tenantDb.Set<TenantWabaConfig>().FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId, ct);
         if (config is null)
@@ -136,6 +160,15 @@ public class WhatsAppCloudService(
             tenantDb.Set<TenantWabaConfig>().Add(config);
         }
 
+        config.OnboardingState = "code_received";
+        config.CodeReceivedAtUtc = DateTime.UtcNow;
+        config.LastError = string.Empty;
+        await tenantDb.SaveChangesAsync(ct);
+
+        var accessToken = await ResolveAccessTokenAsync(code, ct);
+        var discovered = await DiscoverWabaAssetsAsync(accessToken, ct)
+            ?? throw new InvalidOperationException("Code exchange succeeded but WABA/phone discovery failed. Verify app scopes and embedded signup completion.");
+
         config.AccessToken = accessToken;
         config.IsActive = true;
         config.BusinessAccountName = discovered.WabaName;
@@ -143,14 +176,96 @@ public class WhatsAppCloudService(
         config.PhoneNumberId = discovered.PhoneNumberId;
         config.DisplayPhoneNumber = discovered.DisplayPhoneNumber;
         config.ConnectedAtUtc = DateTime.UtcNow;
+        config.ExchangedAtUtc = DateTime.UtcNow;
+        config.AssetsLinkedAtUtc = DateTime.UtcNow;
+        config.OnboardingState = "assets_linked";
+
+        var webhookOk = await EnsureWebhookSubscriptionAsync(config, ct);
+        config.WebhookSubscribedAtUtc = webhookOk ? DateTime.UtcNow : null;
+        config.OnboardingState = webhookOk ? "webhook_subscribed" : "assets_linked";
+
+        var audit = await RunPostOnboardingChecksAsync(config, ct);
+        config.PermissionAuditPassed = audit.PermissionAuditPassed;
+        config.BusinessVerificationStatus = audit.BusinessVerificationStatus;
+        config.PhoneQualityRating = audit.PhoneQualityRating;
+        config.PhoneNameStatus = audit.PhoneNameStatus;
+        if (audit.Warnings.Count > 0) config.LastError = string.Join(" | ", audit.Warnings);
+        config.OnboardingState = webhookOk && audit.PermissionAuditPassed ? "ready" : config.OnboardingState;
 
         await tenantDb.SaveChangesAsync(ct);
         return config;
     }
 
+    public async Task<object> GetOnboardingStatusAsync(CancellationToken ct = default)
+    {
+        var config = await tenantDb.Set<TenantWabaConfig>().FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId, ct);
+        if (config is null)
+        {
+            return new
+            {
+                state = "requested",
+                isConnected = false,
+                readyToSend = false
+            };
+        }
+
+        if (!string.IsNullOrWhiteSpace(config.AccessToken) && !string.IsNullOrWhiteSpace(config.WabaId))
+        {
+            var audit = await RunPostOnboardingChecksAsync(config, ct);
+            config.PermissionAuditPassed = audit.PermissionAuditPassed;
+            config.BusinessVerificationStatus = audit.BusinessVerificationStatus;
+            config.PhoneQualityRating = audit.PhoneQualityRating;
+            config.PhoneNameStatus = audit.PhoneNameStatus;
+            if (audit.Warnings.Count > 0)
+            {
+                config.LastError = string.Join(" | ", audit.Warnings);
+            }
+
+            if (audit.WebhookSubscribed && config.WebhookSubscribedAtUtc is null)
+                config.WebhookSubscribedAtUtc = DateTime.UtcNow;
+
+            if (config.OnboardingState != "ready" && audit.WebhookSubscribed && audit.PermissionAuditPassed)
+                config.OnboardingState = "ready";
+
+            await tenantDb.SaveChangesAsync(ct);
+        }
+
+        var ready = config.IsActive
+            && !string.IsNullOrWhiteSpace(config.WabaId)
+            && !string.IsNullOrWhiteSpace(config.PhoneNumberId)
+            && config.PermissionAuditPassed
+            && config.WebhookSubscribedAtUtc.HasValue;
+
+        return new
+        {
+            state = config.OnboardingState,
+            isConnected = config.IsActive,
+            readyToSend = ready,
+            businessName = config.BusinessAccountName,
+            phone = config.DisplayPhoneNumber,
+            wabaId = config.WabaId,
+            phoneNumberId = config.PhoneNumberId,
+            businessVerificationStatus = config.BusinessVerificationStatus,
+            phoneQualityRating = config.PhoneQualityRating,
+            phoneNameStatus = config.PhoneNameStatus,
+            permissionAuditPassed = config.PermissionAuditPassed,
+            webhookSubscribed = config.WebhookSubscribedAtUtc.HasValue,
+            timeline = new
+            {
+                requestedAtUtc = config.OnboardingStartedAtUtc,
+                codeReceivedAtUtc = config.CodeReceivedAtUtc,
+                exchangedAtUtc = config.ExchangedAtUtc,
+                assetsLinkedAtUtc = config.AssetsLinkedAtUtc,
+                webhookSubscribedAtUtc = config.WebhookSubscribedAtUtc,
+                verifiedAtUtc = config.WebhookVerifiedAtUtc
+            },
+            lastError = config.LastError,
+            lastGraphError = config.LastGraphError
+        };
+    }
+
     private async Task<string> ResolveAccessTokenAsync(string codeOrToken, CancellationToken ct)
     {
-        if (codeOrToken.StartsWith("EA", StringComparison.OrdinalIgnoreCase)) return codeOrToken;
         if (string.IsNullOrWhiteSpace(_options.AppId) || string.IsNullOrWhiteSpace(_options.AppSecret))
             throw new InvalidOperationException("WhatsApp AppId/AppSecret missing.");
 
@@ -168,6 +283,120 @@ public class WhatsAppCloudService(
         var accessToken = tokenDoc.RootElement.TryGetProperty("access_token", out var at) ? at.GetString() ?? string.Empty : string.Empty;
         if (string.IsNullOrWhiteSpace(accessToken)) throw new InvalidOperationException("Missing access token in exchange response.");
         return accessToken;
+    }
+
+    public async Task MarkWebhookVerifiedAsync(string phoneNumberId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(phoneNumberId)) return;
+        var cfg = await tenantDb.Set<TenantWabaConfig>()
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.PhoneNumberId == phoneNumberId, ct);
+        if (cfg is null) return;
+        cfg.WebhookVerifiedAtUtc = DateTime.UtcNow;
+        if (cfg.OnboardingState != "ready" && cfg.WebhookSubscribedAtUtc.HasValue && cfg.PermissionAuditPassed)
+            cfg.OnboardingState = "ready";
+        await tenantDb.SaveChangesAsync(ct);
+    }
+
+    private async Task<bool> EnsureWebhookSubscriptionAsync(TenantWabaConfig config, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(config.WabaId) || string.IsNullOrWhiteSpace(config.AccessToken)) return false;
+        var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.WabaId}/subscribed_apps";
+        var post = await GraphPostRawAsync(url, config.AccessToken, null, ct);
+        if (!post.Ok)
+        {
+            config.LastGraphError = post.Body;
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task<OnboardingAudit> RunPostOnboardingChecksAsync(TenantWabaConfig config, CancellationToken ct)
+    {
+        var warnings = new List<string>();
+        var businessVerificationStatus = string.Empty;
+        var phoneQualityRating = string.Empty;
+        var phoneNameStatus = string.Empty;
+        var permissionAuditPassed = false;
+        var webhookSubscribed = false;
+
+        if (string.IsNullOrWhiteSpace(config.AccessToken))
+            return new OnboardingAudit { Warnings = ["Missing access token."] };
+
+        if (!string.IsNullOrWhiteSpace(config.WabaId))
+        {
+            var wabaUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.WabaId}?fields=id,name,account_review_status,business_verification_status";
+            var waba = await GraphGetRawAsync(wabaUrl, config.AccessToken, ct);
+            if (waba.Ok && !string.IsNullOrWhiteSpace(waba.Body))
+            {
+                try
+                {
+                    using var wabaDoc = JsonDocument.Parse(waba.Body);
+                    businessVerificationStatus = TryGetString(wabaDoc.RootElement, "business_verification_status");
+                }
+                catch
+                {
+                    warnings.Add("Unable to parse WABA verification status.");
+                }
+            }
+            else
+            {
+                warnings.Add("Failed to fetch WABA status.");
+                config.LastGraphError = waba.Body;
+            }
+
+            var subscribedUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.WabaId}/subscribed_apps";
+            var subscribed = await GraphGetRawAsync(subscribedUrl, config.AccessToken, ct);
+            webhookSubscribed = subscribed.Ok;
+            if (!subscribed.Ok) warnings.Add("Webhook subscription check failed.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(config.PhoneNumberId))
+        {
+            var phoneUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.PhoneNumberId}?fields=id,verified_name,quality_rating,name_status";
+            var phone = await GraphGetRawAsync(phoneUrl, config.AccessToken, ct);
+            if (phone.Ok && !string.IsNullOrWhiteSpace(phone.Body))
+            {
+                try
+                {
+                    using var phoneDoc = JsonDocument.Parse(phone.Body);
+                    phoneQualityRating = TryGetString(phoneDoc.RootElement, "quality_rating");
+                    phoneNameStatus = TryGetString(phoneDoc.RootElement, "name_status");
+                }
+                catch
+                {
+                    warnings.Add("Unable to parse phone quality/name status.");
+                }
+            }
+            else
+            {
+                warnings.Add("Failed to fetch phone quality status.");
+            }
+        }
+
+        var permsUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/me/permissions";
+        var permsRaw = await GraphGetRawAsync(permsUrl, config.AccessToken, ct);
+        if (permsRaw.Ok && !string.IsNullOrWhiteSpace(permsRaw.Body))
+        {
+            permissionAuditPassed = permsRaw.Body.Contains("whatsapp_business_management", StringComparison.OrdinalIgnoreCase)
+                && permsRaw.Body.Contains("whatsapp_business_messaging", StringComparison.OrdinalIgnoreCase)
+                && permsRaw.Body.Contains("business_management", StringComparison.OrdinalIgnoreCase);
+            if (!permissionAuditPassed) warnings.Add("Required scopes are missing.");
+        }
+        else
+        {
+            warnings.Add("Permissions audit failed.");
+        }
+
+        return new OnboardingAudit
+        {
+            WebhookSubscribed = webhookSubscribed,
+            PermissionAuditPassed = permissionAuditPassed,
+            BusinessVerificationStatus = businessVerificationStatus,
+            PhoneQualityRating = phoneQualityRating,
+            PhoneNameStatus = phoneNameStatus,
+            Warnings = warnings
+        };
     }
 
     private async Task<DiscoveredWabaAsset?> DiscoverWabaAssetsAsync(string accessToken, CancellationToken ct)
@@ -260,6 +489,20 @@ public class WhatsAppCloudService(
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
             logger.LogWarning("Graph call failed: {Url} status={Status} body={Body}", url, (int)resp.StatusCode, body);
+        return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
+    }
+
+    private async Task<(bool Ok, int StatusCode, string Body)> GraphPostRawAsync(string url, string accessToken, string? payload, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient();
+        using var req = new HttpRequestMessage(HttpMethod.Post, url);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        if (!string.IsNullOrWhiteSpace(payload))
+            req.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+        var resp = await client.SendAsync(req, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode)
+            logger.LogWarning("Graph POST failed: {Url} status={Status} body={Body}", url, (int)resp.StatusCode, body);
         return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
     }
 

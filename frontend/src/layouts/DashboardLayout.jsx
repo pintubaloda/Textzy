@@ -62,6 +62,7 @@ const DashboardLayout = () => {
     { name: "Automations", href: "/dashboard/automations", icon: Zap },
     { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
     { name: "Integrations", href: "/dashboard/integrations", icon: Plug },
+    { name: "WABA Setup", href: "/dashboard/whatsapp-onboarding", icon: MessageSquare },
     { name: "Team", href: "/dashboard/team", icon: UsersRound },
     { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
     { name: "Settings", href: "/dashboard/settings", icon: Settings },

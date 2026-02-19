@@ -84,6 +84,8 @@ public class WabaWebhookController(
                 .FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.IsActive && x.PhoneNumberId == phoneNumberId, ct);
 
             if (cfg is null) continue;
+            cfg.WebhookVerifiedAtUtc = DateTime.UtcNow;
+            if (cfg.WebhookSubscribedAtUtc.HasValue && cfg.PermissionAuditPassed) cfg.OnboardingState = "ready";
 
             foreach (var from in inboundFrom)
             {
