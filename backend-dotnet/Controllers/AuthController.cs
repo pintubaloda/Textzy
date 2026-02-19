@@ -159,6 +159,101 @@ public class AuthController(
     public IActionResult Me()
     {
         if (!auth.IsAuthenticated) return Unauthorized();
-        return Ok(new { auth.UserId, auth.Email, auth.Role, auth.TenantId, permissions = auth.Permissions });
+        return Ok(new { auth.UserId, auth.Email, auth.Role, auth.TenantId, tenantSlug = tenancy.TenantSlug, permissions = auth.Permissions });
+    }
+
+    [HttpGet("projects")]
+    public IActionResult Projects()
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+
+        var projects = db.TenantUsers
+            .Where(tu => tu.UserId == auth.UserId)
+            .Join(db.Tenants, tu => tu.TenantId, t => t.Id, (tu, t) => new
+            {
+                t.Id,
+                t.Name,
+                t.Slug,
+                tu.Role,
+                t.CreatedAtUtc
+            })
+            .OrderBy(x => x.CreatedAtUtc)
+            .ToList();
+
+        return Ok(projects);
+    }
+
+    [HttpPost("projects")]
+    public async Task<IActionResult> CreateProject([FromBody] CreateProjectRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        var name = (request.Name ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(name)) return BadRequest("Project name is required.");
+
+        var baseSlug = NormalizeSlug(name);
+        if (string.IsNullOrWhiteSpace(baseSlug)) return BadRequest("Invalid project name.");
+        var slug = baseSlug;
+        var index = 2;
+        while (await db.Tenants.AnyAsync(t => t.Slug == slug, ct))
+        {
+            slug = $"{baseSlug}-{index++}";
+        }
+
+        var seedConnection = db.Tenants.OrderBy(t => t.CreatedAtUtc).Select(t => t.DataConnectionString).FirstOrDefault()
+            ?? db.Database.GetConnectionString()
+            ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(seedConnection))
+            return BadRequest("Unable to resolve project data connection.");
+
+        var tenant = new Tenant
+        {
+            Id = Guid.NewGuid(),
+            Name = name,
+            Slug = slug,
+            DataConnectionString = seedConnection
+        };
+        db.Tenants.Add(tenant);
+        db.TenantUsers.Add(new TenantUser
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenant.Id,
+            UserId = auth.UserId,
+            Role = "owner"
+        });
+        await db.SaveChangesAsync(ct);
+
+        using var tenantDb = SeedData.CreateTenantDbContext(seedConnection);
+        tenantDb.Database.EnsureCreated();
+        SeedData.InitializeTenant(tenantDb, tenant.Id);
+
+        var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
+        return Ok(new { tenant.Id, tenant.Name, tenant.Slug, role = "owner", accessToken = token });
+    }
+
+    [HttpPost("switch-project")]
+    public async Task<IActionResult> SwitchProject([FromBody] SwitchProjectRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        var slug = (request.Slug ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(slug)) return BadRequest("Project slug is required.");
+
+        var tenant = await db.Tenants.FirstOrDefaultAsync(t => t.Slug == slug, ct);
+        if (tenant is null) return NotFound("Project not found.");
+
+        var membership = await db.TenantUsers
+            .FirstOrDefaultAsync(tu => tu.UserId == auth.UserId && tu.TenantId == tenant.Id, ct);
+        if (membership is null) return Forbid();
+
+        var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
+        return Ok(new { accessToken = token, tenantSlug = tenant.Slug, projectName = tenant.Name, role = membership.Role });
+    }
+
+    private static string NormalizeSlug(string value)
+    {
+        var lowered = value.Trim().ToLowerInvariant();
+        var chars = lowered.Select(ch => char.IsLetterOrDigit(ch) ? ch : '-').ToArray();
+        var slug = new string(chars);
+        while (slug.Contains("--", StringComparison.Ordinal)) slug = slug.Replace("--", "-", StringComparison.Ordinal);
+        return slug.Trim('-');
     }
 }

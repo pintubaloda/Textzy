@@ -31,11 +31,11 @@ const LoginPage = () => {
       setSession({ token: login.accessToken });
       await initializeMe();
       setLoading(false);
-      toast.success("Welcome back! Redirecting to dashboard...");
-      navigate("/dashboard", { replace: true });
+      toast.success("Welcome back! Select your project...");
+      navigate("/projects", { replace: true });
       setTimeout(() => {
-        if (window.location.pathname !== "/dashboard") {
-          window.location.assign("/dashboard");
+        if (window.location.pathname !== "/projects") {
+          window.location.assign("/projects");
         }
       }, 120);
     } catch {

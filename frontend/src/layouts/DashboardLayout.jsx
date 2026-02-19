@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -38,8 +38,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { clearSession, getSession, initializeMe } from "@/lib/api";
-import { useEffect } from "react";
+import { authProjects, clearSession, getSession, initializeMe, switchProject } from "@/lib/api";
 
 const DashboardLayout = () => {
   const location = useLocation();
@@ -47,11 +46,25 @@ const DashboardLayout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [switchingProject, setSwitchingProject] = useState("");
   const session = getSession();
 
   useEffect(() => {
     initializeMe();
+    authProjects().then((res) => setProjects(Array.isArray(res) ? res : [])).catch(() => setProjects([]));
   }, []);
+
+  const handleProjectSwitch = async (slug) => {
+    if (!slug || slug === session.tenantSlug) return;
+    try {
+      setSwitchingProject(slug);
+      await switchProject(slug);
+      window.location.assign("/dashboard");
+    } finally {
+      setSwitchingProject("");
+    }
+  };
 
   const navigation = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -122,6 +135,29 @@ const DashboardLayout = () => {
               />
             </div>
           </div>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="hidden md:flex" data-testid="project-switch-btn">
+                {session.projectName || session.tenantSlug || "Select Project"}
+                <ChevronDown className="w-4 h-4 ml-2" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-72">
+              <DropdownMenuLabel>Switch Project</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {projects.map((p) => (
+                <DropdownMenuItem key={p.slug} onClick={() => handleProjectSwitch(p.slug)} disabled={switchingProject === p.slug}>
+                  <div className="flex w-full items-center justify-between">
+                    <span>{p.name}</span>
+                    <span className="text-xs text-slate-400">{p.slug === session.tenantSlug ? "Current" : p.role}</span>
+                  </div>
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => navigate("/projects")}>Manage Projects</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         <div className="flex items-center gap-2">

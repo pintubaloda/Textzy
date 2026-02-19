@@ -8,6 +8,7 @@ import LandingPage from "@/pages/LandingPage";
 
 // Auth Pages
 import LoginPage from "@/pages/auth/LoginPage";
+import ProjectSelectPage from "@/pages/auth/ProjectSelectPage";
 import RegisterPage from "@/pages/auth/RegisterPage";
 import ForgotPasswordPage from "@/pages/auth/ForgotPasswordPage";
 
@@ -35,6 +36,7 @@ function App() {
           {/* Public Routes */}
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/projects" element={<ProjectSelectPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 

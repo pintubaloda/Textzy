@@ -11,11 +11,12 @@ export function getSession() {
     return {
       token: p.token || '',
       tenantSlug: p.tenantSlug || '',
+      projectName: p.projectName || '',
       role: p.role || '',
       email: p.email || ''
     }
   } catch {
-    return { token: '', tenantSlug: '', role: '', email: '' }
+    return { token: '', tenantSlug: '', projectName: '', role: '', email: '' }
   }
 }
 
@@ -109,11 +110,41 @@ export async function authLogin({ email, password, tenantSlug }) {
 export async function initializeMe() {
   try {
     const me = await apiGet('/api/auth/me')
-    setSession({ role: me.role || '', email: me.email || '' })
+    setSession({ role: me.role || '', email: me.email || '', tenantSlug: me.tenantSlug || '' })
     return me
   } catch {
     return null
   }
+}
+
+export async function authProjects() {
+  return apiGet('/api/auth/projects')
+}
+
+export async function createProject(name) {
+  const data = await apiPost('/api/auth/projects', { name })
+  if (data?.accessToken) {
+    setSession({
+      token: data.accessToken,
+      tenantSlug: data.slug || '',
+      projectName: data.name || '',
+      role: data.role || 'owner'
+    })
+  }
+  return data
+}
+
+export async function switchProject(slug) {
+  const data = await apiPost('/api/auth/switch-project', { slug })
+  if (data?.accessToken) {
+    setSession({
+      token: data.accessToken,
+      tenantSlug: data.tenantSlug || slug,
+      projectName: data.projectName || '',
+      role: data.role || ''
+    })
+  }
+  return data
 }
 
 export function requireAuthOrRedirect(navigate) {
