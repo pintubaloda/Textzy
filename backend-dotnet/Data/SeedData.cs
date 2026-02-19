@@ -8,45 +8,71 @@ public static class SeedData
 {
     public static void InitializeControl(ControlDbContext db, string defaultTenantConnection)
     {
-        if (db.Tenants.Any()) return;
-
-        var tenantA = new Tenant
+        var tenantA = db.Tenants.FirstOrDefault(t => t.Slug == "demo-retail");
+        if (tenantA is null)
         {
-            Id = Guid.NewGuid(),
-            Name = "Demo Retail",
-            Slug = "demo-retail",
-            DataConnectionString = defaultTenantConnection
+            tenantA = new Tenant
+            {
+                Id = Guid.NewGuid(),
+                Name = "Demo Retail",
+                Slug = "demo-retail",
+                DataConnectionString = defaultTenantConnection
+            };
+            db.Tenants.Add(tenantA);
+        }
+
+        var tenantB = db.Tenants.FirstOrDefault(t => t.Slug == "demo-d2c");
+        if (tenantB is null)
+        {
+            tenantB = new Tenant
+            {
+                Id = Guid.NewGuid(),
+                Name = "Demo D2C",
+                Slug = "demo-d2c",
+                DataConnectionString = defaultTenantConnection
+            };
+            db.Tenants.Add(tenantB);
+        }
+
+        var user = db.Users.FirstOrDefault(u => u.Email == "admin@textzy.local");
+        if (user is null)
+        {
+            var hasher = new PasswordHasher();
+            var (hash, salt) = hasher.HashPassword("ChangeMe@123");
+            user = new User
+            {
+                Id = Guid.NewGuid(),
+                Email = "admin@textzy.local",
+                FullName = "Textzy Admin",
+                PasswordHash = hash,
+                PasswordSalt = salt,
+                IsActive = true,
+                IsSuperAdmin = true
+            };
+            db.Users.Add(user);
+        }
+
+        var mappings = new (Guid TenantId, string Role)[]
+        {
+            (tenantA.Id, "owner"),
+            (tenantB.Id, "admin"),
+            (tenantA.Id, "manager")
         };
 
-        var tenantB = new Tenant
+        foreach (var m in mappings)
         {
-            Id = Guid.NewGuid(),
-            Name = "Demo D2C",
-            Slug = "demo-d2c",
-            DataConnectionString = defaultTenantConnection
-        };
-
-        db.Tenants.AddRange(tenantA, tenantB);
-
-        var hasher = new PasswordHasher();
-        var (hash, salt) = hasher.HashPassword("ChangeMe@123");
-        var user = new User
-        {
-            Id = Guid.NewGuid(),
-            Email = "admin@textzy.local",
-            FullName = "Textzy Admin",
-            PasswordHash = hash,
-            PasswordSalt = salt,
-            IsActive = true,
-            IsSuperAdmin = true
-        };
-
-        db.Users.Add(user);
-        db.TenantUsers.AddRange(
-            new TenantUser { Id = Guid.NewGuid(), TenantId = tenantA.Id, UserId = user.Id, Role = "owner" },
-            new TenantUser { Id = Guid.NewGuid(), TenantId = tenantB.Id, UserId = user.Id, Role = "admin" },
-            new TenantUser { Id = Guid.NewGuid(), TenantId = tenantA.Id, UserId = user.Id, Role = "manager" }
-        );
+            var exists = db.TenantUsers.Any(tu => tu.UserId == user.Id && tu.TenantId == m.TenantId && tu.Role == m.Role);
+            if (!exists)
+            {
+                db.TenantUsers.Add(new TenantUser
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = m.TenantId,
+                    UserId = user.Id,
+                    Role = m.Role
+                });
+            }
+        }
 
         db.SaveChanges();
     }

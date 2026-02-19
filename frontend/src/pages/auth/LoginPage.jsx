@@ -35,7 +35,7 @@ const LoginPage = () => {
       navigate("/dashboard");
     } catch {
       setLoading(false);
-      toast.error("Login failed. Check credentials and tenant slug.");
+      toast.error("Login failed. Check email/password.");
     }
   };
 
