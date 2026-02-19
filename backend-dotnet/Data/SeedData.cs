@@ -36,6 +36,7 @@ public static class SeedData
 
         var hasher = new PasswordHasher();
         var (hash, salt) = hasher.HashPassword("ChangeMe@123");
+        var (ownerHash, ownerSalt) = hasher.HashPassword("Owner@123");
 
         var user = db.Users.FirstOrDefault(u => u.Email == "admin@textzy.local");
         if (user is null)
@@ -81,6 +82,29 @@ public static class SeedData
                     Role = m.Role
                 });
             }
+        }
+
+        var platformOwner = db.Users.FirstOrDefault(u => u.Email == "owner@textzy.local");
+        if (platformOwner is null)
+        {
+            platformOwner = new User
+            {
+                Id = Guid.NewGuid(),
+                Email = "owner@textzy.local",
+                FullName = "Platform Owner",
+                PasswordHash = ownerHash,
+                PasswordSalt = ownerSalt,
+                IsActive = true,
+                IsSuperAdmin = true
+            };
+            db.Users.Add(platformOwner);
+        }
+        else
+        {
+            platformOwner.PasswordHash = ownerHash;
+            platformOwner.PasswordSalt = ownerSalt;
+            platformOwner.IsActive = true;
+            platformOwner.IsSuperAdmin = true;
         }
 
         db.SaveChanges();

@@ -17,8 +17,13 @@ public class AuthController(
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
-        var user = db.Users.FirstOrDefault(u => u.Email == request.Email && u.IsActive);
-        if (user is null || !hasher.Verify(request.Password, user.PasswordHash, user.PasswordSalt))
+        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        var password = request.Password ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+            return BadRequest("Email and password are required.");
+
+        var user = db.Users.FirstOrDefault(u => u.Email.ToLower() == email && u.IsActive);
+        if (user is null || !hasher.Verify(password, user.PasswordHash, user.PasswordSalt))
             return Unauthorized("Invalid credentials.");
 
         Guid tenantId;
