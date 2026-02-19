@@ -8,4 +8,6 @@ public class WhatsAppOptions
     public string GraphApiBase { get; set; } = "https://graph.facebook.com";
     public string ApiVersion { get; set; } = "v21.0";
     public string EmbeddedSignupConfigId { get; set; } = string.Empty;
+    public string RedirectUri { get; set; } = string.Empty;
+    public string WebhookCallbackUrl { get; set; } = string.Empty;
 }
