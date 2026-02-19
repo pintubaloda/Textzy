@@ -240,25 +240,6 @@ const DashboardOverview = () => {
             </div>
           </div>
 
-          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
-            <div className="rounded-2xl p-5 bg-gradient-to-r from-fuchsia-500 to-purple-500">
-              <p className="text-white/90">Total Messages</p>
-              <p className="text-4xl font-bold mt-2">{computedStats.total}</p>
-            </div>
-            <div className="rounded-2xl p-5 bg-gradient-to-r from-emerald-400 to-cyan-400">
-              <p className="text-white/90">WhatsApp Sent</p>
-              <p className="text-4xl font-bold mt-2">{computedStats.wa}</p>
-            </div>
-            <div className="rounded-2xl p-5 bg-gradient-to-r from-blue-400 to-indigo-500">
-              <p className="text-white/90">SMS Sent</p>
-              <p className="text-4xl font-bold mt-2">{computedStats.sms}</p>
-            </div>
-            <div className="rounded-2xl p-5 bg-gradient-to-r from-orange-400 to-amber-500">
-              <p className="text-white/90">Active Contacts</p>
-              <p className="text-4xl font-bold mt-2">{computedStats.contacts}</p>
-            </div>
-          </div>
-
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
             <button className="rounded-xl border border-white/20 bg-white/10 p-4 text-left"><PhoneCall className="w-5 h-5 mb-1" />Add WhatsApp Contacts</button>
             <button className="rounded-xl border border-white/20 bg-white/10 p-4 text-left"><Users className="w-5 h-5 mb-1" />Add Team Members</button>
