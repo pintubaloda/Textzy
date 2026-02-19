@@ -186,12 +186,12 @@ const DashboardOverview = () => {
         {stats.map((stat, index) => (
           <Card key={index} className="relative overflow-hidden border-slate-200 bg-white shadow-sm" data-testid={`stat-card-${index}`}>
             <div className="absolute -top-14 -right-14 w-44 h-44 rounded-full bg-slate-100/80" />
-            <CardContent className="pt-7 pb-7 relative z-10">
+            <CardContent className="pt-6 pb-6 relative z-10">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-2xl text-slate-600 mb-2">{stat.title}</p>
-                  <p className="text-5xl leading-none font-bold text-slate-900 mt-2">{stat.value}</p>
-                  <div className={`flex items-center gap-1 mt-5 text-xl ${stat.trend === "up" ? "text-green-600" : "text-red-500"}`}>
+                  <p className="text-[36px] text-slate-600 mb-2">{stat.title}</p>
+                  <p className="text-[52px] leading-none font-bold text-slate-900 mt-1">{stat.value}</p>
+                  <div className={`flex items-center gap-1 mt-6 text-[36px] ${stat.trend === "up" ? "text-green-600" : "text-red-500"}`}>
                     {stat.trend === "up" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
                     {stat.change} vs last week
                   </div>
