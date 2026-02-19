@@ -75,6 +75,7 @@ using (var scope = app.Services.CreateScope())
 {
     var controlDb = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+    EnsureControlAuthSchema(controlDb);
     controlDb.Database.EnsureCreated();
     SeedData.InitializeControl(controlDb, controlConnection);
 
@@ -111,6 +112,63 @@ app.UseMiddleware<AuthMiddleware>();
 app.MapControllers();
 app.MapHub<Textzy.Api.Services.InboxHub>("/hubs/inbox");
 app.Run();
+
+static void EnsureControlAuthSchema(ControlDbContext db)
+{
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "Tenants" (
+            "Id" uuid PRIMARY KEY,
+            "Name" text NOT NULL,
+            "Slug" text NOT NULL,
+            "DataConnectionString" text NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_Tenants_Slug" ON "Tenants" ("Slug");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "Users" (
+            "Id" uuid PRIMARY KEY,
+            "Email" text NOT NULL,
+            "FullName" text NOT NULL,
+            "PasswordHash" text NOT NULL,
+            "PasswordSalt" text NOT NULL,
+            "IsActive" boolean NOT NULL,
+            "IsSuperAdmin" boolean NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_Users_Email" ON "Users" ("Email");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "TenantUsers" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NOT NULL,
+            "UserId" uuid NOT NULL,
+            "Role" text NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantUsers_UserId" ON "TenantUsers" ("UserId");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantUsers_TenantId" ON "TenantUsers" ("TenantId");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "SessionTokens" (
+            "Id" uuid PRIMARY KEY,
+            "UserId" uuid NOT NULL,
+            "TenantId" uuid NOT NULL,
+            "TokenHash" text NOT NULL,
+            "ExpiresAtUtc" timestamp with time zone NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL,
+            "RevokedAtUtc" timestamp with time zone NULL
+        );
+        """);
+
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SessionTokens_TokenHash" ON "SessionTokens" ("TokenHash");""");
+}
 
 static string NormalizeConnectionString(string raw)
 {
