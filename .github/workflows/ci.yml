@@ -49,12 +49,7 @@ jobs:
           cache-dependency-path: frontend/package.json
 
       - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install --legacy-peer-deps
-          fi
+        run: npm ci
 
       - name: Build
         run: npm run build

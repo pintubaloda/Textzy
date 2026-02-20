@@ -27,7 +27,7 @@ dotnet run
 ### Frontend run
 ```bash
 cd /Volumes/Rakesh/RBproject/Textzy/frontend
-npm install
+npm ci
 npm run dev
 ```
 
