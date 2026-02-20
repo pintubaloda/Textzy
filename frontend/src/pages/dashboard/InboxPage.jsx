@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import * as signalR from "@microsoft/signalr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +37,7 @@ import {
   Mic,
 } from "lucide-react";
 import { apiGet, apiPost, wabaGetOnboardingStatus } from "@/lib/api";
+import { getSession } from "@/lib/api";
 import { toast } from "sonner";
 
 const InboxPage = () => {
@@ -53,6 +55,43 @@ const InboxPage = () => {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [templateVars, setTemplateVars] = useState({});
+  const [notes, setNotes] = useState([]);
+  const [newNote, setNewNote] = useState("");
+  const [sla, setSla] = useState({ breachedCount: 0, items: [] });
+  const [typingUsers, setTypingUsers] = useState([]);
+
+  const mapConversation = (x) => ({
+    id: x.id,
+    name: x.customerName || x.customerPhone,
+    phone: x.customerPhone,
+    lastMessage: x.status || "Conversation",
+    time: x.lastMessageAtUtc || x.createdAtUtc || null,
+    unread: 0,
+    starred: false,
+    channel: "whatsapp",
+    avatar: (x.customerName || x.customerPhone || "U").slice(0, 2).toUpperCase(),
+    assignedUserId: x.assignedUserId || "",
+    assignedUserName: x.assignedUserName || "",
+    labels: (x.labelsCsv || "").split(",").map((z) => z.trim()).filter(Boolean),
+    canReply: !!x.canReply,
+    hoursSinceInbound: Number(x.hoursSinceInbound || 999),
+  });
+  const mapMessage = (x) => ({
+    id: x.id,
+    sender: String(x.status || "").toLowerCase() === "received" ? "customer" : "agent",
+    text: x.body,
+    time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
+    status: String(x.status || "").toLowerCase() === "received" ? "received" : String(x.status || "").toLowerCase(),
+  });
+
+  const loadConversations = () =>
+    apiGet("/api/inbox/conversations").then((c) => setConversations((c || []).map(mapConversation))).catch(() => {});
+  const loadThread = (conversationId) =>
+    apiGet(`/api/inbox/conversations/${conversationId}/messages`).then((rows) => setMessages((rows || []).map(mapMessage))).catch(() => setMessages([]));
+  const loadNotes = (conversationId) =>
+    apiGet(`/api/inbox/conversations/${conversationId}/notes`).then((rows) => setNotes(rows || [])).catch(() => setNotes([]));
+  const loadSla = () =>
+    apiGet("/api/inbox/sla?thresholdMinutes=15").then((x) => setSla(x || { breachedCount: 0, items: [] })).catch(() => {});
 
   useEffect(() => {
     Promise.all([
@@ -64,24 +103,7 @@ const InboxPage = () => {
       wabaGetOnboardingStatus().catch(() => null),
     ])
       .then(([c, ct, tm, meData, tpl, waba]) => {
-        setConversations(
-          (c || []).map((x) => ({
-            id: x.id,
-            name: x.customerName || x.customerPhone,
-            phone: x.customerPhone,
-            lastMessage: x.status || "Conversation",
-            time: x.lastMessageAtUtc || x.createdAtUtc || null,
-            unread: 0,
-            starred: false,
-            channel: "whatsapp",
-            avatar: (x.customerName || x.customerPhone || "U").slice(0, 2).toUpperCase(),
-            assignedUserId: x.assignedUserId || "",
-            assignedUserName: x.assignedUserName || "",
-            labels: (x.labelsCsv || "").split(",").map((z) => z.trim()).filter(Boolean),
-            canReply: !!x.canReply,
-            hoursSinceInbound: Number(x.hoursSinceInbound || 999),
-          }))
-        );
+        setConversations((c || []).map(mapConversation));
         setMessages([]);
         setContacts(ct || []);
         setTeamMembers(tm || []);
@@ -90,6 +112,7 @@ const InboxPage = () => {
         setTemplates(approved);
         if (approved.length > 0) setSelectedTemplateId(String(approved[0].id));
         setWabaDetails(waba);
+        loadSla();
       })
       .catch(() => {
         setConversations([]);
@@ -152,17 +175,8 @@ const InboxPage = () => {
       setMessages([]);
       return;
     }
-    apiGet(`/api/inbox/conversations/${selectedChat.id}/messages`)
-      .then((rows) => {
-        setMessages((rows || []).map((x) => ({
-          id: x.id,
-          sender: String(x.status || "").toLowerCase() === "received" ? "customer" : "agent",
-          text: x.body,
-          time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
-          status: String(x.status || "").toLowerCase() === "received" ? "received" : "read",
-        })));
-      })
-      .catch(() => setMessages([]));
+    loadThread(selectedChat.id);
+    loadNotes(selectedChat.id);
   }, [selectedChat?.id]);
 
   const handleSendMessage = () => {
@@ -173,15 +187,8 @@ const InboxPage = () => {
     if (message.trim()) {
       apiPost("/api/messages/send", { recipient: selectedChat.phone || "+910000000000", body: message, channel: 2 }).catch(() => {});
       setMessage("");
-      apiGet(`/api/inbox/conversations/${selectedChat.id}/messages`).then((rows) => {
-        setMessages((rows || []).map((x) => ({
-          id: x.id,
-          sender: String(x.status || "").toLowerCase() === "received" ? "customer" : "agent",
-          text: x.body,
-          time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
-          status: String(x.status || "").toLowerCase() === "received" ? "received" : "read",
-        })));
-      }).catch(() => {});
+      loadThread(selectedChat.id);
+      loadConversations();
     }
   };
 
@@ -203,15 +210,8 @@ const InboxPage = () => {
         templateParameters: params,
       });
       toast.success(`Template sent: ${tpl.name}`);
-      apiGet(`/api/inbox/conversations/${selectedChat.id}/messages`).then((rows) => {
-        setMessages((rows || []).map((x) => ({
-          id: x.id,
-          sender: String(x.status || "").toLowerCase() === "received" ? "customer" : "agent",
-          text: x.body,
-          time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
-          status: String(x.status || "").toLowerCase() === "received" ? "received" : "read",
-        })));
-      }).catch(() => {});
+      loadThread(selectedChat.id);
+      loadConversations();
     } catch (e) {
       toast.error(e?.message || "Template send failed");
     }
@@ -224,39 +224,55 @@ const InboxPage = () => {
   useEffect(() => {
     if (!selectedChat?.id) return;
     const timer = setInterval(() => {
-      apiGet("/api/inbox/conversations").then((c) => {
-        setConversations(
-          (c || []).map((x) => ({
-            id: x.id,
-            name: x.customerName || x.customerPhone,
-            phone: x.customerPhone,
-            lastMessage: x.status || "Conversation",
-            time: x.lastMessageAtUtc || x.createdAtUtc || null,
-            unread: 0,
-            starred: false,
-            channel: "whatsapp",
-            avatar: (x.customerName || x.customerPhone || "U").slice(0, 2).toUpperCase(),
-            assignedUserId: x.assignedUserId || "",
-            assignedUserName: x.assignedUserName || "",
-            labels: (x.labelsCsv || "").split(",").map((z) => z.trim()).filter(Boolean),
-            canReply: !!x.canReply,
-            hoursSinceInbound: Number(x.hoursSinceInbound || 999),
-          }))
-        );
-      }).catch(() => {});
-      apiGet(`/api/inbox/conversations/${selectedChat.id}/messages`)
-        .then((rows) => {
-          setMessages((rows || []).map((x) => ({
-            id: x.id,
-            sender: String(x.status || "").toLowerCase() === "received" ? "customer" : "agent",
-            text: x.body,
-            time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
-            status: String(x.status || "").toLowerCase() === "received" ? "received" : String(x.status || "").toLowerCase(),
-          })));
-        })
-        .catch(() => {});
+      loadConversations();
+      loadThread(selectedChat.id);
+      loadSla();
     }, 6000);
     return () => clearInterval(timer);
+  }, [selectedChat?.id]);
+
+  useEffect(() => {
+    const s = getSession();
+    if (!s?.tenantSlug) return;
+    const baseUrl = process.env.REACT_APP_API_BASE || "https://textzy.onrender.com";
+    const connection = new signalR.HubConnectionBuilder()
+      .withUrl(`${baseUrl}/hubs/inbox`)
+      .withAutomaticReconnect()
+      .build();
+
+    connection.on("message.sent", () => {
+      loadConversations();
+      if (selectedChat?.id) loadThread(selectedChat.id);
+    });
+    connection.on("webhook.inbound", () => {
+      loadConversations();
+      if (selectedChat?.id) loadThread(selectedChat.id);
+      loadSla();
+    });
+    connection.on("conversation.assigned", () => loadConversations());
+    connection.on("conversation.transferred", () => loadConversations());
+    connection.on("conversation.labels", () => loadConversations());
+    connection.on("conversation.note", () => {
+      if (selectedChat?.id) loadNotes(selectedChat.id);
+    });
+    connection.on("conversation.typing", (e) => {
+      if (!e?.conversationId || String(e.conversationId) !== String(selectedChat?.id)) return;
+      setTypingUsers((prev) => {
+        const next = new Set(prev);
+        if (e.isTyping) next.add(e.user || "Agent");
+        else next.delete(e.user || "Agent");
+        return [...next];
+      });
+    });
+
+    connection.start()
+      .then(() => connection.invoke("JoinTenantRoom", s.tenantSlug))
+      .catch(() => {});
+
+    return () => {
+      connection.invoke("LeaveTenantRoom", s.tenantSlug).catch(() => {});
+      connection.stop().catch(() => {});
+    };
   }, [selectedChat?.id]);
 
   const handleAssign = async (member) => {
@@ -303,6 +319,19 @@ const InboxPage = () => {
       toast.success("Label added");
     } catch {
       toast.error("Failed to add label");
+    }
+  };
+
+  const handleAddNote = async () => {
+    const body = newNote.trim();
+    if (!body || !selectedChat?.id) return;
+    try {
+      await apiPost(`/api/inbox/conversations/${selectedChat.id}/notes`, { body });
+      setNewNote("");
+      loadNotes(selectedChat.id);
+      toast.success("Note added");
+    } catch {
+      toast.error("Failed to add note");
     }
   };
 
@@ -378,6 +407,7 @@ const InboxPage = () => {
             <Avatar className="w-10 h-10"><AvatarFallback className="bg-gradient-to-br from-orange-400 to-orange-600 text-white font-medium">{selectedChat.avatar}</AvatarFallback></Avatar>
             <div className="max-w-[220px]"><p className="font-semibold text-slate-900 text-lg leading-tight truncate">{selectedChat.name}</p><p className="text-xs text-slate-500 truncate">{selectedChat.phone}</p></div>
           </div>
+          {typingUsers.length > 0 ? <div className="text-xs text-emerald-600">{typingUsers.join(", ")} typing...</div> : null}
           {!canReplyInSession ? (
             <div className="hidden 2xl:flex items-center gap-2">
               <div className="px-2.5 py-1 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800 max-w-[220px] truncate">24h session closed. Customer must reply first.</div>
@@ -400,6 +430,11 @@ const InboxPage = () => {
                   onChange={(e) => setTemplateVars((prev) => ({ ...prev, [idx]: e.target.value }))}
                 />
               ))}
+              {selectedTemplate ? (
+                <div className="hidden 2xl:block text-[11px] text-slate-500 max-w-[220px] truncate">
+                  Preview: {(selectedTemplate.body || "").replace(/\{\{(\d+)\}\}/g, (_, i) => templateVars[Number(i)] || `{{${i}}}`)}
+                </div>
+              ) : null}
               <Button size="sm" className="h-8 bg-orange-500 hover:bg-orange-600 text-white" onClick={handleSendTemplateFallback}>Send Template</Button>
             </div>
           ) : null}
@@ -451,6 +486,12 @@ const InboxPage = () => {
                 onChange={(e) => setMessage(e.target.value)}
                 className="min-h-[70px] max-h-40 resize-none pr-12 text-base leading-6 border-0 focus-visible:ring-0 rounded-2xl bg-transparent text-slate-900 placeholder:text-slate-400"
                 disabled={!canReplyInSession}
+                onFocus={() => {
+                  if (selectedChat?.id) apiPost("/api/inbox/typing", { conversationId: selectedChat.id, isTyping: true }).catch(() => {});
+                }}
+                onBlur={() => {
+                  if (selectedChat?.id) apiPost("/api/inbox/typing", { conversationId: selectedChat.id, isTyping: false }).catch(() => {});
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -505,6 +546,28 @@ const InboxPage = () => {
                 <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Phone Number ID</span><span className="text-slate-900 font-medium">{wabaDetails?.phoneNumberId || "-"}</span></div>
                 <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Display Number</span><span className="text-slate-900 font-medium">{wabaDetails?.displayPhoneNumber || "-"}</span></div>
                 <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Status</span><Badge className={wabaDetails?.readyToSend ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>{wabaDetails?.readyToSend ? "Ready" : (wabaDetails?.state || "Pending")}</Badge></div>
+              </div>
+            </div>
+
+            <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
+              <p className="text-sm font-medium text-slate-800 mb-2">SLA</p>
+              <div className="text-sm text-slate-600">Breached: <span className="font-semibold text-slate-900">{sla.breachedCount || 0}</span></div>
+            </div>
+
+            <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
+              <p className="text-sm font-medium text-slate-800 mb-2">Notes</p>
+              <div className="space-y-2 max-h-32 overflow-auto">
+                {(notes || []).length === 0 ? <p className="text-xs text-slate-500">No notes yet</p> : null}
+                {(notes || []).slice(0, 8).map((n) => (
+                  <div key={n.id} className="text-xs bg-white border border-slate-200 rounded p-2">
+                    <div className="text-slate-700">{n.body}</div>
+                    <div className="text-[10px] text-slate-400 mt-1">{n.createdByName || "Agent"}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 flex gap-2">
+                <Input placeholder="Add note" value={newNote} onChange={(e) => setNewNote(e.target.value)} />
+                <Button size="sm" onClick={handleAddNote} className="bg-orange-500 hover:bg-orange-600 text-white">Save</Button>
               </div>
             </div>
           </div>
