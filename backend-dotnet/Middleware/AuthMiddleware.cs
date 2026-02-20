@@ -16,8 +16,9 @@ public class AuthMiddleware(RequestDelegate next)
         var isPublicTenantPath = path.StartsWith("/api/tenants", StringComparison.OrdinalIgnoreCase);
         var isSwaggerPath = path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase);
         var isWabaWebhookPath = path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase);
+        var isPaymentWebhookPath = path.StartsWith("/api/payments/webhook", StringComparison.OrdinalIgnoreCase);
 
-        if (isAuthPath || isPublicTenantPath || isSwaggerPath || isWabaWebhookPath)
+        if (isAuthPath || isPublicTenantPath || isSwaggerPath || isWabaWebhookPath || isPaymentWebhookPath)
         {
             await _next(context);
             return;

@@ -39,6 +39,16 @@ public class WabaWebhookController(
         if (!whatsapp.VerifyWebhookSignature(rawBody, sig))
         {
             logger.LogWarning("WABA webhook signature validation failed. signature={Signature} payload={Payload}", sig, rawBody);
+            controlDb.AuditLogs.Add(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                TenantId = null,
+                ActorUserId = Guid.Empty,
+                Action = "waba.webhook.rejected",
+                Details = "reason=signature_invalid",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await controlDb.SaveChangesAsync(ct);
             return Unauthorized("Invalid webhook signature.");
         }
 
@@ -220,6 +230,16 @@ public class WabaWebhookController(
             }
 
             await tenantDb.SaveChangesAsync(ct);
+            controlDb.AuditLogs.Add(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenant.Id,
+                ActorUserId = Guid.Empty,
+                Action = "waba.webhook.received",
+                Details = $"provider=meta; inboundCount={inboundMessages.Count}; statusCount={statusEvents.Count}",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await controlDb.SaveChangesAsync(ct);
             await hub.Clients.Group($"tenant:{tenant.Slug}").SendAsync("webhook.inbound", new { phoneNumberId, inboundCount = inboundMessages.Count, statusCount = statusEvents.Count }, ct);
             break;
         }

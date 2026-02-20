@@ -199,3 +199,10 @@ export async function createSmsSender(payload) {
     return apiPost('/api/sms/sender', payload)
   }
 }
+
+export async function getPlatformWebhookLogs({ provider = "", limit = 100 } = {}) {
+  const q = new URLSearchParams()
+  if (provider) q.set("provider", provider)
+  q.set("limit", String(limit))
+  return apiGet(`/api/platform/webhook-logs?${q.toString()}`)
+}

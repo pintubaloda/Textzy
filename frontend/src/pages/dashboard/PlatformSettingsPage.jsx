@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { getPlatformSettings, savePlatformSettings } from "@/lib/api";
+import { getPlatformSettings, savePlatformSettings, getPlatformWebhookLogs } from "@/lib/api";
 
 const PlatformSettingsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -14,10 +14,12 @@ const PlatformSettingsPage = () => {
   const [gateway, setGateway] = useState("razorpay");
   const [waba, setWaba] = useState({ appId: "", appSecret: "", verifyToken: "", webhookUrl: "" });
   const [payment, setPayment] = useState({ provider: "razorpay", merchantId: "", keyId: "", keySecret: "", webhookSecret: "" });
+  const [logs, setLogs] = useState([]);
+  const [logProvider, setLogProvider] = useState("");
   const [loading, setLoading] = useState(false);
 
   const title = useMemo(
-    () => (tab === "payment-gateway" ? "Payment Gateway Setup" : "Waba Master Config"),
+    () => (tab === "payment-gateway" ? "Payment Gateway Setup" : tab === "webhook-logs" ? "Webhook Logs" : "Waba Master Config"),
     [tab],
   );
 
@@ -38,7 +40,7 @@ const PlatformSettingsPage = () => {
             verifyToken: values.verifyToken || "",
             webhookUrl: values.webhookUrl || "",
           });
-        } else {
+        } else if (tab === "payment-gateway") {
           const res = await getPlatformSettings("payment-gateway");
           const values = res?.values || {};
           if (!active) return;
@@ -51,6 +53,10 @@ const PlatformSettingsPage = () => {
             keySecret: values.keySecret || "",
             webhookSecret: values.webhookSecret || "",
           });
+        } else {
+          const res = await getPlatformWebhookLogs({ provider: logProvider, limit: 100 });
+          if (!active) return;
+          setLogs(res || []);
         }
       } catch {
         if (active) toast.error("Failed to load platform settings");
@@ -62,7 +68,7 @@ const PlatformSettingsPage = () => {
     return () => {
       active = false;
     };
-  }, [tab]);
+  }, [tab, logProvider]);
 
   return (
     <div className="space-y-4" data-testid="platform-settings-page">
@@ -85,6 +91,13 @@ const PlatformSettingsPage = () => {
             onClick={() => setTab("payment-gateway")}
           >
             Payment Gateway Setup
+          </Button>
+          <Button
+            variant={tab === "webhook-logs" ? "default" : "outline"}
+            className={tab === "webhook-logs" ? "bg-orange-500 hover:bg-orange-600" : ""}
+            onClick={() => setTab("webhook-logs")}
+          >
+            Webhook Logs
           </Button>
         </div>
       </div>
@@ -187,6 +200,55 @@ const PlatformSettingsPage = () => {
               <Button variant="outline" onClick={() => toast.info("Payment gateway test initiated")}>
                 Test Connection
               </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "webhook-logs" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>Unified Webhook Logs</CardTitle>
+            <CardDescription>WABA + Payment webhook events in one stream.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex gap-2">
+              <Select value={logProvider || "all"} onValueChange={(v) => setLogProvider(v === "all" ? "" : v)}>
+                <SelectTrigger className="w-[220px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All providers</SelectItem>
+                  <SelectItem value="meta">Meta / WABA</SelectItem>
+                  <SelectItem value="razorpay">Razorpay</SelectItem>
+                  <SelectItem value="stripe">Stripe</SelectItem>
+                  <SelectItem value="cashfree">Cashfree</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" onClick={async () => setLogs(await getPlatformWebhookLogs({ provider: logProvider, limit: 100 }))}>Refresh</Button>
+            </div>
+            <div className="rounded-lg border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">Time</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">Action</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map((x) => (
+                    <tr key={x.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2 text-slate-600">{x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleString() : "-"}</td>
+                      <td className="px-3 py-2 text-slate-900">{x.action}</td>
+                      <td className="px-3 py-2 text-slate-600">{x.details}</td>
+                    </tr>
+                  ))}
+                  {logs.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-6 text-center text-slate-500">No webhook logs found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </CardContent>
         </Card>

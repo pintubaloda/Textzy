@@ -18,8 +18,9 @@ public class TenantMiddleware(RequestDelegate next)
         var path = context.Request.Path.Value ?? string.Empty;
         var isSwaggerPath = path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase);
         var isWabaWebhook = path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase);
+        var isPaymentWebhook = path.StartsWith("/api/payments/webhook", StringComparison.OrdinalIgnoreCase);
         var isAuthLogin = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase);
-        if (isSwaggerPath || isWabaWebhook || isAuthLogin)
+        if (isSwaggerPath || isWabaWebhook || isPaymentWebhook || isAuthLogin)
         {
             await _next(context);
             return;
