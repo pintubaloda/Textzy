@@ -266,26 +266,6 @@ const DashboardLayout = () => {
         </div>
       </header>
 
-      {isSettingsPage && (
-        <div className="fixed top-16 left-0 right-0 z-40 h-12 bg-white border-b border-slate-200 flex items-center px-4 lg:px-6">
-          <div className="flex items-center gap-2 overflow-x-auto">
-            {settingsMenus.map((item) => (
-              <Link
-                key={item.key}
-                to={`/dashboard/settings?tab=${item.key}`}
-                className={`px-3 py-1.5 rounded-md text-sm whitespace-nowrap ${
-                  currentSettingsTab === item.key
-                    ? "bg-orange-100 text-orange-700 font-medium"
-                    : "text-slate-600 hover:bg-slate-100"
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Mobile Sidebar Overlay */}
       {mobileMenuOpen && (
         <div
@@ -364,11 +344,30 @@ const DashboardLayout = () => {
 
       {/* Main Content */}
       <main
-        className={`${isSettingsPage ? "pt-28" : "pt-16"} transition-all duration-300 ${
+        className={`pt-16 transition-all duration-300 ${
           sidebarOpen ? "lg:pl-64" : "lg:pl-20"
         }`}
       >
         <div className="p-6">
+          {isSettingsPage && (
+            <div className="mb-4 h-12 bg-white border border-slate-200 rounded-xl flex items-center px-4 lg:px-6">
+              <div className="flex items-center gap-2 overflow-x-auto">
+                {settingsMenus.map((item) => (
+                  <Link
+                    key={item.key}
+                    to={`/dashboard/settings?tab=${item.key}`}
+                    className={`px-3 py-1.5 rounded-md text-sm whitespace-nowrap ${
+                      currentSettingsTab === item.key
+                        ? "bg-orange-100 text-orange-700 font-medium"
+                        : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
           <Outlet />
         </div>
       </main>
