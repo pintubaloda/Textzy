@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, Plus, Filter, MoreVertical, FileText, CheckCircle, XCircle, Clock, AlertCircle, Trash2, MessageSquare, Send } from "lucide-react";
-import { apiDelete, apiGet, apiPost } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, listSmsSenders } from "@/lib/api";
 import { toast } from "sonner";
 
 const initialDraft = {
@@ -51,7 +51,7 @@ const TemplatesPage = () => {
     try {
       const [tpl, senders] = await Promise.all([
         apiGet("/api/templates"),
-        apiGet("/api/sms/senders").catch(() => []),
+        listSmsSenders().catch(() => []),
       ]);
       setTemplates(tpl || []);
       setSmsSenders(senders || []);

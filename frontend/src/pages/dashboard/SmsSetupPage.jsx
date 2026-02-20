@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { apiGet, apiPost } from "@/lib/api";
+import { createSmsSender, listSmsSenders } from "@/lib/api";
 import { toast } from "sonner";
 
 const SmsSetupPage = () => {
@@ -14,7 +14,7 @@ const SmsSetupPage = () => {
 
   const load = async () => {
     try {
-      const res = await apiGet("/api/sms/senders");
+      const res = await listSmsSenders();
       setRows(res || []);
     } catch {
       setRows([]);
@@ -32,7 +32,7 @@ const SmsSetupPage = () => {
     }
     try {
       setSaving(true);
-      await apiPost("/api/sms/senders", {
+      await createSmsSender({
         senderId: form.senderId.trim().toUpperCase(),
         entityId: form.entityId.trim(),
       });

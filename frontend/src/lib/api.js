@@ -183,3 +183,19 @@ export async function getPlatformSettings(scope) {
 export async function savePlatformSettings(scope, values) {
   return apiPut(`/api/platform/settings/${scope}`, values)
 }
+
+export async function listSmsSenders() {
+  try {
+    return await apiGet('/api/sms/senders')
+  } catch (e) {
+    return apiGet('/api/sms/sender')
+  }
+}
+
+export async function createSmsSender(payload) {
+  try {
+    return await apiPost('/api/sms/senders', payload)
+  } catch (e) {
+    return apiPost('/api/sms/sender', payload)
+  }
+}
