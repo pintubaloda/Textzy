@@ -22,6 +22,9 @@ public class TenantDbContext(DbContextOptions<TenantDbContext> options) : DbCont
     public DbSet<ContactSegment> ContactSegments => Set<ContactSegment>();
     public DbSet<BroadcastJob> BroadcastJobs => Set<BroadcastJob>();
     public DbSet<AutomationFlow> AutomationFlows => Set<AutomationFlow>();
+    public DbSet<AutomationFlowVersion> AutomationFlowVersions => Set<AutomationFlowVersion>();
     public DbSet<AutomationNode> AutomationNodes => Set<AutomationNode>();
     public DbSet<AutomationRun> AutomationRuns => Set<AutomationRun>();
+    public DbSet<AutomationApproval> AutomationApprovals => Set<AutomationApproval>();
+    public DbSet<AutomationUsageCounter> AutomationUsageCounters => Set<AutomationUsageCounter>();
 }
