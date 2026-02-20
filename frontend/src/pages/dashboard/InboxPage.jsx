@@ -50,17 +50,18 @@ const InboxPage = () => {
   const [wabaDetails, setWabaDetails] = useState(null);
   const [newLabel, setNewLabel] = useState("");
   const [me, setMe] = useState(null);
+  const [templates, setTemplates] = useState([]);
 
   useEffect(() => {
     Promise.all([
       apiGet("/api/inbox/conversations"),
-      apiGet("/api/messages"),
       apiGet("/api/contacts"),
       apiGet("/api/auth/team-members").catch(() => []),
       apiGet("/api/auth/me").catch(() => null),
+      apiGet("/api/templates").catch(() => []),
       wabaGetOnboardingStatus().catch(() => null),
     ])
-      .then(([c, m, ct, tm, meData, waba]) => {
+      .then(([c, ct, tm, meData, tpl, waba]) => {
         setConversations(
           (c || []).map((x) => ({
             id: x.id,
@@ -79,18 +80,11 @@ const InboxPage = () => {
             hoursSinceInbound: Number(x.hoursSinceInbound || 999),
           }))
         );
-        setMessages(
-          (m || []).map((x) => ({
-            id: x.id,
-            sender: "agent",
-            text: x.body,
-            time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
-            status: "read",
-          }))
-        );
+        setMessages([]);
         setContacts(ct || []);
         setTeamMembers(tm || []);
         setMe(meData);
+        setTemplates((tpl || []).filter((x) => String(x.status || "").toLowerCase() === "approved" && Number(x.channel) === 2));
         setWabaDetails(waba);
       })
       .catch(() => {
@@ -143,6 +137,24 @@ const InboxPage = () => {
   const canReplyInSession = !!selectedChat.canReply;
   const selectedContact = contacts.find((x) => x.phone === selectedChat.phone);
 
+  useEffect(() => {
+    if (!selectedChat?.id) {
+      setMessages([]);
+      return;
+    }
+    apiGet(`/api/inbox/conversations/${selectedChat.id}/messages`)
+      .then((rows) => {
+        setMessages((rows || []).map((x) => ({
+          id: x.id,
+          sender: String(x.status || "").toLowerCase() === "received" ? "customer" : "agent",
+          text: x.body,
+          time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
+          status: String(x.status || "").toLowerCase() === "received" ? "received" : "read",
+        })));
+      })
+      .catch(() => setMessages([]));
+  }, [selectedChat?.id]);
+
   const handleSendMessage = () => {
     if (!canReplyInSession) {
       toast.error("24-hour session expired. Send an approved template first.");
@@ -151,6 +163,46 @@ const InboxPage = () => {
     if (message.trim()) {
       apiPost("/api/messages/send", { recipient: selectedChat.phone || "+910000000000", body: message, channel: 2 }).catch(() => {});
       setMessage("");
+      apiGet(`/api/inbox/conversations/${selectedChat.id}/messages`).then((rows) => {
+        setMessages((rows || []).map((x) => ({
+          id: x.id,
+          sender: String(x.status || "").toLowerCase() === "received" ? "customer" : "agent",
+          text: x.body,
+          time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
+          status: String(x.status || "").toLowerCase() === "received" ? "received" : "read",
+        })));
+      }).catch(() => {});
+    }
+  };
+
+  const handleSendTemplateFallback = async () => {
+    const tpl = templates[0];
+    if (!tpl || !selectedChat?.phone) {
+      toast.error("No approved WhatsApp template available.");
+      return;
+    }
+    try {
+      await apiPost("/api/messages/send", {
+        recipient: selectedChat.phone,
+        body: tpl.body || "Template message",
+        channel: 2,
+        useTemplate: true,
+        templateName: tpl.name,
+        templateLanguageCode: tpl.language || "en",
+        templateParameters: [],
+      });
+      toast.success(`Template sent: ${tpl.name}`);
+      apiGet(`/api/inbox/conversations/${selectedChat.id}/messages`).then((rows) => {
+        setMessages((rows || []).map((x) => ({
+          id: x.id,
+          sender: String(x.status || "").toLowerCase() === "received" ? "customer" : "agent",
+          text: x.body,
+          time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
+          status: String(x.status || "").toLowerCase() === "received" ? "received" : "read",
+        })));
+      }).catch(() => {});
+    } catch (e) {
+      toast.error(e?.message || "Template send failed");
     }
   };
 
@@ -273,7 +325,12 @@ const InboxPage = () => {
             <Avatar className="w-10 h-10"><AvatarFallback className="bg-gradient-to-br from-orange-400 to-orange-600 text-white font-medium">{selectedChat.avatar}</AvatarFallback></Avatar>
             <div className="max-w-[220px]"><p className="font-semibold text-slate-900 text-lg leading-tight truncate">{selectedChat.name}</p><p className="text-xs text-slate-500 truncate">{selectedChat.phone}</p></div>
           </div>
-          {!canReplyInSession ? <div className="hidden 2xl:block px-2.5 py-1 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800 max-w-[220px] truncate">24h session closed. Customer must reply first.</div> : null}
+          {!canReplyInSession ? (
+            <div className="hidden 2xl:flex items-center gap-2">
+              <div className="px-2.5 py-1 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800 max-w-[220px] truncate">24h session closed. Customer must reply first.</div>
+              <Button size="sm" className="h-8 bg-orange-500 hover:bg-orange-600 text-white" onClick={handleSendTemplateFallback}>Send Template</Button>
+            </div>
+          ) : null}
           <div className="flex items-center gap-1.5 shrink-0">
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="rounded-xl h-9 px-3 border-slate-200 bg-white text-slate-800 hover:bg-slate-50"><UserPlus className="w-4 h-4 mr-1.5" />Assign</Button></DropdownMenuTrigger>

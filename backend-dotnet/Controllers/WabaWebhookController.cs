@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
 using Textzy.Api.Models;
 using Textzy.Api.Services;
+using Textzy.Api.Providers;
 
 namespace Textzy.Api.Controllers;
 
@@ -40,7 +41,7 @@ public class WabaWebhookController(
         }
 
         string phoneNumberId = string.Empty;
-        var inboundFrom = new List<string>();
+        var inboundMessages = new List<(string From, string Name, string Body)>();
 
         try
         {
@@ -62,7 +63,18 @@ public class WabaWebhookController(
                         {
                             if (!msg.TryGetProperty("from", out var fromProp)) continue;
                             var from = fromProp.GetString() ?? string.Empty;
-                            if (!string.IsNullOrWhiteSpace(from)) inboundFrom.Add(from);
+                            if (string.IsNullOrWhiteSpace(from)) continue;
+                            var body = msg.TryGetProperty("text", out var textNode) && textNode.TryGetProperty("body", out var bodyNode)
+                                ? bodyNode.GetString() ?? string.Empty
+                                : string.Empty;
+                            var name = value.TryGetProperty("contacts", out var contactsNode)
+                                && contactsNode.ValueKind == JsonValueKind.Array
+                                && contactsNode.GetArrayLength() > 0
+                                && contactsNode[0].TryGetProperty("profile", out var profileNode)
+                                && profileNode.TryGetProperty("name", out var nameNode)
+                                ? nameNode.GetString() ?? string.Empty
+                                : string.Empty;
+                            inboundMessages.Add((from, name, body));
                         }
                     }
                 }
@@ -74,7 +86,7 @@ public class WabaWebhookController(
             return BadRequest("Invalid webhook payload.");
         }
 
-        if (string.IsNullOrWhiteSpace(phoneNumberId) || inboundFrom.Count == 0) return Ok();
+        if (string.IsNullOrWhiteSpace(phoneNumberId) || inboundMessages.Count == 0) return Ok();
 
         var tenants = await controlDb.Tenants.ToListAsync(ct);
         foreach (var tenant in tenants)
@@ -87,8 +99,9 @@ public class WabaWebhookController(
             cfg.WebhookVerifiedAtUtc = DateTime.UtcNow;
             if (cfg.WebhookSubscribedAtUtc.HasValue && cfg.PermissionAuditPassed) cfg.OnboardingState = "ready";
 
-            foreach (var from in inboundFrom)
+            foreach (var item in inboundMessages)
             {
+                var from = item.From;
                 var window = await tenantDb.Set<ConversationWindow>()
                     .FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.Recipient == from, ct);
 
@@ -109,6 +122,57 @@ public class WabaWebhookController(
                     window.LastInboundAtUtc = DateTime.UtcNow;
                     window.UpdatedAtUtc = DateTime.UtcNow;
                 }
+
+                var convo = await tenantDb.Set<Conversation>()
+                    .FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.CustomerPhone == from, ct);
+                if (convo is null)
+                {
+                    convo = new Conversation
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = tenant.Id,
+                        CustomerPhone = from,
+                        CustomerName = string.IsNullOrWhiteSpace(item.Name) ? from : item.Name,
+                        Status = "Open",
+                        LastMessageAtUtc = DateTime.UtcNow,
+                        CreatedAtUtc = DateTime.UtcNow
+                    };
+                    tenantDb.Set<Conversation>().Add(convo);
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(item.Name)) convo.CustomerName = item.Name;
+                    convo.Status = "Open";
+                    convo.LastMessageAtUtc = DateTime.UtcNow;
+                }
+
+                var existingContact = await tenantDb.Set<Contact>()
+                    .FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.Phone == from, ct);
+                if (existingContact is null)
+                {
+                    tenantDb.Set<Contact>().Add(new Contact
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = tenant.Id,
+                        Name = string.IsNullOrWhiteSpace(item.Name) ? from : item.Name,
+                        Phone = from,
+                        OptInStatus = "opted_in",
+                        CreatedAtUtc = DateTime.UtcNow
+                    });
+                }
+
+                tenantDb.Set<Message>().Add(new Message
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenant.Id,
+                    Channel = ChannelType.WhatsApp,
+                    Recipient = from,
+                    Body = string.IsNullOrWhiteSpace(item.Body) ? "[Inbound message]" : item.Body,
+                    MessageType = "session",
+                    Status = "Received",
+                    ProviderMessageId = $"wa_in_{Guid.NewGuid():N}",
+                    CreatedAtUtc = DateTime.UtcNow
+                });
             }
 
             await tenantDb.SaveChangesAsync(ct);

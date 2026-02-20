@@ -124,6 +124,21 @@ public class InboxController(
         return Ok(db.ConversationNotes.Where(x => x.TenantId == tenancy.TenantId && x.ConversationId == id).OrderByDescending(x => x.CreatedAtUtc).ToList());
     }
 
+    [HttpGet("conversations/{id:guid}/messages")]
+    public IActionResult ConversationMessages(Guid id)
+    {
+        if (!rbac.HasPermission(InboxRead)) return Forbid();
+        var c = db.Conversations.FirstOrDefault(x => x.Id == id && x.TenantId == tenancy.TenantId);
+        if (c is null) return NotFound();
+
+        var items = db.Messages
+            .Where(m => m.TenantId == tenancy.TenantId && m.Recipient == c.CustomerPhone && m.Channel == Models.ChannelType.WhatsApp)
+            .OrderBy(m => m.CreatedAtUtc)
+            .Take(500)
+            .ToList();
+        return Ok(items);
+    }
+
     [HttpPost("typing")]
     public async Task<IActionResult> Typing([FromBody] TypingEventRequest req, CancellationToken ct)
     {
