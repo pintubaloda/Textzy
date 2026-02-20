@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -30,15 +31,22 @@ const initialDraft = {
 
 const TemplatesPage = () => {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get("tab") === "sms" ? "sms" : "whatsapp";
   const [templates, setTemplates] = useState([]);
   const [smsSenders, setSmsSenders] = useState([]);
   const [draft, setDraft] = useState(initialDraft);
   const [newSender, setNewSender] = useState({ senderId: "", entityId: "" });
   const isSms = draft.channel === "sms";
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     loadAll();
   }, []);
+
+  useEffect(() => {
+    setDraft((p) => ({ ...p, channel: tab }));
+  }, [tab]);
 
   const loadAll = async () => {
     try {
@@ -55,10 +63,10 @@ const TemplatesPage = () => {
   };
 
   const stats = [
-    { title: "Total Templates", value: String(templates.length), status: "all" },
-    { title: "Approved", value: String(templates.filter((t) => String(t.status || t.lifecycleStatus || "").toLowerCase() === "approved").length), status: "approved" },
-    { title: "Pending", value: String(templates.filter((t) => String(t.status || t.lifecycleStatus || "").toLowerCase() === "pending").length), status: "pending" },
-    { title: "Rejected", value: String(templates.filter((t) => String(t.status || t.lifecycleStatus || "").toLowerCase() === "rejected").length), status: "rejected" },
+    { title: "Total Templates", value: String(templates.filter((t) => (tab === "sms" ? Number(t.channel) === 1 : Number(t.channel) === 2)).length), status: "all" },
+    { title: "Approved", value: String(templates.filter((t) => (tab === "sms" ? Number(t.channel) === 1 : Number(t.channel) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "approved").length), status: "approved" },
+    { title: "Pending", value: String(templates.filter((t) => (tab === "sms" ? Number(t.channel) === 1 : Number(t.channel) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "pending").length), status: "pending" },
+    { title: "Rejected", value: String(templates.filter((t) => (tab === "sms" ? Number(t.channel) === 1 : Number(t.channel) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "rejected").length), status: "rejected" },
   ];
 
   const templateVars = useMemo(() => {
@@ -115,6 +123,51 @@ const TemplatesPage = () => {
     }
   };
 
+  const uploadSmsTemplates = async (file) => {
+    if (!file) return;
+    try {
+      setUploading(true);
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      if (lines.length < 2) throw new Error("CSV must include header + at least one row.");
+      const header = lines[0].split(",").map((x) => x.trim().toLowerCase());
+      const idx = {
+        name: header.indexOf("name"),
+        body: header.indexOf("body"),
+        dltentityid: header.indexOf("dltentityid"),
+        dlttemplateid: header.indexOf("dlttemplateid"),
+        smssenderid: header.indexOf("smssenderid"),
+      };
+      if (Object.values(idx).some((v) => v < 0)) throw new Error("CSV headers required: name,body,dltEntityId,dltTemplateId,smsSenderId");
+      let created = 0;
+      for (let i = 1; i < lines.length; i += 1) {
+        const cols = lines[i].split(",").map((x) => x.trim());
+        if (!cols[idx.name] || !cols[idx.body]) continue;
+        await apiPost("/api/templates", {
+          name: cols[idx.name],
+          body: cols[idx.body],
+          channel: 1,
+          category: "UTILITY",
+          language: "en",
+          dltEntityId: cols[idx.dltentityid] || "",
+          dltTemplateId: cols[idx.dlttemplateid] || "",
+          smsSenderId: (cols[idx.smssenderid] || "").toUpperCase(),
+          headerType: "none",
+          headerText: "",
+          footerText: "",
+          buttonsJson: "",
+        });
+        created += 1;
+      }
+      toast.success(`Uploaded ${created} SMS templates.`);
+      await loadAll();
+    } catch (e) {
+      toast.error(e?.message || "SMS template upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const addSmsSender = async () => {
     try {
       if (!newSender.senderId.trim() || !newSender.entityId.trim()) {
@@ -161,6 +214,10 @@ const TemplatesPage = () => {
         <div>
           <h1 className="text-2xl font-heading font-bold text-slate-900">Templates</h1>
           <p className="text-slate-600">WhatsApp + SMS(DLT) compliant template management.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant={tab === "whatsapp" ? "default" : "outline"} className={tab === "whatsapp" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setSearchParams({ tab: "whatsapp" })}>WhatsApp</Button>
+          <Button variant={tab === "sms" ? "default" : "outline"} className={tab === "sms" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setSearchParams({ tab: "sms" })}>SMS</Button>
         </div>
         <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
           <DialogTrigger asChild>
@@ -306,6 +363,12 @@ const TemplatesPage = () => {
 
       <Card className="border-slate-200">
         <CardHeader>
+          {tab === "sms" && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 mb-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <p className="text-sm text-slate-700">SMS onboarding: 1) Add Entity + Sender ID 2) Add Template or Upload CSV.</p>
+              <Input type="file" accept=".csv" className="max-w-xs" onChange={(e) => uploadSmsTemplates(e.target.files?.[0])} disabled={uploading} />
+            </div>
+          )}
           <div className="flex items-center justify-between">
             <div className="text-sm text-slate-600">Templates List</div>
             <div className="flex items-center gap-2">
@@ -334,6 +397,7 @@ const TemplatesPage = () => {
             </TableHeader>
             <TableBody>
               {templates.map((template) => (
+                (tab === "sms" ? Number(template.channel) === 1 : Number(template.channel) === 2) ? (
                 <TableRow key={template.id} className="table-row-hover">
                   <TableCell>
                     <div>
@@ -373,6 +437,7 @@ const TemplatesPage = () => {
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
+                ) : null
               ))}
             </TableBody>
           </Table>

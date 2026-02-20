@@ -37,6 +37,7 @@ import {
   Sun,
   UsersRound,
   Check,
+  Send,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { authProjects, clearSession, getSession, initializeMe, switchProject } from "@/lib/api";
@@ -53,6 +54,8 @@ const DashboardLayout = () => {
   const role = (session.role || "").toLowerCase();
   const canAccessPlatformSettings = role === "super_admin" || role === "owner";
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
+  const isTemplatesPage = location.pathname.startsWith("/dashboard/templates");
+  const currentTemplatesTab = new URLSearchParams(location.search).get("tab") || "whatsapp";
   const currentSettingsTab = new URLSearchParams(location.search).get("tab") || "profile";
   const settingsMenus = [
     { key: "profile", label: "Profile" },
@@ -310,6 +313,35 @@ const DashboardLayout = () => {
                 )}
               </Link>
             ))}
+            {sidebarOpen && (
+              <div className="pt-2">
+                <p className="px-3 pb-1 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Templates</p>
+                <Link
+                  to="/dashboard/templates?tab=whatsapp"
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                    isTemplatesPage && currentTemplatesTab !== "sms"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <FileText className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">WhatsApp</span>
+                </Link>
+                <Link
+                  to="/dashboard/templates?tab=sms"
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                    isTemplatesPage && currentTemplatesTab === "sms"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Send className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">SMS</span>
+                </Link>
+              </div>
+            )}
             {canAccessPlatformSettings && sidebarOpen && (
               <div className="pt-3 mt-3 border-t border-slate-200">
                 <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">
