@@ -25,10 +25,26 @@ builder.Services.AddCors(options =>
 
 var rawControlConnection = (builder.Environment.IsProduction()
         ? builder.Configuration["DATABASE_URL"] ?? builder.Configuration.GetConnectionString("Default")
-        : builder.Configuration.GetConnectionString("Default") ?? builder.Configuration["DATABASE_URL"])
-    ?? throw new InvalidOperationException("Connection string is missing. Set ConnectionStrings__Default or DATABASE_URL.");
+        : builder.Configuration.GetConnectionString("Default") ?? builder.Configuration["DATABASE_URL"]);
 
-var controlConnection = NormalizeConnectionString(rawControlConnection);
+string controlConnection;
+if (string.IsNullOrWhiteSpace(rawControlConnection))
+{
+    controlConnection = BuildFromPgEnvironment()
+        ?? throw new InvalidOperationException("Connection string is missing. Set ConnectionStrings__Default, DATABASE_URL, or PG* variables.");
+}
+else
+{
+    try
+    {
+        controlConnection = NormalizeConnectionString(rawControlConnection);
+    }
+    catch when (builder.Environment.IsProduction())
+    {
+        controlConnection = BuildFromPgEnvironment()
+            ?? throw;
+    }
+}
 
 if (builder.Environment.IsProduction() &&
     (controlConnection.Contains("Host=localhost", StringComparison.OrdinalIgnoreCase) ||
@@ -247,6 +263,55 @@ static string NormalizeConnectionString(string raw)
     {
         throw new InvalidOperationException("Invalid key/value Postgres connection string in ConnectionStrings__Default/DATABASE_URL.", ex);
     }
+}
+
+static string? BuildFromPgEnvironment()
+{
+    var host = Environment.GetEnvironmentVariable("PGHOST");
+    var port = Environment.GetEnvironmentVariable("PGPORT");
+    var user = Environment.GetEnvironmentVariable("PGUSER");
+    var pass = Environment.GetEnvironmentVariable("PGPASSWORD");
+    var db = Environment.GetEnvironmentVariable("PGDATABASE");
+    var sslMode = Environment.GetEnvironmentVariable("PGSSLMODE");
+
+    if (string.IsNullOrWhiteSpace(host) ||
+        string.IsNullOrWhiteSpace(port) ||
+        string.IsNullOrWhiteSpace(user) ||
+        string.IsNullOrWhiteSpace(pass) ||
+        string.IsNullOrWhiteSpace(db))
+    {
+        return null;
+    }
+
+    var builder = new NpgsqlConnectionStringBuilder
+    {
+        Host = host.Trim(),
+        Port = int.TryParse(port, out var p) ? p : 5432,
+        Username = user.Trim(),
+        Password = pass,
+        Database = db.Trim()
+    };
+
+    var ssl = (sslMode ?? string.Empty).Trim().ToLowerInvariant();
+    if (ssl is "require" or "prefer" or "verify-ca" or "verify-full")
+    {
+        builder.SslMode = ssl switch
+        {
+            "require" => SslMode.Require,
+            "prefer" => SslMode.Prefer,
+            "verify-ca" => SslMode.VerifyCA,
+            "verify-full" => SslMode.VerifyFull,
+            _ => SslMode.Prefer
+        };
+        builder.TrustServerCertificate = ssl is "require" or "prefer";
+    }
+    else
+    {
+        builder.SslMode = SslMode.Require;
+        builder.TrustServerCertificate = true;
+    }
+
+    return builder.ConnectionString;
 }
 
 static void EnsureTenantWabaSchema(TenantDbContext db)
