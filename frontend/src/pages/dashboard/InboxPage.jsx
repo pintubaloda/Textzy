@@ -200,6 +200,10 @@ const InboxPage = () => {
     }
     try {
       const params = templateParamIndexes.map((idx) => (templateVars[idx] || "").trim());
+      if (params.some((p) => !p)) {
+        toast.error("Fill all template variables before sending.");
+        return;
+      }
       await apiPost("/api/messages/send", {
         recipient: selectedChat.phone,
         body: tpl.body || "Template message",
@@ -220,16 +224,6 @@ const InboxPage = () => {
   useEffect(() => {
     setTemplateVars({});
   }, [selectedTemplateId]);
-
-  useEffect(() => {
-    if (!selectedChat?.id) return;
-    const timer = setInterval(() => {
-      loadConversations();
-      loadThread(selectedChat.id);
-      loadSla();
-    }, 6000);
-    return () => clearInterval(timer);
-  }, [selectedChat?.id]);
 
   useEffect(() => {
     const s = getSession();
@@ -254,6 +248,11 @@ const InboxPage = () => {
     connection.on("conversation.labels", () => loadConversations());
     connection.on("conversation.note", () => {
       if (selectedChat?.id) loadNotes(selectedChat.id);
+    });
+    connection.onreconnected(() => {
+      loadConversations();
+      if (selectedChat?.id) loadThread(selectedChat.id);
+      loadSla();
     });
     connection.on("conversation.typing", (e) => {
       if (!e?.conversationId || String(e.conversationId) !== String(selectedChat?.id)) return;
