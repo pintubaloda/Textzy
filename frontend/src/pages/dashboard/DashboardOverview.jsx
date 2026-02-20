@@ -178,38 +178,38 @@ const DashboardOverview = () => {
         ))}
       </div>
 
-      <section className="rounded-[32px] p-6 md:p-8 bg-gradient-to-br from-[#30337a] via-[#3c3f90] to-[#31347a] text-white relative overflow-hidden border border-white/10">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(227,66,255,0.18),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(83,136,255,0.18),transparent_35%)]" />
+      <section className="rounded-[32px] p-6 md:p-8 bg-gradient-to-br from-[#2f347f] via-[#3f4298] to-[#363987] text-white relative overflow-hidden border border-[#7c86d0]/35">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(196,70,255,0.24),transparent_36%),radial-gradient(circle_at_bottom_left,rgba(82,125,255,0.22),transparent_40%)]" />
         <div className="relative z-10 space-y-6">
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <div className="px-5 py-2 rounded-full bg-white/12 border border-white/10">WhatsApp Business API Status: <b className="text-fuchsia-200">Pending</b></div>
-            <Button className="rounded-full bg-gradient-to-r from-fuchsia-500 to-pink-500 hover:from-fuchsia-600 hover:to-pink-600 text-white">Apply Now</Button>
-            <div className="px-5 py-2 rounded-full bg-white/12 border border-white/10">TRAIL(Pro + Flows)</div>
+            <div className="px-5 py-2 rounded-full bg-[#6770b8]/35 border border-[#95a0df]/25">WhatsApp Business API Status: <b className="text-[#f4b8ff]">Pending</b></div>
+            <Button className="rounded-full bg-gradient-to-r from-[#d043f5] to-[#f24ca5] hover:from-[#bf33e4] hover:to-[#e63f96] text-white">Apply Now</Button>
+            <div className="px-5 py-2 rounded-full bg-[#6770b8]/35 border border-[#95a0df]/25">TRAIL(Pro + Flows)</div>
           </div>
 
           <div className="grid lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2 rounded-3xl border border-white/18 bg-white/6 p-6">
+            <div className="lg:col-span-2 rounded-3xl border border-[#a4b0eb]/35 bg-[#5560ad]/28 p-6">
               <h3 className="text-4xl font-heading font-semibold leading-tight mb-4">Setup FREE WhatsApp Business Account</h3>
-              <div className="rounded-xl border border-white/18 p-4 mb-5 text-lg">Apply for WhatsApp Business API</div>
-              <p className="text-white/80 mb-2 text-xl leading-tight">Click on Continue With Facebook to apply for WhatsApp Business API</p>
-              <p className="text-white/80 text-xl leading-tight">Requirement: Registered Business & Working Website.</p>
+              <div className="rounded-xl border border-[#a4b0eb]/35 bg-[#4f58a3]/30 p-4 mb-5 text-lg">Apply for WhatsApp Business API</div>
+              <p className="text-[#d8ddff] mb-2 text-xl leading-tight">Click on Continue With Facebook to apply for WhatsApp Business API</p>
+              <p className="text-[#d8ddff] text-xl leading-tight">Requirement: Registered Business & Working Website.</p>
               <div className="mt-4 flex flex-wrap gap-3">
-                <Button variant="outline" className="border-white/30 text-white bg-white/10 hover:bg-white/20 text-base px-7">Schedule Meeting</Button>
-                <Button className="bg-gradient-to-r from-fuchsia-500 to-pink-500 hover:from-fuchsia-600 hover:to-pink-600 text-white text-base px-7">Continue with Facebook</Button>
+                <Button variant="outline" className="border-[#9ea8e8]/40 text-white bg-[#6571bf]/35 hover:bg-[#7581cf]/45 text-base px-7">Schedule Meeting</Button>
+                <Button className="bg-gradient-to-r from-[#d043f5] to-[#f24ca5] hover:from-[#bf33e4] hover:to-[#e63f96] text-white text-base px-7">Continue with Facebook</Button>
               </div>
             </div>
-            <div className="rounded-3xl border border-white/18 bg-white/6 p-6 text-center">
-              <QrCode className="w-32 h-32 mx-auto mb-4 text-white/90" />
+            <div className="rounded-3xl border border-[#a4b0eb]/35 bg-[#5560ad]/28 p-6 text-center">
+              <QrCode className="w-32 h-32 mx-auto mb-4 text-[#e8edff]" />
               <p className="text-4xl font-semibold leading-tight">Project Business Name</p>
-              <p className="text-white/80 mt-2 text-2xl">+91 72496 30121</p>
+              <p className="text-[#d8ddff] mt-2 text-2xl">+91 72496 30121</p>
             </div>
           </div>
 
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
-            <button className="rounded-2xl border border-white/20 bg-white/10 p-4 text-left text-lg"><PhoneCall className="w-6 h-6 mb-2" />Add WhatsApp Contacts</button>
-            <button className="rounded-2xl border border-white/20 bg-white/10 p-4 text-left text-lg"><Users className="w-6 h-6 mb-2" />Add Team Members</button>
-            <button className="rounded-2xl border border-white/20 bg-white/10 p-4 text-left text-lg"><Plug className="w-6 h-6 mb-2" />Explore Integrations</button>
-            <button className="rounded-2xl border border-white/20 bg-white/10 p-4 text-left text-lg"><Bot className="w-6 h-6 mb-2" />Chatbot Setup</button>
+            <button className="rounded-2xl border border-[#a4b0eb]/30 bg-[#5e69b6]/35 p-4 text-left text-lg"><PhoneCall className="w-6 h-6 mb-2" />Add WhatsApp Contacts</button>
+            <button className="rounded-2xl border border-[#a4b0eb]/30 bg-[#5e69b6]/35 p-4 text-left text-lg"><Users className="w-6 h-6 mb-2" />Add Team Members</button>
+            <button className="rounded-2xl border border-[#a4b0eb]/30 bg-[#5e69b6]/35 p-4 text-left text-lg"><Plug className="w-6 h-6 mb-2" />Explore Integrations</button>
+            <button className="rounded-2xl border border-[#a4b0eb]/30 bg-[#5e69b6]/35 p-4 text-left text-lg"><Bot className="w-6 h-6 mb-2" />Chatbot Setup</button>
           </div>
         </div>
       </section>
