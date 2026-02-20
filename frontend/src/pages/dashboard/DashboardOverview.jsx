@@ -147,26 +147,26 @@ const DashboardOverview = () => {
       </div>
 
       {/* KPI Cards - Top */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {stats.map((stat, index) => (
           <Card key={index} className="relative overflow-hidden border-slate-200 bg-white shadow-sm" data-testid={`stat-card-${index}`}>
-            <div className="absolute -top-14 -right-14 w-44 h-44 rounded-full bg-slate-100/80" />
-            <CardContent className="pt-5 pb-5 relative z-10">
+            <div className="absolute -top-12 -right-12 w-36 h-36 rounded-full bg-slate-100/80" />
+            <CardContent className="pt-4 pb-4 relative z-10">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-xl text-slate-600 mb-1">{stat.title}</p>
-                  <p className="text-6xl leading-none font-bold text-slate-900 mt-1">{stat.value}</p>
-                  <div className={`flex items-center gap-1 mt-4 text-lg ${stat.trend === "up" ? "text-green-600" : "text-red-500"}`}>
-                    {stat.trend === "up" ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                  <p className="text-lg text-slate-600 mb-1">{stat.title}</p>
+                  <p className="text-5xl leading-none font-bold text-slate-900 mt-1">{stat.value}</p>
+                  <div className={`flex items-center gap-1 mt-3 text-base ${stat.trend === "up" ? "text-green-600" : "text-red-500"}`}>
+                    {stat.trend === "up" ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                     {stat.change} vs last week
                   </div>
                 </div>
-                <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${
+                <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${
                   stat.color === "orange" ? "bg-orange-100" :
                   stat.color === "green" ? "bg-green-100" :
                   stat.color === "blue" ? "bg-blue-100" : "bg-purple-100"
                 }`}>
-                  <stat.icon className={`w-7 h-7 ${
+                  <stat.icon className={`w-6 h-6 ${
                     stat.color === "orange" ? "text-orange-500" :
                     stat.color === "green" ? "text-green-500" :
                     stat.color === "blue" ? "text-blue-500" : "text-purple-500"
