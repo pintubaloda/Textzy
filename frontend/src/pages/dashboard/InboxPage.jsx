@@ -216,10 +216,10 @@ const InboxPage = () => {
 
   return (
     <div className="h-[calc(100vh-7rem)] flex bg-gradient-to-b from-white to-slate-50 rounded-2xl border border-slate-200/80 overflow-hidden shadow-[0_8px_30px_rgba(15,23,42,0.06)]" data-testid="inbox-page">
-      <div className="w-96 border-r border-slate-200 bg-white/90 backdrop-blur flex flex-col">
+      <div className="w-[320px] xl:w-[340px] border-r border-slate-200 bg-white/90 backdrop-blur flex flex-col">
         <div className="p-5 border-b border-slate-200">
           <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-3xl leading-none font-heading font-semibold text-slate-900">Inbox</h2>
+            <h2 className="text-[44px] leading-none font-heading font-semibold text-slate-900">Inbox</h2>
             <Badge className="bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-xl px-3 py-1 shadow-sm">{filterCounts.all}</Badge>
           </div>
           <div className="flex items-center gap-2">
@@ -233,10 +233,12 @@ const InboxPage = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 p-4 border-b border-slate-200 bg-white">
-          <Button size="sm" className={`rounded-xl ${activeFilter === "all" ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}`} onClick={() => setActiveFilter("all")}>All <span className="ml-2 text-xs opacity-80">{filterCounts.all}</span></Button>
-          <Button variant="ghost" size="sm" className={`rounded-xl ${activeFilter === "mine" ? "bg-orange-50 text-orange-700" : ""}`} onClick={() => setActiveFilter("mine")}>Mine <span className="ml-2 text-xs opacity-80">{filterCounts.mine}</span></Button>
-          <Button variant="ghost" size="sm" className={`rounded-xl ${activeFilter === "unassigned" ? "bg-orange-50 text-orange-700" : ""}`} onClick={() => setActiveFilter("unassigned")}>Unassigned <span className="ml-2 text-xs opacity-80">{filterCounts.unassigned}</span></Button>
+        <div className="p-4 border-b border-slate-200 bg-white">
+          <div className="grid grid-cols-3 gap-2 rounded-xl bg-slate-100 p-1">
+            <button className={`h-9 rounded-lg text-sm font-medium transition ${activeFilter === "all" ? "bg-white text-orange-600 shadow-sm" : "text-slate-600"}`} onClick={() => setActiveFilter("all")}>All ({filterCounts.all})</button>
+            <button className={`h-9 rounded-lg text-sm font-medium transition ${activeFilter === "mine" ? "bg-white text-orange-600 shadow-sm" : "text-slate-600"}`} onClick={() => setActiveFilter("mine")}>Mine ({filterCounts.mine})</button>
+            <button className={`h-9 rounded-lg text-sm font-medium transition ${activeFilter === "unassigned" ? "bg-white text-orange-600 shadow-sm" : "text-slate-600"}`} onClick={() => setActiveFilter("unassigned")}>Unassigned ({filterCounts.unassigned})</button>
+          </div>
         </div>
 
         <ScrollArea className="flex-1">
@@ -265,27 +267,27 @@ const InboxPage = () => {
         </ScrollArea>
       </div>
 
-      <div className="flex-1 flex flex-col bg-slate-50/40">
-        <div className="min-h-16 px-5 py-2 border-b border-slate-200 flex items-center justify-between bg-white">
+      <div className="flex-1 min-w-0 flex flex-col bg-slate-50/40">
+        <div className="min-h-16 px-4 py-2 border-b border-slate-200 flex items-center justify-between gap-3 bg-white">
           <div className="flex items-center gap-3">
             <Avatar className="w-10 h-10"><AvatarFallback className="bg-gradient-to-br from-orange-400 to-orange-600 text-white font-medium">{selectedChat.avatar}</AvatarFallback></Avatar>
-            <div className="max-w-[260px]"><p className="font-semibold text-slate-900 text-xl leading-tight truncate">{selectedChat.name}</p><p className="text-sm text-slate-500 truncate">{selectedChat.phone}</p></div>
+            <div className="max-w-[220px]"><p className="font-semibold text-slate-900 text-lg leading-tight truncate">{selectedChat.name}</p><p className="text-xs text-slate-500 truncate">{selectedChat.phone}</p></div>
           </div>
-          {!canReplyInSession ? <div className="hidden lg:block px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 font-medium">You can&apos;t reply now. Customer must reply first to open 24h session.</div> : null}
-          <div className="flex items-center gap-2">
+          {!canReplyInSession ? <div className="hidden 2xl:block px-2.5 py-1 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800 max-w-[220px] truncate">24h session closed. Customer must reply first.</div> : null}
+          <div className="flex items-center gap-1.5 shrink-0">
             <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="rounded-xl"><UserPlus className="w-4 h-4 mr-2" />Assign</Button></DropdownMenuTrigger>
+              <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="rounded-xl h-9 px-3"><UserPlus className="w-4 h-4 mr-1.5" />Assign</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">{teamMembers.length === 0 ? <DropdownMenuItem disabled>No members</DropdownMenuItem> : teamMembers.map((member) => <DropdownMenuItem key={member.id} onClick={() => handleAssign(member)}>{member.name} ({member.role})</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="rounded-xl">Transfer Chat</Button></DropdownMenuTrigger>
+              <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="rounded-xl h-9 px-3">Transfer</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">{teamMembers.length === 0 ? <DropdownMenuItem disabled>No members</DropdownMenuItem> : teamMembers.map((member) => <DropdownMenuItem key={member.id} onClick={() => handleTransfer(member)}>{member.name} ({member.role})</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
-            <Button variant="ghost" size="icon"><Phone className="w-5 h-5" /></Button>
-            <Button variant="ghost" size="icon"><Video className="w-5 h-5" /></Button>
-            <Button variant="ghost" size="icon"><Info className="w-5 h-5" /></Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9"><Phone className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9"><Video className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9"><Info className="w-4 h-4" /></Button>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreVertical className="w-5 h-5" /></Button></DropdownMenuTrigger>
+              <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-9 w-9"><MoreVertical className="w-4 h-4" /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem><Star className="w-4 h-4 mr-2" /> Star conversation</DropdownMenuItem>
                 <DropdownMenuItem><UserPlus className="w-4 h-4 mr-2" /> Assign to agent</DropdownMenuItem>
@@ -337,12 +339,12 @@ const InboxPage = () => {
         </div>
       </div>
 
-      <div className="w-96 border-l border-slate-200 bg-white hidden xl:block">
+      <div className="w-[300px] 2xl:w-[330px] border-l border-slate-200 bg-white hidden xl:block">
         <div className="p-6">
           <div className="text-center mb-6 bg-gradient-to-b from-orange-50 to-white rounded-2xl border border-orange-100 p-5">
             <Avatar className="w-24 h-24 mx-auto mb-4"><AvatarFallback className="bg-gradient-to-br from-orange-400 to-orange-600 text-white text-2xl font-medium">{selectedChat.avatar}</AvatarFallback></Avatar>
-            <h3 className="font-semibold text-slate-900 text-lg">{selectedChat.name}</h3>
-            <p className="text-slate-500">{selectedChat.phone}</p>
+            <h3 className="font-semibold text-slate-900 text-base truncate">{selectedChat.name}</h3>
+            <p className="text-slate-500 text-sm truncate">{selectedChat.phone}</p>
             <p className="text-xs text-slate-500 mt-1">Assigned: <span className="font-medium text-slate-700">{selectedChat.assignedUserName || "Unassigned"}</span></p>
           </div>
 
@@ -350,10 +352,10 @@ const InboxPage = () => {
             <div className="p-5 bg-slate-50 rounded-xl border border-slate-100">
               <p className="text-sm font-medium text-slate-700 mb-2">Contact Info</p>
               <div className="space-y-2 text-sm">
-                <div className="flex justify-between"><span className="text-slate-500">Name</span><span className="text-slate-900">{selectedContact?.name || selectedChat.name || "-"}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Phone</span><span className="text-slate-900">{selectedContact?.phone || selectedChat.phone || "-"}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Email</span><span className="text-slate-900">{selectedContact?.email || "-"}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Added</span><span className="text-slate-900">{selectedContact?.createdAtUtc ? new Date(selectedContact.createdAtUtc).toLocaleDateString() : "-"}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Name</span><span className="text-slate-900 text-right break-words">{selectedContact?.name || selectedChat.name || "-"}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Phone</span><span className="text-slate-900 text-right break-all">{selectedContact?.phone || selectedChat.phone || "-"}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Email</span><span className="text-slate-900 text-right break-all">{selectedContact?.email || "-"}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Added</span><span className="text-slate-900 text-right">{selectedContact?.createdAtUtc ? new Date(selectedContact.createdAtUtc).toLocaleDateString() : "-"}</span></div>
               </div>
             </div>
 
