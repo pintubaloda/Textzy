@@ -42,7 +42,7 @@ else
     catch when (builder.Environment.IsProduction())
     {
         controlConnection = BuildFromPgEnvironment()
-            ?? throw;
+            ?? throw new InvalidOperationException("Invalid Postgres URL in ConnectionStrings__Default/DATABASE_URL and PG* fallback values are missing or invalid.");
     }
 }
 
