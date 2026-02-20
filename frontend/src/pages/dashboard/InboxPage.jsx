@@ -35,7 +35,8 @@ import {
   FileText,
   Mic,
 } from "lucide-react";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, wabaGetOnboardingStatus } from "@/lib/api";
+import { toast } from "sonner";
 
 const InboxPage = () => {
   const [selectedConversation, setSelectedConversation] = useState(0);
@@ -43,10 +44,20 @@ const InboxPage = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [conversations, setConversations] = useState([]);
   const [messages, setMessages] = useState([]);
+  const [contacts, setContacts] = useState([]);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [wabaDetails, setWabaDetails] = useState(null);
+  const [newLabel, setNewLabel] = useState("");
 
   useEffect(() => {
-    Promise.all([apiGet("/api/inbox/conversations"), apiGet("/api/messages")])
-      .then(([c, m]) => {
+    Promise.all([
+      apiGet("/api/inbox/conversations"),
+      apiGet("/api/messages"),
+      apiGet("/api/contacts"),
+      apiGet("/api/auth/team-members").catch(() => []),
+      wabaGetOnboardingStatus().catch(() => null),
+    ])
+      .then(([c, m, ct, tm, waba]) => {
         setConversations((c || []).map((x) => ({
           id: x.id,
           name: x.customerName || x.customerPhone,
@@ -57,6 +68,9 @@ const InboxPage = () => {
           starred: false,
           channel: "whatsapp",
           avatar: (x.customerName || x.customerPhone || "U").slice(0, 2).toUpperCase(),
+          assignedUserId: x.assignedUserId || "",
+          assignedUserName: x.assignedUserName || "",
+          labels: (x.labelsCsv || "").split(",").map((z) => z.trim()).filter(Boolean),
         })));
         setMessages((m || []).map((x) => ({
           id: x.id,
@@ -65,6 +79,9 @@ const InboxPage = () => {
           time: "now",
           status: "read",
         })));
+        setContacts(ct || []);
+        setTeamMembers(tm || []);
+        setWabaDetails(waba);
       })
       .catch(() => {
         setConversations([]);
@@ -78,6 +95,55 @@ const InboxPage = () => {
     if (message.trim()) {
       apiPost("/api/messages/send", { recipient: selectedChat.phone || "+910000000000", body: message, channel: 2 }).catch(() => {});
       setMessage("");
+    }
+  };
+
+  const selectedContact = contacts.find((x) => x.phone === selectedChat.phone);
+
+  const handleAssign = async (member) => {
+    if (!selectedChat.id) return;
+    try {
+      const updated = await apiPost(`/api/inbox/conversations/${selectedChat.id}/assign`, {
+        userId: String(member.id),
+        userName: member.name,
+      });
+      setConversations((prev) =>
+        prev.map((x) => (x.id === selectedChat.id ? { ...x, assignedUserId: updated.assignedUserId, assignedUserName: updated.assignedUserName } : x))
+      );
+      toast.success(`Assigned to ${member.name}`);
+    } catch {
+      toast.error("Failed to assign");
+    }
+  };
+
+  const handleTransfer = async (member) => {
+    if (!selectedChat.id) return;
+    try {
+      const updated = await apiPost(`/api/inbox/conversations/${selectedChat.id}/transfer`, {
+        userId: String(member.id),
+        userName: member.name,
+      });
+      setConversations((prev) =>
+        prev.map((x) => (x.id === selectedChat.id ? { ...x, assignedUserId: updated.assignedUserId, assignedUserName: updated.assignedUserName } : x))
+      );
+      toast.success(`Transferred to ${member.name}`);
+    } catch {
+      toast.error("Failed to transfer chat");
+    }
+  };
+
+  const handleAddLabel = async () => {
+    const label = newLabel.trim();
+    if (!label || !selectedChat.id) return;
+    try {
+      const labels = Array.from(new Set([...(selectedChat.labels || []), label]));
+      const updated = await apiPost(`/api/inbox/conversations/${selectedChat.id}/labels`, { labels });
+      const nextLabels = (updated.labelsCsv || "").split(",").map((z) => z.trim()).filter(Boolean);
+      setConversations((prev) => prev.map((x) => (x.id === selectedChat.id ? { ...x, labels: nextLabels } : x)));
+      setNewLabel("");
+      toast.success("Label added");
+    } catch {
+      toast.error("Failed to add label");
     }
   };
 
@@ -194,10 +260,49 @@ const InboxPage = () => {
               <p className="text-sm text-slate-500">{selectedChat.phone}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" data-testid="call-btn">
-              <Phone className="w-5 h-5" />
-            </Button>
+            <div className="flex items-center gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    Assign
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {teamMembers.length === 0 ? (
+                    <DropdownMenuItem disabled>No members</DropdownMenuItem>
+                  ) : (
+                    teamMembers.map((member) => (
+                      <DropdownMenuItem key={member.id} onClick={() => handleAssign(member)}>
+                        {member.name} ({member.role})
+                      </DropdownMenuItem>
+                    ))
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    Transfer Chat
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {teamMembers.length === 0 ? (
+                    <DropdownMenuItem disabled>No members</DropdownMenuItem>
+                  ) : (
+                    teamMembers.map((member) => (
+                      <DropdownMenuItem key={member.id} onClick={() => handleTransfer(member)}>
+                        {member.name} ({member.role})
+                      </DropdownMenuItem>
+                    ))
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <Button variant="ghost" size="icon" data-testid="call-btn">
+                <Phone className="w-5 h-5" />
+              </Button>
             <Button variant="ghost" size="icon" data-testid="video-btn">
               <Video className="w-5 h-5" />
             </Button>
@@ -284,7 +389,7 @@ const InboxPage = () => {
                 placeholder="Type a message..."
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                className="min-h-[44px] max-h-32 resize-none pr-12"
+                className="min-h-[64px] max-h-40 resize-none pr-12 text-base"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -314,7 +419,7 @@ const InboxPage = () => {
       </div>
 
       {/* Contact Info Panel */}
-      <div className="w-80 border-l border-slate-200 bg-white hidden xl:block">
+      <div className="w-96 border-l border-slate-200 bg-white hidden xl:block">
         <div className="p-6">
           <div className="text-center mb-6">
             <Avatar className="w-20 h-20 mx-auto mb-4">
@@ -324,6 +429,9 @@ const InboxPage = () => {
             </Avatar>
             <h3 className="font-semibold text-slate-900 text-lg">{selectedChat.name}</h3>
             <p className="text-slate-500">{selectedChat.phone}</p>
+            <p className="text-xs text-slate-500 mt-1">
+              Assigned: <span className="font-medium text-slate-700">{selectedChat.assignedUserName || "Unassigned"}</span>
+            </p>
           </div>
 
           <div className="space-y-4">
@@ -332,15 +440,15 @@ const InboxPage = () => {
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-slate-500">Email</span>
-                  <span className="text-slate-900">priya@example.com</span>
+                  <span className="text-slate-900">{selectedContact?.email || "-"}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Location</span>
-                  <span className="text-slate-900">Mumbai, India</span>
+                  <span className="text-slate-900">{selectedContact?.location || "-"}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Added</span>
-                  <span className="text-slate-900">Jan 15, 2024</span>
+                  <span className="text-slate-900">{selectedContact?.createdAtUtc ? new Date(selectedContact.createdAtUtc).toLocaleDateString() : "-"}</span>
                 </div>
               </div>
             </div>
@@ -348,22 +456,56 @@ const InboxPage = () => {
             <div className="p-4 bg-slate-50 rounded-lg">
               <p className="text-sm font-medium text-slate-700 mb-2">Labels</p>
               <div className="flex flex-wrap gap-2">
-                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">Customer</Badge>
-                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">VIP</Badge>
-                <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">Repeat Buyer</Badge>
+                {(selectedChat.labels || []).length === 0 ? (
+                  <span className="text-sm text-slate-500">No labels</span>
+                ) : (
+                  (selectedChat.labels || []).map((label) => (
+                    <Badge key={label} variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">{label}</Badge>
+                  ))
+                )}
+              </div>
+              <div className="mt-3 flex gap-2">
+                <Input
+                  placeholder="Add label"
+                  value={newLabel}
+                  onChange={(e) => setNewLabel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleAddLabel();
+                    }
+                  }}
+                />
+                <Button onClick={handleAddLabel} size="sm" className="bg-orange-500 hover:bg-orange-600 text-white">
+                  Add
+                </Button>
               </div>
             </div>
 
             <div className="p-4 bg-slate-50 rounded-lg">
-              <p className="text-sm font-medium text-slate-700 mb-2">Recent Orders</p>
+              <p className="text-sm font-medium text-slate-700 mb-2">WABA Profile</p>
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-600">#12345</span>
-                  <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Delivered</Badge>
+                  <span className="text-slate-600">Business</span>
+                  <span className="text-slate-900 font-medium">{wabaDetails?.businessName || "-"}</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-600">#12289</span>
-                  <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">In Transit</Badge>
+                  <span className="text-slate-600">WABA ID</span>
+                  <span className="text-slate-900 font-medium">{wabaDetails?.wabaId || "-"}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-600">Phone Number ID</span>
+                  <span className="text-slate-900 font-medium">{wabaDetails?.phoneNumberId || "-"}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-600">Display Number</span>
+                  <span className="text-slate-900 font-medium">{wabaDetails?.displayPhoneNumber || "-"}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-600">Status</span>
+                  <Badge className={wabaDetails?.readyToSend ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>
+                    {wabaDetails?.readyToSend ? "Ready" : (wabaDetails?.state || "Pending")}
+                  </Badge>
                 </div>
               </div>
             </div>

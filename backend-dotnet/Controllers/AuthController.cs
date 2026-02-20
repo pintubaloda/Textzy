@@ -183,6 +183,26 @@ public class AuthController(
         return Ok(projects);
     }
 
+    [HttpGet("team-members")]
+    public IActionResult TeamMembers()
+    {
+        if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
+
+        var team = db.TenantUsers
+            .Where(tu => tu.TenantId == tenancy.TenantId)
+            .Join(db.Users, tu => tu.UserId, u => u.Id, (tu, u) => new
+            {
+                id = u.Id,
+                name = string.IsNullOrWhiteSpace(u.FullName) ? u.Email : u.FullName,
+                email = u.Email,
+                role = tu.Role
+            })
+            .OrderBy(x => x.name)
+            .ToList();
+
+        return Ok(team);
+    }
+
     [HttpPost("projects")]
     public async Task<IActionResult> CreateProject([FromBody] CreateProjectRequest request, CancellationToken ct)
     {

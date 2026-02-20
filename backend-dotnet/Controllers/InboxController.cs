@@ -40,6 +40,32 @@ public class InboxController(
         return Ok(c);
     }
 
+    [HttpPost("conversations/{id:guid}/transfer")]
+    public async Task<IActionResult> Transfer(Guid id, [FromBody] TransferConversationRequest req, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(InboxWrite)) return Forbid();
+        var c = await db.Conversations.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
+        if (c is null) return NotFound();
+        c.AssignedUserId = req.UserId;
+        c.AssignedUserName = req.UserName;
+        c.Status = "Open";
+        await db.SaveChangesAsync(ct);
+        await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("conversation.transferred", new { c.Id, c.AssignedUserId, c.AssignedUserName }, ct);
+        return Ok(c);
+    }
+
+    [HttpPost("conversations/{id:guid}/labels")]
+    public async Task<IActionResult> Labels(Guid id, [FromBody] UpdateConversationLabelsRequest req, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(InboxWrite)) return Forbid();
+        var c = await db.Conversations.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
+        if (c is null) return NotFound();
+        c.LabelsCsv = string.Join(",", (req.Labels ?? []).Select(x => (x ?? string.Empty).Trim()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase));
+        await db.SaveChangesAsync(ct);
+        await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("conversation.labels", new { c.Id, c.LabelsCsv }, ct);
+        return Ok(c);
+    }
+
     [HttpPost("conversations/{id:guid}/notes")]
     public async Task<IActionResult> AddNote(Guid id, [FromBody] AddConversationNoteRequest req, CancellationToken ct)
     {
