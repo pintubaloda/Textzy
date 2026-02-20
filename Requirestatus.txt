@@ -1,0 +1,43 @@
+Textzy Requirement Status (Latest)
+Date: 2026-02-20
+
+Completed in latest cycle:
+1. Frontend dependency stability
+- Added frontend/package-lock.json
+- Enforced npm ci in CI
+- Removed deploy-time audit-fix-force usage from workflow/config
+
+2. Platform settings persistence
+- Added backend APIs for platform settings
+- Added encrypted secret storage service
+- Added audit log model + write service
+- Wired frontend platform settings page to backend save/load
+
+3. Templates module hardening
+- Fixed create-template modal overflow/save visibility (scrollable body + sticky footer)
+- Implemented WhatsApp template validations:
+  - category guard
+  - variable sequence guard
+  - body size guard
+- Implemented SMS DLT validations:
+  - dltEntityId required
+  - dltTemplateId required
+  - smsSenderId required (3-6 chars)
+- Added SMS Sender storage and API:
+  - GET/POST /api/sms/senders
+
+4. UI navigation updates
+- Added sidebar Template submenus:
+  - Templates > WhatsApp
+  - Templates > SMS
+- Added SMS mode flow with CSV upload support
+
+5. Inbox working baseline
+- Removed interval polling path and kept SignalR driven refresh
+- Added strict template variable completeness validation before fallback send
+
+In-progress / Pending:
+1. Stabilize sender-add + save flow with production validation feedback on all edge cases
+2. End-to-end test coverage (auth/project switch/templates/inbox)
+3. Monitoring and alert setup for webhook and queue failures
+4. Full RBAC UI hide/disable sweep for all pages/actions

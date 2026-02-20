@@ -1,0 +1,16 @@
+Recent Commits Pushed to main
+
+eaad9d5 - Add template submenus and SMS DLT sender workflow with validations
+2eca184 - Fix SMS sender RBAC to use template permissions
+99efb80 - Upgrade template module with WhatsApp/SMS DLT validation and sender storage
+5da65e9 - Add frontend lockfile and enforce npm ci in CI
+95a0ef1 - Harden inbox realtime behavior and template variable validation
+610c1d5 - Add persisted platform settings APIs with encrypted storage and audit logs
+bffd53c - Align frontend packageManager with npm-based CI and Render
+2bc396a - Remove global AJV overrides to restore schema-utils v4 compatibility
+40de5d8 - Fix npm overrides syntax for schema-utils pinning
+a82dc27 - Use targeted schema-utils overrides to avoid validateOptions break
+6995920 - Force schema-utils v3 with ajv6 stack for CRA build
+314e516 - Pin ajv6 stack for CRA build compatibility
+75ca065 - Fix Render build by removing incompatible AJV overrides
+177204e - Add platform settings submenu and pages for platform owner
