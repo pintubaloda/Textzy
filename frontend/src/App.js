@@ -26,6 +26,7 @@ import BillingPage from "@/pages/dashboard/BillingPage";
 import SettingsPage from "@/pages/dashboard/SettingsPage";
 import AdminPage from "@/pages/dashboard/AdminPage";
 import TeamPage from "@/pages/dashboard/TeamPage";
+import PlatformSettingsPage from "@/pages/dashboard/PlatformSettingsPage";
 
 function App() {
   const authed = !!getSession().token;
@@ -55,6 +56,7 @@ function App() {
             <Route path="settings" element={<SettingsPage />} />
             <Route path="team" element={<TeamPage />} />
             <Route path="admin" element={<AdminPage />} />
+            <Route path="platform-settings" element={<PlatformSettingsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

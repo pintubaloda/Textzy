@@ -50,6 +50,8 @@ const DashboardLayout = () => {
   const [projects, setProjects] = useState([]);
   const [switchingProject, setSwitchingProject] = useState("");
   const session = getSession();
+  const role = (session.role || "").toLowerCase();
+  const canAccessPlatformSettings = role === "super_admin" || role === "owner";
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
   const currentSettingsTab = new URLSearchParams(location.search).get("tab") || "profile";
   const settingsMenus = [
@@ -308,6 +310,37 @@ const DashboardLayout = () => {
                 )}
               </Link>
             ))}
+            {canAccessPlatformSettings && sidebarOpen && (
+              <div className="pt-3 mt-3 border-t border-slate-200">
+                <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">
+                  Platform Setting
+                </p>
+                <Link
+                  to="/dashboard/platform-settings?tab=waba-master"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    location.pathname.startsWith("/dashboard/platform-settings") && new URLSearchParams(location.search).get("tab") !== "payment-gateway"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Settings className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">Waba Master Config</span>
+                </Link>
+                <Link
+                  to="/dashboard/platform-settings?tab=payment-gateway"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    location.pathname.startsWith("/dashboard/platform-settings") && new URLSearchParams(location.search).get("tab") === "payment-gateway"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <CreditCard className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">Payment Gateway Setup</span>
+                </Link>
+              </div>
+            )}
           </nav>
 
           {/* Usage Stats */}
