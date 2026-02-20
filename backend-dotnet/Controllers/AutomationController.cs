@@ -726,7 +726,7 @@ public class AutomationController(
         {
             trigger = new { type = NormalizeTrigger(triggerType) },
             startNodeId = "start_1",
-            nodes = new[]
+            nodes = new object[]
             {
                 new { id = "start_1", type = "start", name = "Start", config = new { }, next = "text_1" },
                 new { id = "text_1", type = "text", name = "Welcome Message", config = new { body = "Hello {{name}}", recipient = "{{recipient}}" }, next = "end_1" },

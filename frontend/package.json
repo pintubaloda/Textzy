@@ -90,13 +90,5 @@
   "engines": {
     "node": "20.x"
   },
-  "overrides": {
-    "terser-webpack-plugin": {
-      "schema-utils": "3.3.0"
-    },
-    "fork-ts-checker-webpack-plugin": {
-      "schema-utils": "3.3.0"
-    }
-  },
   "packageManager": "npm@10"
 }
