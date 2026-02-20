@@ -33,12 +33,12 @@ public class WabaWebhookController(
     public async Task<IActionResult> Receive(CancellationToken ct)
     {
         using var reader = new StreamReader(Request.Body);
-        var body = await reader.ReadToEndAsync(ct);
+        var rawBody = await reader.ReadToEndAsync(ct);
 
         var sig = Request.Headers["X-Hub-Signature-256"].ToString();
-        if (!whatsapp.VerifyWebhookSignature(body, sig))
+        if (!whatsapp.VerifyWebhookSignature(rawBody, sig))
         {
-            logger.LogWarning("WABA webhook signature validation failed. signature={Signature} payload={Payload}", sig, body);
+            logger.LogWarning("WABA webhook signature validation failed. signature={Signature} payload={Payload}", sig, rawBody);
             return Unauthorized("Invalid webhook signature.");
         }
 
@@ -48,7 +48,7 @@ public class WabaWebhookController(
 
         try
         {
-            using var doc = JsonDocument.Parse(body);
+            using var doc = JsonDocument.Parse(rawBody);
             if (doc.RootElement.TryGetProperty("entry", out var entries))
             {
                 foreach (var entry in entries.EnumerateArray())
@@ -100,7 +100,7 @@ public class WabaWebhookController(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "WABA webhook parse failure. payload={Payload}", body);
+            logger.LogError(ex, "WABA webhook parse failure. payload={Payload}", rawBody);
             return BadRequest("Invalid webhook payload.");
         }
 
