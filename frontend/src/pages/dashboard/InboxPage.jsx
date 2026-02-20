@@ -52,6 +52,7 @@ const InboxPage = () => {
   const [me, setMe] = useState(null);
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [templateVars, setTemplateVars] = useState({});
 
   useEffect(() => {
     Promise.all([
@@ -139,6 +140,12 @@ const InboxPage = () => {
   };
   const canReplyInSession = !!selectedChat.canReply;
   const selectedContact = contacts.find((x) => x.phone === selectedChat.phone);
+  const selectedTemplate = templates.find((x) => String(x.id) === selectedTemplateId) || templates[0];
+  const templateParamIndexes = useMemo(() => {
+    const body = selectedTemplate?.body || "";
+    const matches = [...body.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]));
+    return Array.from(new Set(matches)).sort((a, b) => a - b);
+  }, [selectedTemplate]);
 
   useEffect(() => {
     if (!selectedChat?.id) {
@@ -179,12 +186,13 @@ const InboxPage = () => {
   };
 
   const handleSendTemplateFallback = async () => {
-    const tpl = templates.find((x) => String(x.id) === selectedTemplateId) || templates[0];
+    const tpl = selectedTemplate;
     if (!tpl || !selectedChat?.phone) {
       toast.error("No approved WhatsApp template available.");
       return;
     }
     try {
+      const params = templateParamIndexes.map((idx) => (templateVars[idx] || "").trim());
       await apiPost("/api/messages/send", {
         recipient: selectedChat.phone,
         body: tpl.body || "Template message",
@@ -192,7 +200,7 @@ const InboxPage = () => {
         useTemplate: true,
         templateName: tpl.name,
         templateLanguageCode: tpl.language || "en",
-        templateParameters: [],
+        templateParameters: params,
       });
       toast.success(`Template sent: ${tpl.name}`);
       apiGet(`/api/inbox/conversations/${selectedChat.id}/messages`).then((rows) => {
@@ -208,6 +216,48 @@ const InboxPage = () => {
       toast.error(e?.message || "Template send failed");
     }
   };
+
+  useEffect(() => {
+    setTemplateVars({});
+  }, [selectedTemplateId]);
+
+  useEffect(() => {
+    if (!selectedChat?.id) return;
+    const timer = setInterval(() => {
+      apiGet("/api/inbox/conversations").then((c) => {
+        setConversations(
+          (c || []).map((x) => ({
+            id: x.id,
+            name: x.customerName || x.customerPhone,
+            phone: x.customerPhone,
+            lastMessage: x.status || "Conversation",
+            time: x.lastMessageAtUtc || x.createdAtUtc || null,
+            unread: 0,
+            starred: false,
+            channel: "whatsapp",
+            avatar: (x.customerName || x.customerPhone || "U").slice(0, 2).toUpperCase(),
+            assignedUserId: x.assignedUserId || "",
+            assignedUserName: x.assignedUserName || "",
+            labels: (x.labelsCsv || "").split(",").map((z) => z.trim()).filter(Boolean),
+            canReply: !!x.canReply,
+            hoursSinceInbound: Number(x.hoursSinceInbound || 999),
+          }))
+        );
+      }).catch(() => {});
+      apiGet(`/api/inbox/conversations/${selectedChat.id}/messages`)
+        .then((rows) => {
+          setMessages((rows || []).map((x) => ({
+            id: x.id,
+            sender: String(x.status || "").toLowerCase() === "received" ? "customer" : "agent",
+            text: x.body,
+            time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
+            status: String(x.status || "").toLowerCase() === "received" ? "received" : String(x.status || "").toLowerCase(),
+          })));
+        })
+        .catch(() => {});
+    }, 6000);
+    return () => clearInterval(timer);
+  }, [selectedChat?.id]);
 
   const handleAssign = async (member) => {
     if (!selectedChat.id) return;
@@ -341,6 +391,15 @@ const InboxPage = () => {
                   <option key={t.id} value={String(t.id)}>{t.name}</option>
                 ))}
               </select>
+              {templateParamIndexes.map((idx) => (
+                <Input
+                  key={idx}
+                  className="h-8 text-xs w-28"
+                  placeholder={`Var ${idx}`}
+                  value={templateVars[idx] || ""}
+                  onChange={(e) => setTemplateVars((prev) => ({ ...prev, [idx]: e.target.value }))}
+                />
+              ))}
               <Button size="sm" className="h-8 bg-orange-500 hover:bg-orange-600 text-white" onClick={handleSendTemplateFallback}>Send Template</Button>
             </div>
           ) : null}

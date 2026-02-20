@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using Textzy.Api.Data;
 using Textzy.Api.Models;
 using Textzy.Api.Services;
@@ -14,6 +15,7 @@ public class WabaWebhookController(
     WhatsAppCloudService whatsapp,
     ControlDbContext controlDb,
     IConfiguration config,
+    IHubContext<InboxHub> hub,
     ILogger<WabaWebhookController> logger) : ControllerBase
 {
     [HttpGet]
@@ -41,7 +43,7 @@ public class WabaWebhookController(
         }
 
         string phoneNumberId = string.Empty;
-        var inboundMessages = new List<(string From, string Name, string Body)>();
+        var inboundMessages = new List<(string MessageId, string From, string Name, string Body)>();
         var statusEvents = new List<(string MessageId, string Status, DateTime? AtUtc)>();
 
         try
@@ -89,7 +91,8 @@ public class WabaWebhookController(
                                 && profileNode.TryGetProperty("name", out var nameNode)
                                 ? nameNode.GetString() ?? string.Empty
                                 : string.Empty;
-                            inboundMessages.Add((from, name, body));
+                            var messageId = msg.TryGetProperty("id", out var msgIdNode) ? msgIdNode.GetString() ?? string.Empty : string.Empty;
+                            inboundMessages.Add((messageId, from, name, body));
                         }
                     }
                 }
@@ -196,21 +199,28 @@ public class WabaWebhookController(
                     });
                 }
 
-                tenantDb.Set<Message>().Add(new Message
+                var inboundProviderId = string.IsNullOrWhiteSpace(item.MessageId) ? $"wa_in_{Guid.NewGuid():N}" : item.MessageId;
+                var existingInbound = await tenantDb.Set<Message>()
+                    .FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.ProviderMessageId == inboundProviderId, ct);
+                if (existingInbound is null)
                 {
-                    Id = Guid.NewGuid(),
-                    TenantId = tenant.Id,
-                    Channel = ChannelType.WhatsApp,
-                    Recipient = from,
-                    Body = string.IsNullOrWhiteSpace(item.Body) ? "[Inbound message]" : item.Body,
-                    MessageType = "session",
-                    Status = "Received",
-                    ProviderMessageId = $"wa_in_{Guid.NewGuid():N}",
-                    CreatedAtUtc = DateTime.UtcNow
-                });
+                    tenantDb.Set<Message>().Add(new Message
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = tenant.Id,
+                        Channel = ChannelType.WhatsApp,
+                        Recipient = from,
+                        Body = string.IsNullOrWhiteSpace(item.Body) ? "[Inbound message]" : item.Body,
+                        MessageType = "session",
+                        Status = "Received",
+                        ProviderMessageId = inboundProviderId,
+                        CreatedAtUtc = DateTime.UtcNow
+                    });
+                }
             }
 
             await tenantDb.SaveChangesAsync(ct);
+            await hub.Clients.Group($"tenant:{tenant.Slug}").SendAsync("webhook.inbound", new { phoneNumberId, inboundCount = inboundMessages.Count, statusCount = statusEvents.Count }, ct);
             break;
         }
 
