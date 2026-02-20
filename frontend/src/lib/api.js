@@ -206,3 +206,15 @@ export async function getPlatformWebhookLogs({ provider = "", limit = 100 } = {}
   q.set("limit", String(limit))
   return apiGet(`/api/platform/webhook-logs?${q.toString()}`)
 }
+
+export async function listPaymentWebhooks() {
+  return apiGet('/api/platform/payment-webhooks')
+}
+
+export async function autoCreatePaymentWebhook(provider) {
+  return apiPost('/api/platform/payment-webhooks/auto-create', { provider })
+}
+
+export async function upsertPaymentWebhook(payload) {
+  return apiPut('/api/platform/payment-webhooks', payload)
+}

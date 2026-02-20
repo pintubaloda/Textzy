@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { getPlatformSettings, savePlatformSettings, getPlatformWebhookLogs } from "@/lib/api";
+import { getPlatformSettings, savePlatformSettings, getPlatformWebhookLogs, listPaymentWebhooks, autoCreatePaymentWebhook, upsertPaymentWebhook } from "@/lib/api";
 
 const PlatformSettingsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -14,6 +14,8 @@ const PlatformSettingsPage = () => {
   const [gateway, setGateway] = useState("razorpay");
   const [waba, setWaba] = useState({ appId: "", appSecret: "", verifyToken: "", webhookUrl: "" });
   const [payment, setPayment] = useState({ provider: "razorpay", merchantId: "", keyId: "", keySecret: "", webhookSecret: "" });
+  const [webhookItems, setWebhookItems] = useState([]);
+  const [webhookEdit, setWebhookEdit] = useState({ provider: "razorpay", endpointUrl: "", webhookId: "", eventsCsv: "" });
   const [logs, setLogs] = useState([]);
   const [logProvider, setLogProvider] = useState("");
   const [loading, setLoading] = useState(false);
@@ -52,6 +54,16 @@ const PlatformSettingsPage = () => {
             keyId: values.keyId || "",
             keySecret: values.keySecret || "",
             webhookSecret: values.webhookSecret || "",
+          });
+          const hooks = await listPaymentWebhooks().catch(() => []);
+          if (!active) return;
+          setWebhookItems(hooks || []);
+          const selected = (hooks || []).find((x) => x.provider === p) || null;
+          setWebhookEdit({
+            provider: p,
+            endpointUrl: selected?.endpointUrl || "",
+            webhookId: selected?.webhookId || "",
+            eventsCsv: selected?.eventsCsv || "payment.captured,payment.failed",
           });
         } else {
           const res = await getPlatformWebhookLogs({ provider: logProvider, limit: 100 });
@@ -156,7 +168,16 @@ const PlatformSettingsPage = () => {
           <CardContent className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label>Provider</Label>
-              <Select value={gateway} onValueChange={setGateway}>
+              <Select value={gateway} onValueChange={(v) => {
+                setGateway(v);
+                const selected = (webhookItems || []).find((x) => x.provider === v) || null;
+                setWebhookEdit({
+                  provider: v,
+                  endpointUrl: selected?.endpointUrl || "",
+                  webhookId: selected?.webhookId || "",
+                  eventsCsv: selected?.eventsCsv || "payment.captured,payment.failed",
+                });
+              }}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -200,6 +221,94 @@ const PlatformSettingsPage = () => {
               <Button variant="outline" onClick={() => toast.info("Payment gateway test initiated")}>
                 Test Connection
               </Button>
+            </div>
+            <div className="md:col-span-2 rounded-lg border border-slate-200 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="font-medium text-slate-900">Webhook Auto-Create</p>
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      setLoading(true);
+                      const res = await autoCreatePaymentWebhook(gateway);
+                      const cfg = res?.config;
+                      if (cfg) {
+                        setWebhookEdit({
+                          provider: cfg.provider || gateway,
+                          endpointUrl: cfg.endpointUrl || "",
+                          webhookId: cfg.webhookId || "",
+                          eventsCsv: cfg.eventsCsv || "",
+                        });
+                      }
+                      const hooks = await listPaymentWebhooks();
+                      setWebhookItems(hooks || []);
+                      toast.success(res?.exists ? "Webhook already exists." : "Webhook endpoint auto-created.");
+                    } catch {
+                      toast.error("Failed to auto-create webhook.");
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                >
+                  Auto Create Webhook
+                </Button>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Endpoint URL</Label>
+                  <Input value={webhookEdit.endpointUrl} onChange={(e) => setWebhookEdit((p) => ({ ...p, endpointUrl: e.target.value }))} placeholder="https://api.yourapp.com/api/payments/webhook/razorpay" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Webhook ID (if created in gateway)</Label>
+                  <Input value={webhookEdit.webhookId} onChange={(e) => setWebhookEdit((p) => ({ ...p, webhookId: e.target.value }))} placeholder="wh_..." />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Subscribed Events (comma-separated)</Label>
+                <Input value={webhookEdit.eventsCsv} onChange={(e) => setWebhookEdit((p) => ({ ...p, eventsCsv: e.target.value }))} placeholder="payment.captured,payment.failed,refund.processed" />
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      setLoading(true);
+                      await upsertPaymentWebhook({ ...webhookEdit, provider: gateway });
+                      setWebhookItems(await listPaymentWebhooks());
+                      toast.success("Webhook config saved.");
+                    } catch {
+                      toast.error("Failed to save webhook config.");
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                >
+                  Save Webhook Details
+                </Button>
+              </div>
+              <div className="rounded-md border border-slate-100">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left">Provider</th>
+                      <th className="px-2 py-1.5 text-left">Endpoint</th>
+                      <th className="px-2 py-1.5 text-left">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {webhookItems.map((w) => (
+                      <tr key={`${w.provider}-${w.endpointUrl}`} className="border-t border-slate-100">
+                        <td className="px-2 py-1.5">{w.provider}</td>
+                        <td className="px-2 py-1.5 truncate max-w-[420px]">{w.endpointUrl || "-"}</td>
+                        <td className="px-2 py-1.5">{w.isAutoCreated ? "Auto" : "Manual"}</td>
+                      </tr>
+                    ))}
+                    {webhookItems.length === 0 ? (
+                      <tr><td className="px-2 py-2 text-slate-500" colSpan={3}>No webhook configured yet.</td></tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </CardContent>
         </Card>
