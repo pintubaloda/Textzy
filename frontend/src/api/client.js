@@ -1,4 +1,9 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000'
+const runtimeConfig = typeof window !== 'undefined' ? (window.__APP_CONFIG__ || {}) : {}
+const API_BASE =
+  runtimeConfig.API_BASE ||
+  import.meta.env.VITE_API_BASE ||
+  process.env.REACT_APP_API_BASE ||
+  'http://localhost:5000'
 
 let getSession = () => ({ token: '', tenantSlug: '' })
 let onSessionUpdate = () => {}

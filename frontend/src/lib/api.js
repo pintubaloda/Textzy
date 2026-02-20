@@ -1,6 +1,11 @@
 import { toast } from 'sonner'
 
-const API_BASE = process.env.REACT_APP_API_BASE || 'https://textzy.onrender.com'
+const runtimeConfig = typeof window !== 'undefined' ? (window.__APP_CONFIG__ || {}) : {}
+const API_BASE =
+  runtimeConfig.API_BASE ||
+  process.env.REACT_APP_API_BASE ||
+  process.env.VITE_API_BASE ||
+  'https://textzy.onrender.com'
 const STORAGE_KEY = 'textzy.session.v1'
 
 export function getSession() {
