@@ -16,18 +16,20 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2 } from "lucide-react";
+import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2, Send, Users, TrendingUp, TrendingDown, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { wabaExchangeCode, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
+import { apiGet, wabaExchangeCode, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
 
 const SettingsPage = () => {
   const [saving, setSaving] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState(searchParams.get("tab") || "profile");
+  const [wabaView, setWabaView] = useState("whatsapp");
   const [whatsappStatus, setWhatsappStatus] = useState({ state: "requested", readyToSend: false, isConnected: false });
   const [startingWaba, setStartingWaba] = useState(false);
   const [connectingWaba, setConnectingWaba] = useState(false);
   const [checkingWaba, setCheckingWaba] = useState(false);
+  const [dashboardKpi, setDashboardKpi] = useState({ total: 0, wa: 0, sms: 0, contacts: 0 });
 
   const facebookAppId = process.env.REACT_APP_FACEBOOK_APP_ID || "";
   const embeddedConfigId = process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "";
@@ -48,6 +50,7 @@ const SettingsPage = () => {
   useEffect(() => {
     if (activeTab === "whatsapp") {
       loadWabaStatus();
+      loadKpis();
     }
   }, [activeTab]);
 
@@ -57,6 +60,21 @@ const SettingsPage = () => {
       setWhatsappStatus(data || {});
     } catch {
       setWhatsappStatus({ state: "requested", readyToSend: false, isConnected: false });
+    }
+  };
+
+  const loadKpis = async () => {
+    try {
+      const [m, c] = await Promise.all([apiGet("/api/messages"), apiGet("/api/contacts")]);
+      const messages = m || [];
+      setDashboardKpi({
+        total: messages.length,
+        wa: messages.filter((x) => x.channel === 2).length,
+        sms: messages.filter((x) => x.channel === 1).length,
+        contacts: (c || []).length,
+      });
+    } catch {
+      setDashboardKpi({ total: 0, wa: 0, sms: 0, contacts: 0 });
     }
   };
 
@@ -429,13 +447,13 @@ const SettingsPage = () => {
         {/* WhatsApp Tab */}
         <TabsContent value="whatsapp">
           <div className="space-y-4">
-            <h2 className="text-3xl font-heading font-bold text-slate-900">Hello, Rakesh. Welcome to Textzy!</h2>
+            <h2 className="text-3xl font-heading font-bold text-slate-900">Channel Setup</h2>
 
             <div className="grid lg:grid-cols-2 gap-4">
-              <Card className="border-slate-200">
+              <Card className="border-slate-200 bg-white">
                 <CardContent className="p-4 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
-                    <MessageSquare className="w-5 h-5 text-emerald-700" />
+                  <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                    <MessageSquare className="w-5 h-5 text-green-700" />
                   </div>
                   <div className="flex-1 text-sm text-slate-700">
                     {whatsappStatus.isConnected ? "Your WhatsApp number is connected" : "Your WhatsApp number is not connected"}
@@ -443,110 +461,173 @@ const SettingsPage = () => {
                   <Button
                     onClick={handleWabaConnect}
                     disabled={connectingWaba}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    className="bg-orange-500 hover:bg-orange-600 text-white"
                   >
                     {connectingWaba ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                    {whatsappStatus.isConnected ? "Reconnect Number" : "Connect your Number"}
+                    {whatsappStatus.isConnected ? "Reconnect Number" : "Connect Number"}
                   </Button>
                 </CardContent>
               </Card>
 
-              <Card className="border-slate-200">
+              <Card className="border-slate-200 bg-white">
                 <CardContent className="p-4 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-fuchsia-500 via-pink-500 to-amber-400 text-white flex items-center justify-center">
-                    <Instagram className="w-5 h-5" />
+                  <div className="w-10 h-10 rounded-xl bg-pink-100 flex items-center justify-center">
+                    <Instagram className="w-5 h-5 text-pink-600" />
                   </div>
                   <div className="flex-1 text-sm text-slate-700">Your Business Instagram is not connected</div>
-                  <Button variant="secondary" disabled className="bg-slate-300 text-white hover:bg-slate-300">
+                  <Button variant="outline" disabled>
                     Connect Account
                   </Button>
                 </CardContent>
               </Card>
             </div>
 
-            <Card className="border-slate-200 overflow-hidden">
-              <CardContent className="p-0">
-                <div className="border-b border-slate-200 p-4">
-                  <div className="inline-flex rounded-full bg-slate-100 p-1 gap-2">
-                    <button className="px-4 py-2 rounded-full bg-emerald-900 text-white text-sm font-medium">Whatsapp</button>
-                    <button className="px-4 py-2 rounded-full text-slate-600 text-sm font-medium">Instagram</button>
-                  </div>
+            <Card className="border-slate-200">
+              <CardContent className="p-4">
+                <div className="inline-flex rounded-xl bg-slate-100 p-1 gap-1">
+                  <button
+                    onClick={() => setWabaView("whatsapp")}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                      wabaView === "whatsapp" ? "bg-white text-orange-600 shadow-sm" : "text-slate-600"
+                    }`}
+                  >
+                    WhatsApp
+                  </button>
+                  <button
+                    onClick={() => setWabaView("instagram")}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                      wabaView === "instagram" ? "bg-white text-orange-600 shadow-sm" : "text-slate-600"
+                    }`}
+                  >
+                    Instagram
+                  </button>
                 </div>
+              </CardContent>
+            </Card>
 
-                <div className="grid lg:grid-cols-3 gap-4 p-4">
-                  <div className="space-y-3">
+            {wabaView === "instagram" ? (
+              <Card className="border-slate-200">
+                <CardContent className="p-8 text-center">
+                  <div className="mx-auto w-12 h-12 rounded-xl bg-pink-100 flex items-center justify-center mb-3">
+                    <Instagram className="w-6 h-6 text-pink-600" />
+                  </div>
+                  <h3 className="text-xl font-semibold text-slate-900">Instagram setup is coming soon</h3>
+                  <p className="text-slate-600 mt-2">Connect your Instagram business profile from this screen in the next update.</p>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {wabaView === "whatsapp" && !whatsappStatus.isConnected ? (
+              <Card className="border-slate-200">
+                <CardHeader>
+                  <CardTitle>WhatsApp Not Connected</CardTitle>
+                  <CardDescription>Showing dashboard KPIs until your number is connected</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     {[
-                      ["Automate WhatsApp replies", "Clear common queries with zero effort"],
-                      ["Automate WhatsApp catalog browsing", "Convert visitors into prospective buyers"],
-                      ["Automate WhatsApp checkout", "Turn prospective buyers into paid customers"],
-                      ["Automate WhatsApp notifications", "Delight customers at every stage"],
-                      ["Bulk WhatsApp campaigns", "Re-engage with leads & paid customers"],
-                    ].map(([title, desc], i) => (
-                      <button
-                        key={title}
-                        className={`w-full border rounded-xl p-4 text-left flex items-center gap-3 ${i === 0 ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
-                      >
-                        <div className="flex-1">
-                          <div className="font-semibold text-slate-900">{title}</div>
-                          <div className="text-sm text-slate-500">{desc}</div>
+                      { title: "Total Messages", value: dashboardKpi.total, icon: MessageSquare, delta: "+12.5% vs last week", positive: true, chip: "bg-orange-100 text-orange-600" },
+                      { title: "WhatsApp Sent", value: dashboardKpi.wa, icon: Send, delta: "+8.2% vs last week", positive: true, chip: "bg-green-100 text-green-600" },
+                      { title: "SMS Sent", value: dashboardKpi.sms, icon: Send, delta: "-2.1% vs last week", positive: false, chip: "bg-blue-100 text-blue-600" },
+                      { title: "Active Contacts", value: dashboardKpi.contacts, icon: Users, delta: "+5.3% vs last week", positive: true, chip: "bg-purple-100 text-purple-600" },
+                    ].map((kpi) => (
+                      <div key={kpi.title} className="rounded-xl border border-slate-200 bg-white p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-sm font-medium text-slate-600">{kpi.title}</p>
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${kpi.chip}`}>
+                            <kpi.icon className="w-4 h-4" />
+                          </div>
                         </div>
-                        <ChevronRight className="w-4 h-4 text-slate-400" />
-                      </button>
+                        <div className="text-3xl font-bold text-slate-900">{kpi.value}</div>
+                        <div className={`mt-2 text-xs flex items-center gap-1 ${kpi.positive ? "text-green-600" : "text-red-500"}`}>
+                          {kpi.positive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                          {kpi.delta}
+                        </div>
+                      </div>
                     ))}
                   </div>
+                </CardContent>
+              </Card>
+            ) : null}
 
-                  <div className="lg:col-span-2">
-                    <div className="h-full border border-teal-200 bg-teal-50 rounded-xl p-5 flex flex-col">
-                      <h3 className="text-xl font-semibold text-teal-900 mb-4">See how automated replies work!</h3>
-                      <div className="grid md:grid-cols-2 gap-6 flex-1">
-                        <div>
-                          <div className="text-sm text-teal-800 mb-2">1. Send message to test your flow</div>
-                          <div className="w-36 h-36 bg-white border-2 border-slate-300 rounded-lg flex items-center justify-center text-xs text-slate-400">QR</div>
-                          <div className="text-xs text-slate-500 mt-2">Scan and send from mobile</div>
-                        </div>
-                        <div className="flex flex-col items-start justify-center gap-4">
-                          <Button className="bg-teal-600 hover:bg-teal-700 text-white">
-                            Open WhatsApp Web <ExternalLink className="w-4 h-4 ml-2" />
-                          </Button>
-                          <p className="text-sm text-teal-900">2. Once you receive a reply, test list/button interactions and FAQs.</p>
-                          <div className="text-xs text-slate-600">
-                            Status: <b>{whatsappStatus.readyToSend ? "Connected/Ready" : whatsappStatus.state || "requested"}</b>
-                          </div>
-                          {whatsappStatus.lastError ? <div className="text-xs text-amber-700">{whatsappStatus.lastError}</div> : null}
-                        </div>
+            {wabaView === "whatsapp" && whatsappStatus.isConnected ? (
+              <div className="grid xl:grid-cols-3 gap-4">
+                <Card className="xl:col-span-2 border-slate-200">
+                  <CardHeader>
+                    <CardTitle>WhatsApp Cloud API Setup</CardTitle>
+                    <CardDescription>Connected and operational details</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid md:grid-cols-2 gap-3">
+                      <div className="rounded-lg border border-slate-200 p-3">
+                        <p className="text-xs text-slate-500">Business Name</p>
+                        <p className="font-semibold text-slate-900">{whatsappStatus.businessName || "Project Business Name"}</p>
                       </div>
-                      <div className="pt-4 border-t border-teal-200 mt-4 flex items-center justify-between">
-                        <Button variant="outline" onClick={handleWabaStart} disabled={startingWaba}>
-                          {startingWaba ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}Start Onboarding
-                        </Button>
-                        <Button variant="outline" onClick={handleWabaRecheck} disabled={checkingWaba}>
-                          {checkingWaba ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}Refresh Checks
-                        </Button>
+                      <div className="rounded-lg border border-slate-200 p-3">
+                        <p className="text-xs text-slate-500">Display Number</p>
+                        <p className="font-semibold text-slate-900">{whatsappStatus.displayPhoneNumber || "Not available"}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 p-3">
+                        <p className="text-xs text-slate-500">Phone Number ID</p>
+                        <p className="font-semibold text-slate-900 break-all">{whatsappStatus.phoneNumberId || "Not available"}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 p-3">
+                        <p className="text-xs text-slate-500">WABA ID</p>
+                        <p className="font-semibold text-slate-900 break-all">{whatsappStatus.wabaId || "Not available"}</p>
                       </div>
                     </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
 
-            <Card className="border-slate-200">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-2xl">Explore more exciting features!</CardTitle>
-              </CardHeader>
-              <CardContent className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
-                {[
-                  ["Add WhatsApp Contacts", "Manage contacts efficiently"],
-                  ["Add Team Members", "Manage member permissions"],
-                  ["Explore Integrations", "Connect sheets, forms and CRM"],
-                  ["APIs & Webhooks", "Create custom integrations"],
-                ].map(([title, desc]) => (
-                  <div key={title} className="border border-slate-200 rounded-xl p-4 bg-white">
-                    <div className="font-semibold text-slate-900">{title}</div>
-                    <div className="text-sm text-slate-500">{desc}</div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+                    <div className="rounded-lg border border-slate-200 p-3">
+                      <p className="text-xs text-slate-500 mb-2">Connection Health</p>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+                          <CheckCircle2 className="w-3 h-3 mr-1" /> Connected
+                        </Badge>
+                        <Badge className={whatsappStatus.readyToSend ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>
+                          {whatsappStatus.readyToSend ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <AlertCircle className="w-3 h-3 mr-1" />}
+                          {whatsappStatus.readyToSend ? "Ready to Send" : "Checks Pending"}
+                        </Badge>
+                        <Badge variant="outline" className="border-slate-300 text-slate-700">
+                          State: {whatsappStatus.state || "connected"}
+                        </Badge>
+                      </div>
+                      {whatsappStatus.lastError ? (
+                        <p className="text-xs text-amber-700 mt-2">{whatsappStatus.lastError}</p>
+                      ) : null}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button onClick={handleWabaRecheck} disabled={checkingWaba} variant="outline">
+                        {checkingWaba ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                        Refresh Checks
+                      </Button>
+                      <Button onClick={handleWabaConnect} disabled={connectingWaba} className="bg-orange-500 hover:bg-orange-600 text-white">
+                        {connectingWaba ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                        Reconnect WhatsApp
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-slate-200">
+                  <CardHeader>
+                    <CardTitle>Quick Actions</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <Button variant="outline" className="w-full justify-between" onClick={handleWabaStart} disabled={startingWaba}>
+                      Start/Re-run Onboarding
+                      {startingWaba ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4" />}
+                    </Button>
+                    <Button variant="outline" className="w-full justify-between">
+                      Open Meta Docs <ExternalLink className="w-4 h-4" />
+                    </Button>
+                    <Button variant="outline" className="w-full justify-between">
+                      API & Webhooks <ChevronRight className="w-4 h-4" />
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
+            ) : null}
           </div>
         </TabsContent>
       </Tabs>
