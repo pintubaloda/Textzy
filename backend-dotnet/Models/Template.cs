@@ -13,5 +13,12 @@ public class Template
     public int Version { get; set; } = 1;
     public string VariantGroup { get; set; } = string.Empty;
     public string Status { get; set; } = "Approved";
+    public string DltEntityId { get; set; } = string.Empty;
+    public string DltTemplateId { get; set; } = string.Empty;
+    public string SmsSenderId { get; set; } = string.Empty;
+    public string HeaderType { get; set; } = "none";
+    public string HeaderText { get; set; } = string.Empty;
+    public string FooterText { get; set; } = string.Empty;
+    public string ButtonsJson { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
