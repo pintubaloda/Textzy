@@ -24,7 +24,36 @@ public class InboxController(
         var query = db.Conversations.Where(x => x.TenantId == tenancy.TenantId);
         if (!string.IsNullOrWhiteSpace(q))
             query = query.Where(x => x.CustomerPhone.Contains(q) || x.CustomerName.Contains(q));
-        return Ok(query.OrderByDescending(x => x.LastMessageAtUtc).Take(200).ToList());
+        var items = query.OrderByDescending(x => x.LastMessageAtUtc).Take(200).ToList();
+        var phones = items.Select(x => x.CustomerPhone).Distinct().ToList();
+        var windows = db.ConversationWindows
+            .Where(x => x.TenantId == tenancy.TenantId && phones.Contains(x.Recipient))
+            .ToDictionary(x => x.Recipient, x => x.LastInboundAtUtc);
+
+        var now = DateTime.UtcNow;
+        var data = items.Select(c =>
+        {
+            var hasInbound = windows.TryGetValue(c.CustomerPhone, out var lastInboundAt);
+            var hoursSinceInbound = hasInbound ? (now - lastInboundAt).TotalHours : 999d;
+            var canReply = hasInbound && hoursSinceInbound <= 24d;
+            return new
+            {
+                c.Id,
+                c.CustomerPhone,
+                c.CustomerName,
+                c.Status,
+                c.AssignedUserId,
+                c.AssignedUserName,
+                c.LabelsCsv,
+                c.LastMessageAtUtc,
+                c.CreatedAtUtc,
+                lastInboundAtUtc = hasInbound ? lastInboundAt : (DateTime?)null,
+                canReply,
+                hoursSinceInbound
+            };
+        }).ToList();
+
+        return Ok(data);
     }
 
     [HttpPost("conversations/{id:guid}/assign")]
