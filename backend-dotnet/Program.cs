@@ -22,8 +22,9 @@ builder.Services.AddCors(options =>
     });
 });
 
-var rawControlConnection = builder.Configuration.GetConnectionString("Default")
-    ?? builder.Configuration["DATABASE_URL"]
+var rawControlConnection = (builder.Environment.IsProduction()
+        ? builder.Configuration["DATABASE_URL"] ?? builder.Configuration.GetConnectionString("Default")
+        : builder.Configuration.GetConnectionString("Default") ?? builder.Configuration["DATABASE_URL"])
     ?? throw new InvalidOperationException("Connection string is missing. Set ConnectionStrings__Default or DATABASE_URL.");
 
 var controlConnection = NormalizeConnectionString(rawControlConnection);
