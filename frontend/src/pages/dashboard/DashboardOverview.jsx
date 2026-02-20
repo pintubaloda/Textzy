@@ -20,13 +20,16 @@ import {
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useEffect, useMemo, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { apiGet, wabaExchangeCode, wabaGetOnboardingStatus, wabaStartOnboarding } from "@/lib/api";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { toast } from "sonner";
 
 const DashboardOverview = () => {
   const [messages, setMessages] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
+  const [wabaStatus, setWabaStatus] = useState({ state: "requested", isConnected: false, businessName: "", phone: "" });
+  const [connectingWaba, setConnectingWaba] = useState(false);
 
   useEffect(() => {
     Promise.all([apiGet("/api/messages"), apiGet("/api/contacts"), apiGet("/api/campaigns")])
@@ -36,7 +39,79 @@ const DashboardOverview = () => {
         setCampaigns(cp || []);
       })
       .catch(() => {});
+    loadWabaStatus();
   }, []);
+
+  const facebookAppId = process.env.REACT_APP_FACEBOOK_APP_ID || "";
+  const embeddedConfigId = process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "";
+
+  const loadWabaStatus = async () => {
+    try {
+      const data = await wabaGetOnboardingStatus();
+      setWabaStatus(data || { state: "requested", isConnected: false, businessName: "", phone: "" });
+    } catch {
+      setWabaStatus({ state: "requested", isConnected: false, businessName: "", phone: "" });
+    }
+  };
+
+  const loadFacebookSdk = () => new Promise((resolve, reject) => {
+    if (window.FB) return resolve(window.FB);
+    window.fbAsyncInit = function () {
+      window.FB.init({ appId: facebookAppId, cookie: true, xfbml: false, version: "v21.0" });
+      resolve(window.FB);
+    };
+    const script = document.createElement("script");
+    script.async = true;
+    script.defer = true;
+    script.src = "https://connect.facebook.net/en_US/sdk.js";
+    script.onerror = reject;
+    document.body.appendChild(script);
+  });
+
+  const handleEmbeddedConnect = async () => {
+    if (!facebookAppId || !embeddedConfigId) {
+      toast.error("Missing REACT_APP_FACEBOOK_APP_ID or REACT_APP_WABA_EMBEDDED_CONFIG_ID");
+      return;
+    }
+
+    setConnectingWaba(true);
+    try {
+      await wabaStartOnboarding();
+      const FB = await loadFacebookSdk();
+      FB.login(async (response) => {
+        if (!response || !response.authResponse) {
+          setConnectingWaba(false);
+          toast.error("Embedded signup cancelled");
+          return;
+        }
+
+        const code = response.authResponse.code;
+        if (!code) {
+          setConnectingWaba(false);
+          toast.error("Meta did not return authorization code");
+          return;
+        }
+
+        try {
+          await wabaExchangeCode(code);
+          await loadWabaStatus();
+          toast.success("WhatsApp onboarding connected");
+        } catch (e) {
+          toast.error(e.message || "Failed to exchange embedded signup code");
+        } finally {
+          setConnectingWaba(false);
+        }
+      }, {
+        config_id: embeddedConfigId,
+        response_type: "code",
+        override_default_response_type: true,
+        scope: "business_management,whatsapp_business_management,whatsapp_business_messaging",
+      });
+    } catch (e) {
+      setConnectingWaba(false);
+      toast.error(e.message || "Unable to start onboarding");
+    }
+  };
 
   const computedStats = useMemo(() => {
     const total = messages.length;
@@ -178,33 +253,38 @@ const DashboardOverview = () => {
         ))}
       </div>
 
-      <section className="rounded-[24px] p-6 md:p-8 text-slate-900 border border-slate-200 shadow-sm bg-gradient-to-br from-white via-orange-50/40 to-slate-50 relative overflow-hidden">
-        <div className="absolute -top-20 -right-20 h-56 w-56 rounded-full bg-orange-100/40 blur-2xl" />
-        <div className="absolute -bottom-24 -left-24 h-64 w-64 rounded-full bg-blue-100/30 blur-3xl" />
+      <section className="rounded-[24px] p-6 md:p-8 text-slate-900 border border-slate-200 shadow-sm bg-gradient-to-br from-white via-slate-50 to-orange-50/50 relative overflow-hidden">
+        <div className="absolute -top-16 -right-16 h-44 w-44 rounded-full bg-orange-100/50 blur-2xl" />
+        <div className="absolute -bottom-16 -left-16 h-44 w-44 rounded-full bg-blue-100/30 blur-2xl" />
         <div className="space-y-6 relative z-10">
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <div className="px-5 py-2 rounded-full bg-white/90 border border-slate-200 text-slate-700 shadow-sm">WhatsApp Business API Status: <b className="text-orange-600">Pending</b></div>
-            <Button className="rounded-full bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25">Apply Now</Button>
+            <div className="px-5 py-2 rounded-full bg-white border border-slate-200 text-slate-700 shadow-sm">WhatsApp Business API Status: <b className={wabaStatus.readyToSend ? "text-green-600" : "text-orange-600"}>{wabaStatus.readyToSend ? "Connected" : "Pending"}</b></div>
+            <Button className="rounded-full bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25" onClick={handleEmbeddedConnect} disabled={connectingWaba}>
+              {connectingWaba ? "Connecting..." : "Apply Now"}
+            </Button>
             <div className="px-5 py-2 rounded-full bg-white/90 border border-slate-200 text-slate-700 shadow-sm">TRAIL(Pro + Flows)</div>
           </div>
 
           <div className="grid lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-sm p-6 shadow-sm">
-              <h3 className="text-4xl font-heading font-semibold leading-tight mb-4 text-slate-900">Setup FREE WhatsApp Business Account</h3>
-              <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-white to-orange-50 p-4 mb-5 text-lg text-slate-700">Apply for WhatsApp Business API</div>
-              <p className="text-slate-600 mb-2 text-xl leading-tight">Click on Continue With Facebook to apply for WhatsApp Business API</p>
-              <p className="text-slate-600 text-xl leading-tight">Requirement: Registered Business & Working Website.</p>
+            <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h3 className="text-3xl font-heading font-semibold leading-tight mb-4 text-slate-900">Setup FREE WhatsApp Business Account</h3>
+              <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-white to-orange-50 p-4 mb-5 text-base text-slate-700">Apply for WhatsApp Business API</div>
+              <p className="text-slate-600 mb-2 text-lg leading-snug">Click on Continue with Facebook to apply for WhatsApp Business API</p>
+              <p className="text-slate-600 text-lg leading-snug">Requirement: Registered Business & Working Website.</p>
               <div className="mt-4 flex flex-wrap gap-3">
                 <Button variant="outline" className="border-slate-300 text-slate-700 bg-white hover:bg-slate-100 text-base px-7">Schedule Meeting</Button>
-                <Button className="bg-orange-500 hover:bg-orange-600 text-white text-base px-7 shadow-md shadow-orange-500/25">Continue with Facebook</Button>
+                <Button className="bg-orange-500 hover:bg-orange-600 text-white text-base px-7 shadow-md shadow-orange-500/25" onClick={handleEmbeddedConnect} disabled={connectingWaba}>
+                  {connectingWaba ? "Connecting..." : "Continue with Facebook"}
+                </Button>
               </div>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-sm p-6 text-center shadow-sm">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
               <div className="w-36 h-36 mx-auto mb-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center">
                 <QrCode className="w-24 h-24 text-slate-700" />
               </div>
-              <p className="text-4xl font-semibold leading-tight">Project Business Name</p>
-              <p className="text-slate-600 mt-2 text-2xl">+91 72496 30121</p>
+              <p className="text-3xl font-semibold leading-tight">{wabaStatus.businessName || "Project Business Name"}</p>
+              <p className="text-slate-600 mt-2 text-xl">{wabaStatus.phone || "+91 72496 30121"}</p>
+              <p className="text-sm text-slate-500 mt-2">{wabaStatus.readyToSend ? "Connected / Ready" : (wabaStatus.state || "requested")}</p>
             </div>
           </div>
 
