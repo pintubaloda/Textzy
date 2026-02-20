@@ -220,9 +220,6 @@ static string NormalizeConnectionString(string raw)
     if (string.IsNullOrWhiteSpace(value))
         throw new InvalidOperationException("Database connection string is empty.");
 
-    // Collapse newlines/tabs/spaces often introduced by copy/paste in env editors.
-    value = Regex.Replace(value, @"\s+", " ").Trim();
-
     // Defensive cleanup in case env was pasted as a labeled line.
     if (value.StartsWith("External Database URL", StringComparison.OrdinalIgnoreCase) ||
         value.StartsWith("Internal Database URL", StringComparison.OrdinalIgnoreCase))
@@ -235,11 +232,18 @@ static string NormalizeConnectionString(string raw)
         }
     }
 
+    // Remove hidden whitespace/newlines that can appear in env UI paste for URLs.
+    var noWhitespace = Regex.Replace(value, @"\s+", string.Empty).Trim();
+
     // If the value has extra text, extract the first postgres URL segment.
-    var urlMatch = Regex.Match(value, @"(postgres(?:ql)?://\S+)", RegexOptions.IgnoreCase);
+    var urlMatch = Regex.Match(noWhitespace, @"(postgres(?:ql)?://\S+)", RegexOptions.IgnoreCase);
     if (urlMatch.Success)
     {
         value = urlMatch.Groups[1].Value.Trim().Trim('"', '\'');
+    }
+    else
+    {
+        value = value.Trim();
     }
 
     if (value.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
