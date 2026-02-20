@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
 using Npgsql;
+using System.Text.RegularExpressions;
 using Textzy.Api.Data;
 using Textzy.Api.Middleware;
 using Textzy.Api.Providers;
@@ -203,6 +204,9 @@ static string NormalizeConnectionString(string raw)
     if (string.IsNullOrWhiteSpace(value))
         throw new InvalidOperationException("Database connection string is empty.");
 
+    // Collapse newlines/tabs/spaces often introduced by copy/paste in env editors.
+    value = Regex.Replace(value, @"\s+", " ").Trim();
+
     // Defensive cleanup in case env was pasted as a labeled line.
     if (value.StartsWith("External Database URL", StringComparison.OrdinalIgnoreCase) ||
         value.StartsWith("Internal Database URL", StringComparison.OrdinalIgnoreCase))
@@ -213,6 +217,13 @@ static string NormalizeConnectionString(string raw)
             var schemeStart = value.LastIndexOf(' ', idx);
             value = value[(schemeStart >= 0 ? schemeStart + 1 : 0)..].Trim();
         }
+    }
+
+    // If the value has extra text, extract the first postgres URL segment.
+    var urlMatch = Regex.Match(value, @"(postgres(?:ql)?://\S+)", RegexOptions.IgnoreCase);
+    if (urlMatch.Success)
+    {
+        value = urlMatch.Groups[1].Value.Trim().Trim('"', '\'');
     }
 
     if (value.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
