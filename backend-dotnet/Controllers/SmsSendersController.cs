@@ -13,7 +13,7 @@ public class SmsSendersController(TenantDbContext db, TenancyContext tenancy, Rb
     [HttpGet]
     public IActionResult List()
     {
-        if (!rbac.HasPermission(ApiRead)) return Forbid();
+        if (!rbac.HasPermission(TemplatesRead)) return Forbid();
         return Ok(db.SmsSenders.Where(x => x.TenantId == tenancy.TenantId && x.IsActive).OrderBy(x => x.SenderId).ToList());
     }
 
@@ -26,7 +26,7 @@ public class SmsSendersController(TenantDbContext db, TenancyContext tenancy, Rb
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] UpsertSenderRequest request, CancellationToken ct)
     {
-        if (!rbac.HasPermission(ApiWrite)) return Forbid();
+        if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
         var sender = (request.SenderId ?? string.Empty).Trim().ToUpperInvariant();
         if (sender.Length is < 3 or > 6) return BadRequest("Sender ID must be 3-6 characters for India DLT.");
         if (string.IsNullOrWhiteSpace(request.EntityId)) return BadRequest("Entity ID is required.");
