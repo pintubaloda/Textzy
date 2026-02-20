@@ -8,6 +8,7 @@ namespace Textzy.Api.Controllers;
 
 [ApiController]
 [Route("api/sms/senders")]
+[Route("api/sms/sender")]
 public class SmsSendersController(TenantDbContext db, TenancyContext tenancy, RbacService rbac) : ControllerBase
 {
     [HttpGet]

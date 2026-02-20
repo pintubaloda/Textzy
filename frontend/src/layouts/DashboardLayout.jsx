@@ -87,7 +87,6 @@ const DashboardLayout = () => {
     { name: "Inbox", href: "/dashboard/inbox", icon: Inbox, badge: "12" },
     { name: "Contacts", href: "/dashboard/contacts", icon: Users },
     { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
-    { name: "Templates", href: "/dashboard/templates", icon: FileText },
     { name: "Automations", href: "/dashboard/automations", icon: Zap },
     { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
     { name: "Integrations", href: "/dashboard/integrations", icon: Plug },
@@ -290,71 +289,72 @@ const DashboardLayout = () => {
         <ScrollArea className="h-full py-4">
           <nav className="px-3 space-y-1">
             {navigation.map((item) => (
-              <Link
-                key={item.name}
-                to={item.href}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                  isActive(item.href)
-                    ? "bg-orange-50 text-orange-600 font-medium"
-                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                }`}
-                onClick={() => setMobileMenuOpen(false)}
-                data-testid={`nav-${item.name.toLowerCase()}`}
-              >
-                <item.icon className={`w-5 h-5 flex-shrink-0 ${isActive(item.href) ? "text-orange-500" : ""}`} />
-                {sidebarOpen && (
-                  <>
-                    <span className="flex-1">{item.name}</span>
-                    {item.badge && (
-                      <Badge className="bg-orange-500 hover:bg-orange-500 text-white text-xs">
-                        {item.badge}
-                      </Badge>
-                    )}
-                  </>
+              <div key={item.name}>
+                <Link
+                  to={item.href}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    isActive(item.href)
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                  data-testid={`nav-${item.name.toLowerCase()}`}
+                >
+                  <item.icon className={`w-5 h-5 flex-shrink-0 ${isActive(item.href) ? "text-orange-500" : ""}`} />
+                  {sidebarOpen && (
+                    <>
+                      <span className="flex-1">{item.name}</span>
+                      {item.badge && (
+                        <Badge className="bg-orange-500 hover:bg-orange-500 text-white text-xs">
+                          {item.badge}
+                        </Badge>
+                      )}
+                    </>
+                  )}
+                </Link>
+                {sidebarOpen && item.name === "Campaigns" && (
+                  <div className="pt-2 pb-1">
+                    <p className="px-3 pb-1 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Templates</p>
+                    <Link
+                      to="/dashboard/templates?tab=whatsapp"
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                        isTemplatesPage && currentTemplatesTab !== "sms"
+                          ? "bg-orange-50 text-orange-600 font-medium"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                      }`}
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      <FileText className="w-4 h-4 flex-shrink-0" />
+                      <span className="flex-1 text-sm">WhatsApp</span>
+                    </Link>
+                    <Link
+                      to="/dashboard/templates?tab=sms"
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                        isTemplatesPage && currentTemplatesTab === "sms"
+                          ? "bg-orange-50 text-orange-600 font-medium"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                      }`}
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      <Send className="w-4 h-4 flex-shrink-0" />
+                      <span className="flex-1 text-sm">SMS</span>
+                    </Link>
+                    <Link
+                      to="/dashboard/sms-setup"
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                        isSmsSetupPage
+                          ? "bg-orange-50 text-orange-600 font-medium"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                      }`}
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      <Settings className="w-4 h-4 flex-shrink-0" />
+                      <span className="flex-1 text-sm">SMS Setup</span>
+                    </Link>
+                  </div>
                 )}
-              </Link>
-            ))}
-            {sidebarOpen && (
-              <div className="pt-2">
-                <p className="px-3 pb-1 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Templates</p>
-                <Link
-                  to="/dashboard/templates?tab=whatsapp"
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                    isTemplatesPage && currentTemplatesTab !== "sms"
-                      ? "bg-orange-50 text-orange-600 font-medium"
-                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                  }`}
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  <FileText className="w-4 h-4 flex-shrink-0" />
-                  <span className="flex-1 text-sm">WhatsApp</span>
-                </Link>
-                <Link
-                  to="/dashboard/templates?tab=sms"
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                    isTemplatesPage && currentTemplatesTab === "sms"
-                      ? "bg-orange-50 text-orange-600 font-medium"
-                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                  }`}
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  <Send className="w-4 h-4 flex-shrink-0" />
-                  <span className="flex-1 text-sm">SMS</span>
-                </Link>
-                <Link
-                  to="/dashboard/sms-setup"
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                    isSmsSetupPage
-                      ? "bg-orange-50 text-orange-600 font-medium"
-                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                  }`}
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  <Settings className="w-4 h-4 flex-shrink-0" />
-                  <span className="flex-1 text-sm">SMS Setup</span>
-                </Link>
               </div>
-            )}
+            ))}
             {canAccessPlatformSettings && sidebarOpen && (
               <div className="pt-3 mt-3 border-t border-slate-200">
                 <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">
