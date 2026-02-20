@@ -27,6 +27,7 @@ import SettingsPage from "@/pages/dashboard/SettingsPage";
 import AdminPage from "@/pages/dashboard/AdminPage";
 import TeamPage from "@/pages/dashboard/TeamPage";
 import PlatformSettingsPage from "@/pages/dashboard/PlatformSettingsPage";
+import SmsSetupPage from "@/pages/dashboard/SmsSetupPage";
 
 function App() {
   const authed = !!getSession().token;
@@ -48,6 +49,7 @@ function App() {
             <Route path="contacts" element={<ContactsPage />} />
             <Route path="campaigns" element={<CampaignsPage />} />
             <Route path="templates" element={<TemplatesPage />} />
+            <Route path="sms-setup" element={<SmsSetupPage />} />
             <Route path="automations" element={<AutomationsPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="integrations" element={<IntegrationsPage />} />

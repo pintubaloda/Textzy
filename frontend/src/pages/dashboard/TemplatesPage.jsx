@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -36,7 +36,6 @@ const TemplatesPage = () => {
   const [templates, setTemplates] = useState([]);
   const [smsSenders, setSmsSenders] = useState([]);
   const [draft, setDraft] = useState(initialDraft);
-  const [newSender, setNewSender] = useState({ senderId: "", entityId: "" });
   const isSms = draft.channel === "sms";
   const [uploading, setUploading] = useState(false);
 
@@ -168,25 +167,6 @@ const TemplatesPage = () => {
     }
   };
 
-  const addSmsSender = async () => {
-    try {
-      if (!newSender.senderId.trim() || !newSender.entityId.trim()) {
-        toast.error("Sender ID and Entity ID are required.");
-        return;
-      }
-      const row = await apiPost("/api/sms/senders", {
-        senderId: newSender.senderId.trim().toUpperCase(),
-        entityId: newSender.entityId.trim(),
-      });
-      setSmsSenders((prev) => [...prev.filter((x) => x.id !== row.id), row]);
-      setDraft((p) => ({ ...p, smsSenderId: row.senderId, dltEntityId: row.entityId }));
-      setNewSender({ senderId: "", entityId: "" });
-      toast.success("Sender added.");
-    } catch (e) {
-      toast.error(e?.message || "Failed to add sender.");
-    }
-  };
-
   const removeTemplate = async (id) => {
     await apiDelete(`/api/templates/${id}`);
     setTemplates((prev) => prev.filter((x) => x.id !== id));
@@ -278,6 +258,10 @@ const TemplatesPage = () => {
               {isSms && (
                 <div className="rounded-lg border border-orange-200 bg-orange-50 p-4 space-y-3">
                   <p className="font-medium text-orange-800">DLT Registration (Required for SMS in India)</p>
+                  <p className="text-sm text-orange-700">
+                    Need to add Sender ID first? Go to{" "}
+                    <Link className="underline font-medium" to="/dashboard/sms-setup">SMS Setup</Link>.
+                  </p>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div className="space-y-2">
                       <Label>Sender ID</Label>
@@ -300,11 +284,6 @@ const TemplatesPage = () => {
                       <Label>DLT Template ID</Label>
                       <Input placeholder="e.g., 1107161234567890123" value={draft.dltTemplateId} onChange={(e) => setDraft((p) => ({ ...p, dltTemplateId: e.target.value }))} />
                     </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <Input placeholder="New Sender ID (3-6 chars)" value={newSender.senderId} onChange={(e) => setNewSender((p) => ({ ...p, senderId: e.target.value.toUpperCase() }))} />
-                    <Input placeholder="Entity ID for Sender" value={newSender.entityId} onChange={(e) => setNewSender((p) => ({ ...p, entityId: e.target.value }))} />
-                    <Button variant="outline" onClick={addSmsSender}>Save Sender</Button>
                   </div>
                 </div>
               )}

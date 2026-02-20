@@ -55,6 +55,7 @@ const DashboardLayout = () => {
   const canAccessPlatformSettings = role === "super_admin" || role === "owner";
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
   const isTemplatesPage = location.pathname.startsWith("/dashboard/templates");
+  const isSmsSetupPage = location.pathname.startsWith("/dashboard/sms-setup");
   const currentTemplatesTab = new URLSearchParams(location.search).get("tab") || "whatsapp";
   const currentSettingsTab = new URLSearchParams(location.search).get("tab") || "profile";
   const settingsMenus = [
@@ -339,6 +340,18 @@ const DashboardLayout = () => {
                 >
                   <Send className="w-4 h-4 flex-shrink-0" />
                   <span className="flex-1 text-sm">SMS</span>
+                </Link>
+                <Link
+                  to="/dashboard/sms-setup"
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                    isSmsSetupPage
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Settings className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">SMS Setup</span>
                 </Link>
               </div>
             )}
