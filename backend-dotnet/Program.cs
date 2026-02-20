@@ -51,6 +51,8 @@ builder.Services.AddScoped<AuthContext>();
 builder.Services.AddScoped<PasswordHasher>();
 builder.Services.AddScoped<SessionService>();
 builder.Services.AddScoped<RbacService>();
+builder.Services.AddScoped<SecretCryptoService>();
+builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<IMessageProvider, MockMessageProvider>();
 builder.Services.AddScoped<MessagingService>();
 builder.Services.Configure<WhatsAppOptions>(builder.Configuration.GetSection("WhatsApp"));
@@ -170,6 +172,28 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         """);
 
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SessionTokens_TokenHash" ON "SessionTokens" ("TokenHash");""");
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "PlatformSettings" (
+            "Id" uuid PRIMARY KEY,
+            "Scope" text NOT NULL,
+            "Key" text NOT NULL,
+            "ValueEncrypted" text NOT NULL,
+            "UpdatedByUserId" uuid NOT NULL,
+            "UpdatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_PlatformSettings_Scope_Key" ON "PlatformSettings" ("Scope","Key");""");
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "AuditLogs" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NULL,
+            "ActorUserId" uuid NOT NULL,
+            "Action" text NOT NULL,
+            "Details" text NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AuditLogs_CreatedAtUtc" ON "AuditLogs" ("CreatedAtUtc");""");
 }
 
 static string NormalizeConnectionString(string raw)

@@ -17,6 +17,8 @@ public static class PermissionCatalog
     public const string ApiRead = "api.read";
     public const string ApiWrite = "api.write";
     public const string PlatformTenantsManage = "platform.tenants.manage";
+    public const string PlatformSettingsRead = "platform.settings.read";
+    public const string PlatformSettingsWrite = "platform.settings.write";
 
     public static readonly string[] All =
     [
@@ -27,6 +29,7 @@ public static class PermissionCatalog
         InboxRead, InboxWrite,
         BillingRead, BillingWrite,
         ApiRead, ApiWrite,
-        PlatformTenantsManage
+        PlatformTenantsManage,
+        PlatformSettingsRead, PlatformSettingsWrite
     ];
 }

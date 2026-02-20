@@ -175,3 +175,11 @@ export async function wabaExchangeCode(code) {
 export async function wabaRecheckOnboarding() {
   return apiPost('/api/waba/onboarding/recheck', {})
 }
+
+export async function getPlatformSettings(scope) {
+  return apiGet(`/api/platform/settings/${scope}`)
+}
+
+export async function savePlatformSettings(scope, values) {
+  return apiPut(`/api/platform/settings/${scope}`, values)
+}
