@@ -6,7 +6,7 @@ const API_BASE =
   process.env.REACT_APP_API_BASE ||
   process.env.VITE_API_BASE ||
   'https://textzy.onrender.com'
-const STORAGE_KEY = 'textzy.session.v1'
+const STORAGE_KEY = 'textzy.session'
 
 export function getSession() {
   try {
