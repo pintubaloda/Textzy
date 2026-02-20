@@ -178,37 +178,41 @@ const DashboardOverview = () => {
         ))}
       </div>
 
-      <section className="rounded-[24px] p-6 md:p-8 bg-white text-slate-900 border border-slate-200 shadow-sm">
-        <div className="space-y-6">
+      <section className="rounded-[24px] p-6 md:p-8 text-slate-900 border border-slate-200 shadow-sm bg-gradient-to-br from-white via-orange-50/40 to-slate-50 relative overflow-hidden">
+        <div className="absolute -top-20 -right-20 h-56 w-56 rounded-full bg-orange-100/40 blur-2xl" />
+        <div className="absolute -bottom-24 -left-24 h-64 w-64 rounded-full bg-blue-100/30 blur-3xl" />
+        <div className="space-y-6 relative z-10">
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <div className="px-5 py-2 rounded-full bg-slate-100 border border-slate-200 text-slate-700">WhatsApp Business API Status: <b className="text-orange-600">Pending</b></div>
-            <Button className="rounded-full bg-orange-500 hover:bg-orange-600 text-white">Apply Now</Button>
-            <div className="px-5 py-2 rounded-full bg-slate-100 border border-slate-200 text-slate-700">TRAIL(Pro + Flows)</div>
+            <div className="px-5 py-2 rounded-full bg-white/90 border border-slate-200 text-slate-700 shadow-sm">WhatsApp Business API Status: <b className="text-orange-600">Pending</b></div>
+            <Button className="rounded-full bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25">Apply Now</Button>
+            <div className="px-5 py-2 rounded-full bg-white/90 border border-slate-200 text-slate-700 shadow-sm">TRAIL(Pro + Flows)</div>
           </div>
 
           <div className="grid lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-slate-50 p-6">
-              <h3 className="text-4xl font-heading font-semibold leading-tight mb-4">Setup FREE WhatsApp Business Account</h3>
-              <div className="rounded-xl border border-slate-200 bg-white p-4 mb-5 text-lg text-slate-700">Apply for WhatsApp Business API</div>
+            <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-sm p-6 shadow-sm">
+              <h3 className="text-4xl font-heading font-semibold leading-tight mb-4 text-slate-900">Setup FREE WhatsApp Business Account</h3>
+              <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-white to-orange-50 p-4 mb-5 text-lg text-slate-700">Apply for WhatsApp Business API</div>
               <p className="text-slate-600 mb-2 text-xl leading-tight">Click on Continue With Facebook to apply for WhatsApp Business API</p>
               <p className="text-slate-600 text-xl leading-tight">Requirement: Registered Business & Working Website.</p>
               <div className="mt-4 flex flex-wrap gap-3">
                 <Button variant="outline" className="border-slate-300 text-slate-700 bg-white hover:bg-slate-100 text-base px-7">Schedule Meeting</Button>
-                <Button className="bg-orange-500 hover:bg-orange-600 text-white text-base px-7">Continue with Facebook</Button>
+                <Button className="bg-orange-500 hover:bg-orange-600 text-white text-base px-7 shadow-md shadow-orange-500/25">Continue with Facebook</Button>
               </div>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-center">
-              <QrCode className="w-32 h-32 mx-auto mb-4 text-slate-700" />
+            <div className="rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-sm p-6 text-center shadow-sm">
+              <div className="w-36 h-36 mx-auto mb-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center">
+                <QrCode className="w-24 h-24 text-slate-700" />
+              </div>
               <p className="text-4xl font-semibold leading-tight">Project Business Name</p>
               <p className="text-slate-600 mt-2 text-2xl">+91 72496 30121</p>
             </div>
           </div>
 
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
-            <button className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left text-lg"><PhoneCall className="w-6 h-6 mb-2 text-orange-500" />Add WhatsApp Contacts</button>
-            <button className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left text-lg"><Users className="w-6 h-6 mb-2 text-orange-500" />Add Team Members</button>
-            <button className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left text-lg"><Plug className="w-6 h-6 mb-2 text-orange-500" />Explore Integrations</button>
-            <button className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left text-lg"><Bot className="w-6 h-6 mb-2 text-orange-500" />Chatbot Setup</button>
+            <button className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><PhoneCall className="w-6 h-6 mb-2 text-orange-500" />Add WhatsApp Contacts</button>
+            <button className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><Users className="w-6 h-6 mb-2 text-orange-500" />Add Team Members</button>
+            <button className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><Plug className="w-6 h-6 mb-2 text-orange-500" />Explore Integrations</button>
+            <button className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><Bot className="w-6 h-6 mb-2 text-orange-500" />Chatbot Setup</button>
           </div>
         </div>
       </section>
