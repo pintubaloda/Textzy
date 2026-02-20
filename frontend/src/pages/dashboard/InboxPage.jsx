@@ -161,40 +161,40 @@ const InboxPage = () => {
   };
 
   return (
-    <div className="h-[calc(100vh-7rem)] flex bg-white rounded-xl border border-slate-200 overflow-hidden" data-testid="inbox-page">
+    <div className="h-[calc(100vh-7rem)] flex bg-gradient-to-b from-white to-slate-50 rounded-2xl border border-slate-200/80 overflow-hidden shadow-[0_8px_30px_rgba(15,23,42,0.06)]" data-testid="inbox-page">
       {/* Conversation List */}
-      <div className="w-96 border-r border-slate-200 flex flex-col">
+      <div className="w-96 border-r border-slate-200 bg-white/90 backdrop-blur flex flex-col">
         {/* Search Header */}
-        <div className="p-4 border-b border-slate-200">
+        <div className="p-5 border-b border-slate-200">
           <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-lg font-heading font-semibold text-slate-900">Inbox</h2>
-            <Badge className="bg-orange-500 hover:bg-orange-500 text-white">12</Badge>
+            <h2 className="text-3xl leading-none font-heading font-semibold text-slate-900">Inbox</h2>
+            <Badge className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-500 hover:to-amber-500 text-white rounded-xl px-3 py-1 shadow-sm">12</Badge>
           </div>
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <Input
                 placeholder="Search conversations..."
-                className="pl-10"
+                className="pl-10 rounded-xl border-slate-200 h-11"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 data-testid="inbox-search"
               />
             </div>
-            <Button variant="outline" size="icon" data-testid="inbox-filter-btn">
+            <Button variant="outline" size="icon" className="rounded-xl h-11 w-11" data-testid="inbox-filter-btn">
               <Filter className="w-4 h-4" />
             </Button>
           </div>
         </div>
 
         {/* Filter Tabs */}
-        <div className="flex items-center gap-2 p-4 border-b border-slate-200">
-          <Button variant="default" size="sm" className="bg-orange-500 hover:bg-orange-600 text-white">
+        <div className="flex items-center gap-2 p-4 border-b border-slate-200 bg-white">
+          <Button variant="default" size="sm" className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl">
             All
           </Button>
-          <Button variant="ghost" size="sm">Unread</Button>
-          <Button variant="ghost" size="sm">Starred</Button>
-          <Button variant="ghost" size="sm">Assigned</Button>
+          <Button variant="ghost" size="sm" className="rounded-xl">Unread</Button>
+          <Button variant="ghost" size="sm" className="rounded-xl">Starred</Button>
+          <Button variant="ghost" size="sm" className="rounded-xl">Assigned</Button>
         </div>
 
         {/* Conversation List */}
@@ -203,7 +203,7 @@ const InboxPage = () => {
             <div
               key={conversation.id}
               className={`p-4 border-b border-slate-100 cursor-pointer transition-colors ${
-                selectedConversation === index ? "bg-orange-50 border-l-4 border-l-orange-500" : "hover:bg-slate-50"
+                selectedConversation === index ? "bg-orange-50/80 border-l-4 border-l-orange-500" : "hover:bg-slate-50"
               }`}
               onClick={() => setSelectedConversation(index)}
               data-testid={`conversation-${index}`}
@@ -246,24 +246,24 @@ const InboxPage = () => {
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col bg-slate-50/40">
         {/* Chat Header */}
-        <div className="h-16 px-6 border-b border-slate-200 flex items-center justify-between bg-white">
+        <div className="min-h-16 px-5 py-2 border-b border-slate-200 flex items-center justify-between bg-white">
           <div className="flex items-center gap-3">
             <Avatar className="w-10 h-10">
               <AvatarFallback className="bg-gradient-to-br from-orange-400 to-orange-600 text-white font-medium">
                 {selectedChat.avatar}
               </AvatarFallback>
             </Avatar>
-            <div>
-              <p className="font-medium text-slate-900">{selectedChat.name}</p>
-              <p className="text-sm text-slate-500">{selectedChat.phone}</p>
+            <div className="max-w-[260px]">
+              <p className="font-semibold text-slate-900 text-xl leading-tight truncate">{selectedChat.name}</p>
+              <p className="text-sm text-slate-500 truncate">{selectedChat.phone}</p>
             </div>
           </div>
             <div className="flex items-center gap-2">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" className="rounded-xl">
                     <UserPlus className="w-4 h-4 mr-2" />
                     Assign
                   </Button>
@@ -283,7 +283,7 @@ const InboxPage = () => {
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" className="rounded-xl">
                     Transfer Chat
                   </Button>
                 </DropdownMenuTrigger>
@@ -338,7 +338,7 @@ const InboxPage = () => {
         </div>
 
         {/* Messages */}
-        <ScrollArea className="flex-1 p-6 bg-slate-50">
+        <ScrollArea className="flex-1 p-6 bg-slate-50/40">
           <div className="space-y-4 max-w-3xl mx-auto">
             {/* Date Separator */}
             <div className="flex items-center justify-center">
@@ -346,6 +346,18 @@ const InboxPage = () => {
                 Today
               </span>
             </div>
+
+            {messages.length === 0 ? (
+              <div className="h-[60vh] flex items-center justify-center">
+                <div className="text-center max-w-sm">
+                  <div className="w-16 h-16 rounded-2xl mx-auto bg-orange-100 text-orange-600 flex items-center justify-center mb-4">
+                    <MessageCircle className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-xl font-semibold text-slate-900">No messages yet</h3>
+                  <p className="text-slate-500 mt-1">Start conversation with a customer to see messages and actions here.</p>
+                </div>
+              </div>
+            ) : null}
 
             {messages.map((msg) => (
               <div
@@ -384,12 +396,12 @@ const InboxPage = () => {
                 <FileText className="w-5 h-5" />
               </Button>
             </div>
-            <div className="flex-1 relative">
+            <div className="flex-1 relative rounded-2xl border border-slate-200 bg-white shadow-sm">
               <Textarea
                 placeholder="Type a message..."
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                className="min-h-[64px] max-h-40 resize-none pr-12 text-base"
+                className="min-h-[74px] max-h-44 resize-none pr-12 text-[17px] leading-6 border-0 focus-visible:ring-0 rounded-2xl"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -398,7 +410,7 @@ const InboxPage = () => {
                 }}
                 data-testid="message-input"
               />
-              <Button variant="ghost" size="icon" className="absolute right-2 bottom-2 text-slate-500" data-testid="emoji-btn">
+              <Button variant="ghost" size="icon" className="absolute right-2 bottom-3 text-slate-500" data-testid="emoji-btn">
                 <Smile className="w-5 h-5" />
               </Button>
             </div>
@@ -407,7 +419,7 @@ const InboxPage = () => {
                 <Mic className="w-5 h-5" />
               </Button>
               <Button
-                className="bg-orange-500 hover:bg-orange-600 text-white"
+                className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl h-12 w-14 shadow-md shadow-orange-500/30"
                 onClick={handleSendMessage}
                 data-testid="send-btn"
               >
@@ -421,8 +433,8 @@ const InboxPage = () => {
       {/* Contact Info Panel */}
       <div className="w-96 border-l border-slate-200 bg-white hidden xl:block">
         <div className="p-6">
-          <div className="text-center mb-6">
-            <Avatar className="w-20 h-20 mx-auto mb-4">
+          <div className="text-center mb-6 bg-gradient-to-b from-orange-50 to-white rounded-2xl border border-orange-100 p-5">
+            <Avatar className="w-24 h-24 mx-auto mb-4">
               <AvatarFallback className="bg-gradient-to-br from-orange-400 to-orange-600 text-white text-2xl font-medium">
                 {selectedChat.avatar}
               </AvatarFallback>
@@ -435,7 +447,7 @@ const InboxPage = () => {
           </div>
 
           <div className="space-y-4">
-            <div className="p-4 bg-slate-50 rounded-lg">
+            <div className="p-5 bg-slate-50 rounded-xl border border-slate-100">
               <p className="text-sm font-medium text-slate-700 mb-2">Contact Info</p>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
@@ -453,7 +465,7 @@ const InboxPage = () => {
               </div>
             </div>
 
-            <div className="p-4 bg-slate-50 rounded-lg">
+            <div className="p-5 bg-slate-50 rounded-xl border border-slate-100">
               <p className="text-sm font-medium text-slate-700 mb-2">Labels</p>
               <div className="flex flex-wrap gap-2">
                 {(selectedChat.labels || []).length === 0 ? (
@@ -476,13 +488,13 @@ const InboxPage = () => {
                     }
                   }}
                 />
-                <Button onClick={handleAddLabel} size="sm" className="bg-orange-500 hover:bg-orange-600 text-white">
+                <Button onClick={handleAddLabel} size="sm" className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl px-5">
                   Add
                 </Button>
               </div>
             </div>
 
-            <div className="p-4 bg-slate-50 rounded-lg">
+            <div className="p-5 bg-slate-50 rounded-xl border border-slate-100">
               <p className="text-sm font-medium text-slate-700 mb-2">WABA Profile</p>
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
