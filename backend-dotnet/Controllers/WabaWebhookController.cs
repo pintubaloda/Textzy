@@ -42,6 +42,7 @@ public class WabaWebhookController(
 
         string phoneNumberId = string.Empty;
         var inboundMessages = new List<(string From, string Name, string Body)>();
+        var statusEvents = new List<(string MessageId, string Status, DateTime? AtUtc)>();
 
         try
         {
@@ -57,6 +58,20 @@ public class WabaWebhookController(
 
                         if (value.TryGetProperty("metadata", out var metadata) && metadata.TryGetProperty("phone_number_id", out var pni))
                             phoneNumberId = pni.GetString() ?? string.Empty;
+
+                        if (value.TryGetProperty("statuses", out var statusesNode) && statusesNode.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var s in statusesNode.EnumerateArray())
+                            {
+                                var messageId = s.TryGetProperty("id", out var idNode) ? idNode.GetString() ?? string.Empty : string.Empty;
+                                var status = s.TryGetProperty("status", out var statusNode) ? statusNode.GetString() ?? string.Empty : string.Empty;
+                                DateTime? atUtc = null;
+                                if (s.TryGetProperty("timestamp", out var tsNode) && long.TryParse(tsNode.GetString(), out var unixTs))
+                                    atUtc = DateTimeOffset.FromUnixTimeSeconds(unixTs).UtcDateTime;
+                                if (!string.IsNullOrWhiteSpace(messageId) && !string.IsNullOrWhiteSpace(status))
+                                    statusEvents.Add((messageId, status, atUtc));
+                            }
+                        }
 
                         if (!value.TryGetProperty("messages", out var messages)) continue;
                         foreach (var msg in messages.EnumerateArray())
@@ -86,7 +101,7 @@ public class WabaWebhookController(
             return BadRequest("Invalid webhook payload.");
         }
 
-        if (string.IsNullOrWhiteSpace(phoneNumberId) || inboundMessages.Count == 0) return Ok();
+        if (string.IsNullOrWhiteSpace(phoneNumberId) || (inboundMessages.Count == 0 && statusEvents.Count == 0)) return Ok();
 
         var tenants = await controlDb.Tenants.ToListAsync(ct);
         foreach (var tenant in tenants)
@@ -98,6 +113,26 @@ public class WabaWebhookController(
             if (cfg is null) continue;
             cfg.WebhookVerifiedAtUtc = DateTime.UtcNow;
             if (cfg.WebhookSubscribedAtUtc.HasValue && cfg.PermissionAuditPassed) cfg.OnboardingState = "ready";
+
+            foreach (var status in statusEvents)
+            {
+                var msg = await tenantDb.Set<Message>()
+                    .FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.ProviderMessageId == status.MessageId, ct);
+                if (msg is null) continue;
+
+                var normalized = status.Status.Trim().ToLowerInvariant();
+                msg.Status = normalized switch
+                {
+                    "sent" => "Sent",
+                    "delivered" => "Delivered",
+                    "read" => "Read",
+                    "failed" => "Failed",
+                    _ => msg.Status
+                };
+
+                if (normalized == "delivered" && status.AtUtc.HasValue) msg.DeliveredAtUtc = status.AtUtc.Value;
+                if (normalized == "read" && status.AtUtc.HasValue) msg.ReadAtUtc = status.AtUtc.Value;
+            }
 
             foreach (var item in inboundMessages)
             {

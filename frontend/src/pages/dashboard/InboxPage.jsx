@@ -51,6 +51,7 @@ const InboxPage = () => {
   const [newLabel, setNewLabel] = useState("");
   const [me, setMe] = useState(null);
   const [templates, setTemplates] = useState([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -84,7 +85,9 @@ const InboxPage = () => {
         setContacts(ct || []);
         setTeamMembers(tm || []);
         setMe(meData);
-        setTemplates((tpl || []).filter((x) => String(x.status || "").toLowerCase() === "approved" && Number(x.channel) === 2));
+        const approved = (tpl || []).filter((x) => String(x.status || "").toLowerCase() === "approved" && Number(x.channel) === 2);
+        setTemplates(approved);
+        if (approved.length > 0) setSelectedTemplateId(String(approved[0].id));
         setWabaDetails(waba);
       })
       .catch(() => {
@@ -176,7 +179,7 @@ const InboxPage = () => {
   };
 
   const handleSendTemplateFallback = async () => {
-    const tpl = templates[0];
+    const tpl = templates.find((x) => String(x.id) === selectedTemplateId) || templates[0];
     if (!tpl || !selectedChat?.phone) {
       toast.error("No approved WhatsApp template available.");
       return;
@@ -328,6 +331,16 @@ const InboxPage = () => {
           {!canReplyInSession ? (
             <div className="hidden 2xl:flex items-center gap-2">
               <div className="px-2.5 py-1 rounded-md bg-amber-50 border border-amber-200 text-[11px] text-amber-800 max-w-[220px] truncate">24h session closed. Customer must reply first.</div>
+              <select
+                className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 max-w-[180px]"
+                value={selectedTemplateId}
+                onChange={(e) => setSelectedTemplateId(e.target.value)}
+              >
+                {templates.length === 0 ? <option value="">No templates</option> : null}
+                {templates.map((t) => (
+                  <option key={t.id} value={String(t.id)}>{t.name}</option>
+                ))}
+              </select>
               <Button size="sm" className="h-8 bg-orange-500 hover:bg-orange-600 text-white" onClick={handleSendTemplateFallback}>Send Template</Button>
             </div>
           ) : null}
