@@ -8,6 +8,5 @@ RUN dotnet publish Textzy.Api.csproj -c Release -o /app/publish /p:UseAppHost=fa
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
-ENV ASPNETCORE_URLS=http://0.0.0.0:10000
-EXPOSE 10000
-ENTRYPOINT ["dotnet", "Textzy.Api.dll"]
+EXPOSE 8080
+ENTRYPOINT ["sh", "-c", "ASPNETCORE_URLS=http://0.0.0.0:${PORT:-8080} dotnet Textzy.Api.dll"]
