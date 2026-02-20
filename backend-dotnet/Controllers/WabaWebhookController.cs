@@ -81,7 +81,7 @@ public class WabaWebhookController(
                             if (!msg.TryGetProperty("from", out var fromProp)) continue;
                             var from = fromProp.GetString() ?? string.Empty;
                             if (string.IsNullOrWhiteSpace(from)) continue;
-                            var body = msg.TryGetProperty("text", out var textNode) && textNode.TryGetProperty("body", out var bodyNode)
+                            var textBody = msg.TryGetProperty("text", out var textNode) && textNode.TryGetProperty("body", out var bodyNode)
                                 ? bodyNode.GetString() ?? string.Empty
                                 : string.Empty;
                             var name = value.TryGetProperty("contacts", out var contactsNode)
@@ -92,7 +92,7 @@ public class WabaWebhookController(
                                 ? nameNode.GetString() ?? string.Empty
                                 : string.Empty;
                             var messageId = msg.TryGetProperty("id", out var msgIdNode) ? msgIdNode.GetString() ?? string.Empty : string.Empty;
-                            inboundMessages.Add((messageId, from, name, body));
+                            inboundMessages.Add((messageId, from, name, textBody));
                         }
                     }
                 }
