@@ -16,9 +16,9 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2, Send, Users, TrendingUp, TrendingDown, CheckCircle2, AlertCircle } from "lucide-react";
+import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { apiGet, wabaExchangeCode, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
+import { wabaExchangeCode, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
 
 const SettingsPage = () => {
   const [saving, setSaving] = useState(false);
@@ -29,7 +29,6 @@ const SettingsPage = () => {
   const [startingWaba, setStartingWaba] = useState(false);
   const [connectingWaba, setConnectingWaba] = useState(false);
   const [checkingWaba, setCheckingWaba] = useState(false);
-  const [dashboardKpi, setDashboardKpi] = useState({ total: 0, wa: 0, sms: 0, contacts: 0 });
 
   const facebookAppId = process.env.REACT_APP_FACEBOOK_APP_ID || "";
   const embeddedConfigId = process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "";
@@ -50,7 +49,6 @@ const SettingsPage = () => {
   useEffect(() => {
     if (activeTab === "whatsapp") {
       loadWabaStatus();
-      loadKpis();
     }
   }, [activeTab]);
 
@@ -63,20 +61,6 @@ const SettingsPage = () => {
     }
   };
 
-  const loadKpis = async () => {
-    try {
-      const [m, c] = await Promise.all([apiGet("/api/messages"), apiGet("/api/contacts")]);
-      const messages = m || [];
-      setDashboardKpi({
-        total: messages.length,
-        wa: messages.filter((x) => x.channel === 2).length,
-        sms: messages.filter((x) => x.channel === 1).length,
-        contacts: (c || []).length,
-      });
-    } catch {
-      setDashboardKpi({ total: 0, wa: 0, sms: 0, contacts: 0 });
-    }
-  };
 
   const handleWabaStart = async () => {
     setStartingWaba(true);
@@ -520,31 +504,52 @@ const SettingsPage = () => {
             {wabaView === "whatsapp" && !whatsappStatus.isConnected ? (
               <Card className="border-slate-200">
                 <CardHeader>
-                  <CardTitle>WhatsApp Not Connected</CardTitle>
-                  <CardDescription>Showing dashboard KPIs until your number is connected</CardDescription>
+                  <CardTitle>Setup FREE WhatsApp Business Account</CardTitle>
+                  <CardDescription>Use Embedded Signup to connect your business in a guided flow</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <CardContent className="space-y-4">
+                  <div className="rounded-xl border border-orange-100 bg-orange-50 p-4">
+                    <div className="text-sm font-semibold text-orange-800">Apply for WhatsApp Business API</div>
+                    <p className="text-sm text-slate-600 mt-2">
+                      Click on <b>Continue with Facebook</b> to start Embedded Signup. Requirement: registered business and working website.
+                    </p>
+                  </div>
+
+                  <div className="grid md:grid-cols-4 gap-3">
                     {[
-                      { title: "Total Messages", value: dashboardKpi.total, icon: MessageSquare, delta: "+12.5% vs last week", positive: true, chip: "bg-orange-100 text-orange-600" },
-                      { title: "WhatsApp Sent", value: dashboardKpi.wa, icon: Send, delta: "+8.2% vs last week", positive: true, chip: "bg-green-100 text-green-600" },
-                      { title: "SMS Sent", value: dashboardKpi.sms, icon: Send, delta: "-2.1% vs last week", positive: false, chip: "bg-blue-100 text-blue-600" },
-                      { title: "Active Contacts", value: dashboardKpi.contacts, icon: Users, delta: "+5.3% vs last week", positive: true, chip: "bg-purple-100 text-purple-600" },
-                    ].map((kpi) => (
-                      <div key={kpi.title} className="rounded-xl border border-slate-200 bg-white p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="text-sm font-medium text-slate-600">{kpi.title}</p>
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${kpi.chip}`}>
-                            <kpi.icon className="w-4 h-4" />
-                          </div>
-                        </div>
-                        <div className="text-3xl font-bold text-slate-900">{kpi.value}</div>
-                        <div className={`mt-2 text-xs flex items-center gap-1 ${kpi.positive ? "text-green-600" : "text-red-500"}`}>
-                          {kpi.positive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                          {kpi.delta}
+                      { step: "Step 1", label: "Start onboarding", done: ["requested", "code_received", "exchanged", "assets_linked", "webhook_subscribed", "verified", "ready"].includes(whatsappStatus.state) },
+                      { step: "Step 2", label: "Code exchange", done: ["exchanged", "assets_linked", "webhook_subscribed", "verified", "ready"].includes(whatsappStatus.state) },
+                      { step: "Step 3", label: "Assets linked", done: ["assets_linked", "webhook_subscribed", "verified", "ready"].includes(whatsappStatus.state) },
+                      { step: "Step 4", label: "Ready to send", done: !!whatsappStatus.readyToSend },
+                    ].map((s) => (
+                      <div key={s.step} className={`rounded-lg border p-3 ${s.done ? "border-green-200 bg-green-50" : "border-slate-200 bg-white"}`}>
+                        <div className="text-xs font-semibold text-slate-500">{s.step}</div>
+                        <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-900">
+                          {s.done ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <AlertCircle className="w-4 h-4 text-slate-400" />}
+                          {s.label}
                         </div>
                       </div>
                     ))}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={handleWabaStart} disabled={startingWaba} variant="outline">
+                      {startingWaba ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                      Start Onboarding
+                    </Button>
+                    <Button onClick={handleWabaConnect} disabled={connectingWaba} className="bg-orange-500 hover:bg-orange-600 text-white">
+                      {connectingWaba ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                      Continue with Facebook
+                    </Button>
+                    <Button onClick={handleWabaRecheck} disabled={checkingWaba} variant="outline">
+                      {checkingWaba ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                      Refresh Checks
+                    </Button>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600">
+                    Current status: <span className="font-semibold text-slate-900">{whatsappStatus.state || "requested"}</span>
+                    {whatsappStatus.lastError ? <div className="text-amber-700 mt-1">Last error: {whatsappStatus.lastError}</div> : null}
                   </div>
                 </CardContent>
               </Card>
