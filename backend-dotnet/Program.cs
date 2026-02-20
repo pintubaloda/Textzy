@@ -50,7 +50,15 @@ if (builder.Environment.IsProduction() &&
     (controlConnection.Contains("Host=localhost", StringComparison.OrdinalIgnoreCase) ||
      controlConnection.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase)))
 {
-    throw new InvalidOperationException("Production DB connection is pointing to localhost. Set ConnectionStrings__Default or DATABASE_URL to external Postgres.");
+    var pgFallback = BuildFromPgEnvironment();
+    if (!string.IsNullOrWhiteSpace(pgFallback))
+    {
+        controlConnection = pgFallback;
+    }
+    else
+    {
+        throw new InvalidOperationException("Production DB connection is pointing to localhost. Set ConnectionStrings__Default or DATABASE_URL to external Postgres.");
+    }
 }
 
 builder.Services.AddDbContext<ControlDbContext>(opt => opt.UseNpgsql(controlConnection));
