@@ -51,6 +51,8 @@ function App() {
             <Route path="templates" element={<TemplatesPage />} />
             <Route path="sms-setup" element={<SmsSetupPage />} />
             <Route path="automations" element={<AutomationsPage />} />
+            <Route path="automations/workflow" element={<AutomationsPage />} />
+            <Route path="automations/qa" element={<AutomationsPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="integrations" element={<IntegrationsPage />} />
             <Route path="whatsapp-onboarding" element={<Navigate to="/dashboard/settings?tab=whatsapp" replace />} />

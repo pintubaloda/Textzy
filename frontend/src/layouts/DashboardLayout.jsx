@@ -38,6 +38,7 @@ import {
   UsersRound,
   Check,
   Send,
+  GitBranch,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { authProjects, clearSession, getSession, initializeMe, switchProject } from "@/lib/api";
@@ -56,6 +57,7 @@ const DashboardLayout = () => {
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
   const isTemplatesPage = location.pathname.startsWith("/dashboard/templates");
   const isSmsSetupPage = location.pathname.startsWith("/dashboard/sms-setup");
+  const isAutomationsPage = location.pathname.startsWith("/dashboard/automations");
   const currentTemplatesTab = new URLSearchParams(location.search).get("tab") || "whatsapp";
   const currentSettingsTab = new URLSearchParams(location.search).get("tab") || "profile";
   const settingsMenus = [
@@ -350,6 +352,35 @@ const DashboardLayout = () => {
                     >
                       <Settings className="w-4 h-4 flex-shrink-0" />
                       <span className="flex-1 text-sm">SMS Setup</span>
+                    </Link>
+                  </div>
+                )}
+                {sidebarOpen && item.name === "Automations" && (
+                  <div className="pt-2 pb-1">
+                    <p className="px-3 pb-1 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Automation</p>
+                    <Link
+                      to="/dashboard/automations/workflow"
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                        isAutomationsPage && location.pathname.includes("/workflow")
+                          ? "bg-orange-50 text-orange-600 font-medium"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                      }`}
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      <GitBranch className="w-4 h-4 flex-shrink-0" />
+                      <span className="flex-1 text-sm">Work Flow</span>
+                    </Link>
+                    <Link
+                      to="/dashboard/automations/qa"
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                        isAutomationsPage && location.pathname.includes("/qa")
+                          ? "bg-orange-50 text-orange-600 font-medium"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                      }`}
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      <HelpCircle className="w-4 h-4 flex-shrink-0" />
+                      <span className="flex-1 text-sm">Q&A</span>
                     </Link>
                   </div>
                 )}
