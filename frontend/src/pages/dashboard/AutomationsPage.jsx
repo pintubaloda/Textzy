@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { apiDelete, apiGet, apiPost } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
 import { toast } from "sonner";
 import { Plus, Save, Trash2, UploadCloud } from "lucide-react";
 
@@ -104,6 +104,7 @@ export default function AutomationsPage() {
   const [nodes, setNodes] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [outside24h, setOutside24h] = useState(false);
+  const [triggerKeywords, setTriggerKeywords] = useState("hi,hello,HI,Hello");
 
   const [faqItems, setFaqItems] = useState([]);
   const [faqForm, setFaqForm] = useState({ question: "", answer: "", category: "", isActive: true });
@@ -153,6 +154,18 @@ export default function AutomationsPage() {
     if (selectedFlowId) loadFlowDetails(selectedFlowId);
   }, [selectedFlowId]);
 
+  useEffect(() => {
+    if (!selectedFlow?.triggerConfigJson) return;
+    try {
+      const cfg = JSON.parse(selectedFlow.triggerConfigJson);
+      if (Array.isArray(cfg.keywords) && cfg.keywords.length) {
+        setTriggerKeywords(cfg.keywords.join(","));
+      }
+    } catch {
+      // ignore malformed json
+    }
+  }, [selectedFlow]);
+
   const createFlow = async () => {
     try {
       const payload = {
@@ -188,6 +201,28 @@ export default function AutomationsPage() {
       await loadFlowDetails(selectedFlowId);
     } catch (e) {
       toast.error(e?.message || "Save failed");
+    }
+  };
+
+  const saveTriggerKeywords = async () => {
+    if (!selectedFlowId || !selectedFlow) return;
+    try {
+      const keywords = triggerKeywords
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      await apiPut(`/api/automation/flows/${selectedFlowId}`, {
+        name: selectedFlow.name || "",
+        description: selectedFlow.description || "",
+        channel: selectedFlow.channel || "waba",
+        triggerType: selectedFlow.triggerType || "keyword",
+        isActive: !!selectedFlow.isActive,
+        triggerConfigJson: JSON.stringify({ keywords }),
+      });
+      toast.success("Bot trigger keywords saved");
+      await loadAll();
+    } catch (e) {
+      toast.error(e?.message || "Failed to save trigger keywords");
     }
   };
 
@@ -389,6 +424,23 @@ export default function AutomationsPage() {
             <Button className="bg-orange-500 hover:bg-orange-600 text-white" onClick={() => publish(selectedFlowId)}><UploadCloud className="w-4 h-4 mr-2" />Publish</Button>
             <label className="ml-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={outside24h} onChange={(e) => setOutside24h(e.target.checked)} />Outside 24h session</label>
           </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Bot Trigger</CardTitle>
+              <CardDescription>Bot starts when incoming message contains any of these words.</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col md:flex-row gap-2">
+              <Input
+                value={triggerKeywords}
+                onChange={(e) => setTriggerKeywords(e.target.value)}
+                placeholder="hi, hello, support, pricing"
+              />
+              <Button className="bg-orange-500 hover:bg-orange-600 text-white" onClick={saveTriggerKeywords}>
+                Save Trigger
+              </Button>
+            </CardContent>
+          </Card>
 
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
             <Card className="xl:col-span-3">

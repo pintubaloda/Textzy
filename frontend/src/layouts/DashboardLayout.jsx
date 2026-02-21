@@ -357,10 +357,9 @@ const DashboardLayout = () => {
                 )}
                 {sidebarOpen && item.name === "Automations" && (
                   <div className="pt-2 pb-1">
-                    <p className="px-3 pb-1 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Automation</p>
                     <Link
                       to="/dashboard/automations/workflow"
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                      className={`ml-4 flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
                         isAutomationsPage && location.pathname.includes("/workflow")
                           ? "bg-orange-50 text-orange-600 font-medium"
                           : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -372,7 +371,7 @@ const DashboardLayout = () => {
                     </Link>
                     <Link
                       to="/dashboard/automations/qa"
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                      className={`ml-4 flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
                         isAutomationsPage && location.pathname.includes("/qa")
                           ? "bg-orange-50 text-orange-600 font-medium"
                           : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
