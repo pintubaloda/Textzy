@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
 using Textzy.Api.DTOs;
 using Textzy.Api.Models;
@@ -15,7 +16,25 @@ public class ContactsController(TenantDbContext db, TenancyContext tenancy, Rbac
     public IActionResult List()
     {
         if (!rbac.HasPermission(ContactsRead)) return Forbid();
-        return Ok(db.Contacts.Where(x => x.TenantId == tenancy.TenantId).OrderByDescending(x => x.CreatedAtUtc).ToList());
+        var rows = (
+            from c in db.Contacts
+            join s in db.ContactSegments on c.SegmentId equals s.Id into seg
+            from s in seg.DefaultIfEmpty()
+            where c.TenantId == tenancy.TenantId
+            orderby c.CreatedAtUtc descending
+            select new
+            {
+                c.Id,
+                c.TenantId,
+                c.GroupId,
+                c.SegmentId,
+                Segment = s != null ? s.Name : null,
+                c.Name,
+                c.Phone,
+                c.OptInStatus,
+                c.CreatedAtUtc
+            }).ToList();
+        return Ok(rows);
     }
 
     [HttpPost]
@@ -28,7 +47,8 @@ public class ContactsController(TenantDbContext db, TenancyContext tenancy, Rbac
             TenantId = tenancy.TenantId,
             Name = request.Name,
             Phone = request.Phone,
-            GroupId = request.GroupId
+            GroupId = request.GroupId,
+            SegmentId = request.SegmentId
         };
         db.Contacts.Add(item);
         await db.SaveChangesAsync(ct);
@@ -44,6 +64,7 @@ public class ContactsController(TenantDbContext db, TenancyContext tenancy, Rbac
         item.Name = request.Name;
         item.Phone = request.Phone;
         item.GroupId = request.GroupId;
+        item.SegmentId = request.SegmentId;
         await db.SaveChangesAsync(ct);
         return Ok(item);
     }

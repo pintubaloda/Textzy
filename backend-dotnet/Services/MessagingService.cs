@@ -54,6 +54,27 @@ public class MessagingService(
         };
 
         db.Messages.Add(message);
+
+        // Auto-create/update contact from outbound sends (WhatsApp/SMS).
+        var existingContact = db.Contacts.FirstOrDefault(x => x.TenantId == tenancy.TenantId && x.Phone == request.Recipient);
+        if (existingContact is null)
+        {
+            db.Contacts.Add(new Contact
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenancy.TenantId,
+                Name = request.Recipient,
+                Phone = request.Recipient,
+                OptInStatus = "unknown",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(existingContact.Name))
+                existingContact.Name = request.Recipient;
+        }
+
         await db.SaveChangesAsync(ct);
         return message;
     }

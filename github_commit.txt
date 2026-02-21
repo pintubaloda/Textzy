@@ -19,3 +19,7 @@ Latest automation commits
 41c4a42 - Enhance automation flow builder with WhatsApp-style nodes and advanced config
 af53152 - Fix JSX template label braces in automations builder
 (Pending current commit) - Fix CONTENTS panel visibility/clickability and layout spacing
+
+Latest contacts update
+- Contact auto-save from outbound messaging and segment mapping support added.
+- Dashboard + WABA contacts pages wired to real segment create/map flow.

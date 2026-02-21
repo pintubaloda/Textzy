@@ -57,25 +57,39 @@ import {
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { apiDelete, apiGet, apiPost } from "@/lib/api";
+import { toast } from "sonner";
 
 const ContactsPage = () => {
   const [selectedContacts, setSelectedContacts] = useState([]);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [contacts, setContacts] = useState([]);
-  const [newContact, setNewContact] = useState({ name: "", phone: "", email: "" });
+  const [newContact, setNewContact] = useState({ name: "", phone: "", email: "", segmentId: "" });
+  const [segmentsApi, setSegmentsApi] = useState([]);
+  const [newSegmentName, setNewSegmentName] = useState("");
+
+  const load = async () => {
+    try {
+      const [c, s] = await Promise.all([apiGet("/api/contacts"), apiGet("/api/contact-data/segments")]);
+      setContacts(Array.isArray(c) ? c : []);
+      setSegmentsApi(Array.isArray(s) ? s : []);
+    } catch {
+      setContacts([]);
+      setSegmentsApi([]);
+    }
+  };
 
   useEffect(() => {
-    apiGet("/api/contacts").then(setContacts).catch(() => setContacts([]));
+    load();
   }, []);
 
   const segments = [
-    { name: "All Contacts", count: contacts.length },
-    { name: "Active Buyers", count: 5234 },
-    { name: "New Users", count: 3421 },
-    { name: "Newsletter", count: 8765 },
-    { name: "Support Requests", count: 432 },
-    { name: "Inactive", count: 1234 },
+    { name: "All Contacts", count: contacts.length, id: "all" },
+    ...segmentsApi.map((s) => ({
+      id: s.id,
+      name: s.name,
+      count: contacts.filter((c) => c.segmentId === s.id).length,
+    })),
   ];
 
   const handleSelectAll = (checked) => {
@@ -96,16 +110,43 @@ const ContactsPage = () => {
 
   const handleAddContact = async () => {
     if (!newContact.name || !newContact.phone) return;
-    await apiPost("/api/contacts", { name: newContact.name, phone: newContact.phone, groupId: null });
-    const fresh = await apiGet("/api/contacts");
-    setContacts(fresh);
-    setShowAddDialog(false);
-    setNewContact({ name: "", phone: "", email: "" });
+    try {
+      await apiPost("/api/contacts", {
+        name: newContact.name,
+        phone: newContact.phone,
+        groupId: null,
+        segmentId: newContact.segmentId || null,
+      });
+      await load();
+      setShowAddDialog(false);
+      setNewContact({ name: "", phone: "", email: "", segmentId: "" });
+      toast.success("Contact added");
+    } catch {
+      toast.error("Failed to add contact");
+    }
   };
 
   const handleDeleteContact = async (id) => {
-    await apiDelete(`/api/contacts/${id}`);
-    setContacts((prev) => prev.filter((x) => x.id !== id));
+    try {
+      await apiDelete(`/api/contacts/${id}`);
+      setContacts((prev) => prev.filter((x) => x.id !== id));
+      toast.success("Contact deleted");
+    } catch {
+      toast.error("Failed to delete contact");
+    }
+  };
+
+  const handleCreateSegment = async () => {
+    const name = newSegmentName.trim();
+    if (!name) return;
+    try {
+      await apiPost("/api/contact-data/segments", { name, ruleJson: "{}" });
+      setNewSegmentName("");
+      await load();
+      toast.success("Segment created");
+    } catch {
+      toast.error("Failed to create segment");
+    }
   };
 
   return (
@@ -200,13 +241,13 @@ const ContactsPage = () => {
                 </div>
                 <div className="space-y-2">
                   <Label>Segment</Label>
-                  <Select>
+                  <Select value={newContact.segmentId} onValueChange={(v) => setNewContact((p) => ({ ...p, segmentId: v }))}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select segment" />
                     </SelectTrigger>
                     <SelectContent>
-                      {segments.map((segment) => (
-                        <SelectItem key={segment.name} value={segment.name.toLowerCase()}>
+                      {segmentsApi.map((segment) => (
+                        <SelectItem key={segment.id} value={segment.id}>
                           {segment.name}
                         </SelectItem>
                       ))}
@@ -294,7 +335,7 @@ const ContactsPage = () => {
               <div className="space-y-1">
                 {segments.map((segment, index) => (
                   <div
-                    key={segment.name}
+                    key={segment.id || segment.name}
                     className={`flex items-center justify-between px-4 py-3 cursor-pointer transition-colors ${
                       index === 0 ? "bg-orange-50 border-l-4 border-l-orange-500" : "hover:bg-slate-50"
                     }`}
@@ -310,9 +351,20 @@ const ContactsPage = () => {
                 ))}
               </div>
               <div className="p-4 border-t border-slate-200">
-                <Button variant="outline" size="sm" className="w-full gap-2">
+                <div className="space-y-2">
+                  <Input
+                    placeholder="New segment name"
+                    value={newSegmentName}
+                    onChange={(e) => setNewSegmentName(e.target.value)}
+                  />
+                  <Button variant="outline" size="sm" className="w-full gap-2" onClick={handleCreateSegment}>
+                    <Plus className="w-4 h-4" />
+                    Create Segment
+                  </Button>
+                </div>
+                <Button variant="outline" size="sm" className="w-full gap-2 mt-2" onClick={load}>
                   <Plus className="w-4 h-4" />
-                  Create Segment
+                  Refresh
                 </Button>
               </div>
             </CardContent>

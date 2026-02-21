@@ -50,3 +50,11 @@ Update: 2026-02-21
 - Removed hard quick-reply cap in builder UI as requested.
 - Fixed JSX template-label syntax compile failure.
 - Fixed CONTENTS panel usability: wider panel, proper scroll, click-safe interactions, no overlap.
+
+Update: 2026-02-21 (Contacts)
+- Added contact Segment mapping support (backend + frontend).
+- Contacts now return segment name in list API for UI display.
+- Added SegmentId to contact schema and upsert request.
+- Outbound message send now auto-creates/updates contact by recipient number.
+- Dashboard Contacts page now uses real segments API, supports create segment, and maps segment while creating contact.
+- WABA Contacts page updated to map segment on add/edit and display segment column.
