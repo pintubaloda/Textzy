@@ -152,6 +152,9 @@ export default function AutomationsPage() {
   const [editForm, setEditForm] = useState({ name: "", description: "", channel: "waba", triggerType: "keyword", isActive: true });
   const [builderNodes, setBuilderNodes] = useState([]);
   const [dragType, setDragType] = useState("");
+  const [faqItems, setFaqItems] = useState([]);
+  const [faqForm, setFaqForm] = useState({ question: "", answer: "", category: "", isActive: true });
+  const [editingFaqId, setEditingFaqId] = useState("");
 
   const selectedFlow = useMemo(
     () => flows.find((x) => String(x.id) === String(selectedFlowId)) || null,
@@ -160,14 +163,16 @@ export default function AutomationsPage() {
 
   const loadAll = async () => {
     try {
-      const [flowsRes, limitsRes, typesRes] = await Promise.all([
+      const [flowsRes, limitsRes, typesRes, faqRes] = await Promise.all([
         apiGet("/api/automation/flows"),
         apiGet("/api/automation/limits"),
         apiGet("/api/automation/catalogs/node-types"),
+        apiGet("/api/automation/faq"),
       ]);
       setFlows(flowsRes || []);
       setLimits(limitsRes || null);
       setNodeTypes(typesRes || []);
+      setFaqItems(faqRes || []);
       if (!selectedFlowId && flowsRes?.length) setSelectedFlowId(String(flowsRes[0].id));
     } catch {
       toast.error("Failed to load automation module");
@@ -245,11 +250,11 @@ export default function AutomationsPage() {
   const openEdit = (flow = selectedFlow) => {
     if (!flow) return;
     setEditForm({
-      name: selectedFlow.name || "",
-      description: selectedFlow.description || "",
-      channel: selectedFlow.channel || "waba",
-      triggerType: selectedFlow.triggerType || "keyword",
-      isActive: !!selectedFlow.isActive,
+      name: flow.name || "",
+      description: flow.description || "",
+      channel: flow.channel || "waba",
+      triggerType: flow.triggerType || "keyword",
+      isActive: !!flow.isActive,
     });
     setShowEdit(true);
   };
@@ -362,6 +367,53 @@ export default function AutomationsPage() {
 
   const updateNode = (id, patch) => {
     setBuilderNodes((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch } : n)));
+  };
+
+  const startEditFaq = (item) => {
+    setEditingFaqId(String(item.id));
+    setFaqForm({
+      question: item.question || "",
+      answer: item.answer || "",
+      category: item.category || "",
+      isActive: !!item.isActive,
+    });
+  };
+
+  const resetFaqForm = () => {
+    setEditingFaqId("");
+    setFaqForm({ question: "", answer: "", category: "", isActive: true });
+  };
+
+  const saveFaq = async () => {
+    try {
+      if (!faqForm.question.trim() || !faqForm.answer.trim()) {
+        toast.error("Question and answer are required");
+        return;
+      }
+      if (editingFaqId) {
+        await apiPut(`/api/automation/faq/${editingFaqId}`, faqForm);
+        toast.success("Q&A updated");
+      } else {
+        await apiPost("/api/automation/faq", faqForm);
+        toast.success("Q&A added");
+      }
+      resetFaqForm();
+      await loadAll();
+    } catch (e) {
+      toast.error(e?.message || "Failed to save Q&A");
+    }
+  };
+
+  const removeFaq = async (id) => {
+    if (!window.confirm("Delete this Q&A item?")) return;
+    try {
+      await apiDelete(`/api/automation/faq/${id}`);
+      toast.success("Q&A deleted");
+      if (String(editingFaqId) === String(id)) resetFaqForm();
+      await loadAll();
+    } catch (e) {
+      toast.error(e?.message || "Failed to delete Q&A");
+    }
   };
 
   return (
@@ -594,6 +646,54 @@ export default function AutomationsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Q&A Knowledge Base</CardTitle>
+          <CardDescription>Bot answers from this Q&A first, then handoff to human if no match.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="space-y-3">
+            <div>
+              <Label>Question</Label>
+              <Input value={faqForm.question} onChange={(e) => setFaqForm((p) => ({ ...p, question: e.target.value }))} placeholder="e.g. What are your business hours?" />
+            </div>
+            <div>
+              <Label>Answer</Label>
+              <Textarea rows={4} value={faqForm.answer} onChange={(e) => setFaqForm((p) => ({ ...p, answer: e.target.value }))} placeholder="e.g. We are open Monday-Saturday, 9 AM to 8 PM." />
+            </div>
+            <div>
+              <Label>Category (optional)</Label>
+              <Input value={faqForm.category} onChange={(e) => setFaqForm((p) => ({ ...p, category: e.target.value }))} placeholder="support / sales / accounts" />
+            </div>
+            <div className="flex gap-2">
+              <Button className="bg-orange-500 hover:bg-orange-600 text-white" onClick={saveFaq}>{editingFaqId ? "Update Q&A" : "Add Q&A"}</Button>
+              {editingFaqId && <Button variant="outline" onClick={resetFaqForm}>Cancel Edit</Button>}
+            </div>
+          </div>
+
+          <div>
+            <h4 className="font-semibold text-sm mb-3">Saved Q&A</h4>
+            <ScrollArea className="h-[320px] pr-2">
+              {faqItems.map((item) => (
+                <div key={item.id} className="border rounded-lg p-3 mb-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-medium text-slate-900">{item.question}</p>
+                    <Badge className={item.isActive ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-700"}>{item.isActive ? "active" : "inactive"}</Badge>
+                  </div>
+                  <p className="text-sm text-slate-600 mt-1">{item.answer}</p>
+                  <p className="text-xs text-slate-500 mt-1">{item.category || "-"}</p>
+                  <div className="flex gap-2 mt-2">
+                    <Button size="sm" variant="outline" onClick={() => startEditFaq(item)}>Edit</Button>
+                    <Button size="sm" variant="destructive" onClick={() => removeFaq(item.id)}>Delete</Button>
+                  </div>
+                </div>
+              ))}
+              {faqItems.length === 0 && <p className="text-sm text-slate-500">No Q&A added yet.</p>}
+            </ScrollArea>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

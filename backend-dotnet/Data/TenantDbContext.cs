@@ -27,4 +27,5 @@ public class TenantDbContext(DbContextOptions<TenantDbContext> options) : DbCont
     public DbSet<AutomationRun> AutomationRuns => Set<AutomationRun>();
     public DbSet<AutomationApproval> AutomationApprovals => Set<AutomationApproval>();
     public DbSet<AutomationUsageCounter> AutomationUsageCounters => Set<AutomationUsageCounter>();
+    public DbSet<FaqKnowledgeItem> FaqKnowledgeItems => Set<FaqKnowledgeItem>();
 }

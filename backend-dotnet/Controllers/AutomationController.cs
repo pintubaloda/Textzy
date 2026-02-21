@@ -58,6 +58,8 @@ public class AutomationController(
 
         db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationUsageCounters" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "BucketDateUtc" timestamp with time zone NOT NULL DEFAULT now(), "RunCount" integer NOT NULL DEFAULT 0, "ApiCallCount" integer NOT NULL DEFAULT 0, "ActiveFlowCount" integer NOT NULL DEFAULT 0, "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
         db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AutomationUsageCounters_Tenant_Bucket" ON "AutomationUsageCounters" ("TenantId","BucketDateUtc");""");
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "FaqKnowledgeItems" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "Question" text NOT NULL DEFAULT '', "Answer" text NOT NULL DEFAULT '', "Category" text NOT NULL DEFAULT '', "IsActive" boolean NOT NULL DEFAULT true, "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_FaqKnowledgeItems_Tenant_Active" ON "FaqKnowledgeItems" ("TenantId","IsActive");""");
     }
 
     private bool TryEnsureAutomationSchema(out IActionResult? errorResult)
@@ -633,6 +635,14 @@ public class AutomationController(
         await db.SaveChangesAsync(ct);
 
         var payload = ParseObject(run.TriggerPayloadJson);
+        if (!payload.ContainsKey("faq_answer") || string.IsNullOrWhiteSpace(payload["faq_answer"]?.ToString()))
+        {
+            var inboundText = payload.TryGetValue("message", out var msgObj) ? msgObj?.ToString() ?? string.Empty : string.Empty;
+            if (!string.IsNullOrWhiteSpace(inboundText))
+            {
+                payload["faq_answer"] = await FindFaqAnswer(inboundText, ct);
+            }
+        }
         var trace = new List<object>();
         var logLines = new List<string>();
 
@@ -969,6 +979,46 @@ public class AutomationController(
             output = output.Replace($"{{{{{pair.Key}}}}}", pair.Value?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
         }
         return output;
+    }
+
+    private async Task<string> FindFaqAnswer(string inboundText, CancellationToken ct)
+    {
+        var text = (inboundText ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+        var items = await db.FaqKnowledgeItems
+            .Where(x => x.TenantId == tenancy.TenantId && x.IsActive)
+            .OrderByDescending(x => x.UpdatedAtUtc)
+            .Take(500)
+            .ToListAsync(ct);
+        if (items.Count == 0) return string.Empty;
+
+        var exact = items.FirstOrDefault(x => string.Equals(x.Question.Trim(), inboundText.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (exact is not null) return exact.Answer;
+
+        foreach (var item in items)
+        {
+            var q = (item.Question ?? string.Empty).Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(q)) continue;
+            if (text.Contains(q) || q.Contains(text)) return item.Answer;
+        }
+
+        var tokens = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => x.Length >= 3)
+            .Distinct()
+            .ToArray();
+        if (tokens.Length == 0) return string.Empty;
+
+        var best = items
+            .Select(x => new
+            {
+                item = x,
+                score = tokens.Count(t => (x.Question ?? string.Empty).Contains(t, StringComparison.OrdinalIgnoreCase))
+            })
+            .OrderByDescending(x => x.score)
+            .FirstOrDefault();
+
+        return best is not null && best.score >= 2 ? best.item.Answer : string.Empty;
     }
 
     private static (Dictionary<string, FlowNode> nodes, string startNodeId) ParseFlowDefinition(string definitionJson)
