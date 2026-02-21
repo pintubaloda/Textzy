@@ -133,3 +133,7 @@ Hotfix: 2026-02-21 (Railway log-rate reduction)
   - Default/Microsoft/System -> Warning
   - EF Core SQL command logs -> Error
   - Request diagnostics noise reduced.
+
+Hotfix: 2026-02-21 (Billing seed DateTime UTC)
+- Fixed Billing invoice seed timestamps to explicit UTC kind to satisfy Npgsql timestamptz requirements.
+- Prevents startup crash: "Cannot write DateTime with Kind=Unspecified to PostgreSQL type 'timestamp with time zone'."

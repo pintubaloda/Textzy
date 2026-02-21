@@ -237,13 +237,14 @@ public static class SeedData
 
         if (!db.BillingInvoices.Any(x => x.TenantId == tenantId))
         {
+            var monthStartUtc = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
             db.BillingInvoices.Add(new BillingInvoice
             {
                 Id = Guid.NewGuid(),
                 InvoiceNo = $"INV-{DateTime.UtcNow:yyyy}-001",
                 TenantId = tenantId,
-                PeriodStartUtc = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddMonths(-1),
-                PeriodEndUtc = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddDays(-1),
+                PeriodStartUtc = monthStartUtc.AddMonths(-1),
+                PeriodEndUtc = monthStartUtc.AddDays(-1),
                 Subtotal = 9999,
                 TaxAmount = 1800,
                 Total = 11799,

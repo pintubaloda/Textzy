@@ -108,3 +108,12 @@ Pending hotfix commit:
 
 Summary:
 - Reduced production logging noise to avoid Railway deployment/runtime rate-limit log drops.
+
+Pending hotfix commit:
+- backend-dotnet/Data/SeedData.cs
+- Requirestatus.txt
+- github_commit.txt
+- masterrequirement.docx
+
+Summary:
+- Fix startup crash caused by Unspecified DateTime kind in billing invoice seed data.
