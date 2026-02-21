@@ -42,8 +42,16 @@ builder.Services.AddCors(options =>
 });
 
 var rawControlConnection = (builder.Environment.IsProduction()
-        ? builder.Configuration["DATABASE_URL"] ?? builder.Configuration.GetConnectionString("Default")
-        : builder.Configuration.GetConnectionString("Default") ?? builder.Configuration["DATABASE_URL"]);
+        ? FirstNonEmpty(
+            builder.Configuration["DATABASE_URL"],
+            builder.Configuration["DATABASE_PUBLIC_URL"],
+            builder.Configuration["POSTGRES_URL"],
+            builder.Configuration.GetConnectionString("Default"))
+        : FirstNonEmpty(
+            builder.Configuration.GetConnectionString("Default"),
+            builder.Configuration["DATABASE_URL"],
+            builder.Configuration["DATABASE_PUBLIC_URL"],
+            builder.Configuration["POSTGRES_URL"]));
 
 string controlConnection;
 if (string.IsNullOrWhiteSpace(rawControlConnection))
@@ -378,6 +386,10 @@ static string NormalizeConnectionString(string raw)
     if (value.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
         value.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
     {
+        if (TryBuildFromUrl(value, out var urlConn))
+        {
+            return urlConn;
+        }
         try
         {
             return new NpgsqlConnectionStringBuilder(value).ConnectionString;
@@ -400,12 +412,30 @@ static string NormalizeConnectionString(string raw)
 
 static string? BuildFromPgEnvironment()
 {
-    var host = Environment.GetEnvironmentVariable("PGHOST");
-    var port = Environment.GetEnvironmentVariable("PGPORT");
-    var user = Environment.GetEnvironmentVariable("PGUSER");
-    var pass = Environment.GetEnvironmentVariable("PGPASSWORD");
-    var db = Environment.GetEnvironmentVariable("PGDATABASE");
-    var sslMode = Environment.GetEnvironmentVariable("PGSSLMODE");
+    var host = FirstNonEmpty(
+        Environment.GetEnvironmentVariable("PGHOST"),
+        Environment.GetEnvironmentVariable("POSTGRES_HOST"),
+        Environment.GetEnvironmentVariable("DB_HOST"));
+    var port = FirstNonEmpty(
+        Environment.GetEnvironmentVariable("PGPORT"),
+        Environment.GetEnvironmentVariable("POSTGRES_PORT"),
+        Environment.GetEnvironmentVariable("DB_PORT"));
+    var user = FirstNonEmpty(
+        Environment.GetEnvironmentVariable("PGUSER"),
+        Environment.GetEnvironmentVariable("POSTGRES_USER"),
+        Environment.GetEnvironmentVariable("DB_USER"));
+    var pass = FirstNonEmpty(
+        Environment.GetEnvironmentVariable("PGPASSWORD"),
+        Environment.GetEnvironmentVariable("POSTGRES_PASSWORD"),
+        Environment.GetEnvironmentVariable("DB_PASSWORD"));
+    var db = FirstNonEmpty(
+        Environment.GetEnvironmentVariable("PGDATABASE"),
+        Environment.GetEnvironmentVariable("POSTGRES_DB"),
+        Environment.GetEnvironmentVariable("DB_NAME"));
+    var sslMode = FirstNonEmpty(
+        Environment.GetEnvironmentVariable("PGSSLMODE"),
+        Environment.GetEnvironmentVariable("POSTGRES_SSLMODE"),
+        Environment.GetEnvironmentVariable("DB_SSLMODE"));
 
     if (string.IsNullOrWhiteSpace(host) ||
         string.IsNullOrWhiteSpace(port) ||
@@ -445,6 +475,64 @@ static string? BuildFromPgEnvironment()
     }
 
     return builder.ConnectionString;
+}
+
+static bool TryBuildFromUrl(string url, out string connectionString)
+{
+    connectionString = string.Empty;
+    var cleaned = (url ?? string.Empty).Trim().Trim('"', '\'');
+    if (!Uri.TryCreate(cleaned, UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    if (!uri.Scheme.Equals("postgres", StringComparison.OrdinalIgnoreCase) &&
+        !uri.Scheme.Equals("postgresql", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var userInfo = uri.UserInfo.Split(':', 2);
+    var username = userInfo.Length > 0 ? Uri.UnescapeDataString(userInfo[0]) : string.Empty;
+    var password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : string.Empty;
+    var database = uri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty;
+    var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+    var sslMode = query.TryGetValue("sslmode", out var ssl) ? ssl.ToString() : "require";
+
+    var csb = new NpgsqlConnectionStringBuilder
+    {
+        Host = uri.Host,
+        Port = uri.Port > 0 ? uri.Port : 5432,
+        Username = username,
+        Password = password,
+        Database = database
+    };
+
+    csb.SslMode = sslMode.ToLowerInvariant() switch
+    {
+        "disable" => SslMode.Disable,
+        "allow" => SslMode.Allow,
+        "prefer" => SslMode.Prefer,
+        "verify-ca" => SslMode.VerifyCA,
+        "verify-full" => SslMode.VerifyFull,
+        _ => SslMode.Require
+    };
+    csb.TrustServerCertificate = csb.SslMode is SslMode.Require or SslMode.Prefer;
+    connectionString = csb.ConnectionString;
+    return true;
+}
+
+static string? FirstNonEmpty(params string?[] values)
+{
+    foreach (var value in values)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+    }
+
+    return null;
 }
 
 static void EnsureTenantWabaSchema(TenantDbContext db)
