@@ -10,6 +10,7 @@ namespace Textzy.Api.Services;
 
 public class WhatsAppCloudService(
     TenantDbContext tenantDb,
+    ControlDbContext controlDb,
     TenancyContext tenancy,
     IHttpClientFactory httpClientFactory,
     IConfiguration configuration,
@@ -71,7 +72,7 @@ public class WhatsAppCloudService(
     }
 
     public async Task<TenantWabaConfig?> GetTenantConfigAsync(CancellationToken ct = default)
-        => await tenantDb.Set<TenantWabaConfig>().FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.IsActive, ct);
+        => await GetTenantConfigRowAsync(onlyActive: true, ct);
 
     public bool VerifyWebhookSignature(string body, string signatureHeader)
     {
@@ -133,12 +134,7 @@ public class WhatsAppCloudService(
 
     public async Task<TenantWabaConfig> StartOnboardingAsync(CancellationToken ct = default)
     {
-        var config = await tenantDb.Set<TenantWabaConfig>().FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId, ct);
-        if (config is null)
-        {
-            config = new TenantWabaConfig { Id = Guid.NewGuid(), TenantId = tenancy.TenantId };
-            tenantDb.Set<TenantWabaConfig>().Add(config);
-        }
+        var config = await GetOrCreateTenantConfigAsync(ct);
 
         config.OnboardingState = "requested";
         config.OnboardingStartedAtUtc = DateTime.UtcNow;
@@ -153,12 +149,7 @@ public class WhatsAppCloudService(
         if (code.StartsWith("EA", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Strict embedded signup requires authorization code exchange. Direct access token payloads are not allowed.");
 
-        var config = await tenantDb.Set<TenantWabaConfig>().FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId, ct);
-        if (config is null)
-        {
-            config = new TenantWabaConfig { Id = Guid.NewGuid(), TenantId = tenancy.TenantId };
-            tenantDb.Set<TenantWabaConfig>().Add(config);
-        }
+        var config = await GetOrCreateTenantConfigAsync(ct);
 
         config.OnboardingState = "code_received";
         config.CodeReceivedAtUtc = DateTime.UtcNow;
@@ -168,6 +159,11 @@ public class WhatsAppCloudService(
         var accessToken = await ResolveAccessTokenAsync(code, ct);
         var discovered = await DiscoverWabaAssetsAsync(accessToken, ct)
             ?? throw new InvalidOperationException("Code exchange succeeded but WABA/phone discovery failed. Verify app scopes and embedded signup completion.");
+        var conflict = await FindTenantBindingConflictAsync(discovered.WabaId, discovered.PhoneNumberId, ct);
+        if (conflict is not null)
+        {
+            throw new InvalidOperationException($"This WhatsApp account/number is already linked to another project ({conflict.Value.TenantName} / {conflict.Value.TenantSlug}). Use a different number or disconnect there first.");
+        }
 
         config.AccessToken = accessToken;
         config.IsActive = true;
@@ -198,14 +194,16 @@ public class WhatsAppCloudService(
 
     public async Task<object> GetOnboardingStatusAsync(CancellationToken ct = default)
     {
-        var config = await tenantDb.Set<TenantWabaConfig>().FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId, ct);
+        var config = await GetTenantConfigRowAsync(onlyActive: false, ct);
         if (config is null)
         {
             return new
             {
                 state = "requested",
                 isConnected = false,
-                readyToSend = false
+                readyToSend = false,
+                tenantId = tenancy.TenantId,
+                tenantSlug = tenancy.TenantSlug
             };
         }
 
@@ -260,7 +258,9 @@ public class WhatsAppCloudService(
                 verifiedAtUtc = config.WebhookVerifiedAtUtc
             },
             lastError = config.LastError,
-            lastGraphError = config.LastGraphError
+            lastGraphError = config.LastGraphError,
+            tenantId = tenancy.TenantId,
+            tenantSlug = tenancy.TenantSlug
         };
     }
 
@@ -511,6 +511,63 @@ public class WhatsAppCloudService(
         var raw = await GraphGetRawAsync(url, accessToken, ct);
         if (!raw.Ok || string.IsNullOrWhiteSpace(raw.Body)) return null;
         try { return JsonDocument.Parse(raw.Body); } catch { return null; }
+    }
+
+    private async Task<TenantWabaConfig?> GetTenantConfigRowAsync(bool onlyActive, CancellationToken ct)
+    {
+        var rows = await tenantDb.Set<TenantWabaConfig>()
+            .Where(x => x.TenantId == tenancy.TenantId && (!onlyActive || x.IsActive))
+            .OrderByDescending(x => x.ConnectedAtUtc)
+            .ThenByDescending(x => x.OnboardingStartedAtUtc)
+            .ToListAsync(ct);
+
+        if (rows.Count <= 1) return rows.FirstOrDefault();
+
+        // Keep latest row only to avoid legacy duplicate records leaking inconsistent state.
+        var keep = rows[0];
+        tenantDb.Set<TenantWabaConfig>().RemoveRange(rows.Skip(1));
+        await tenantDb.SaveChangesAsync(ct);
+        return keep;
+    }
+
+    private async Task<TenantWabaConfig> GetOrCreateTenantConfigAsync(CancellationToken ct)
+    {
+        var config = await GetTenantConfigRowAsync(onlyActive: false, ct);
+        if (config is not null) return config;
+        config = new TenantWabaConfig { Id = Guid.NewGuid(), TenantId = tenancy.TenantId };
+        tenantDb.Set<TenantWabaConfig>().Add(config);
+        return config;
+    }
+
+    private async Task<(Guid TenantId, string TenantSlug, string TenantName)?> FindTenantBindingConflictAsync(string wabaId, string phoneNumberId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(wabaId) && string.IsNullOrWhiteSpace(phoneNumberId)) return null;
+        var tenants = await controlDb.Tenants.ToListAsync(ct);
+        foreach (var tenant in tenants)
+        {
+            if (tenant.Id == tenancy.TenantId) continue;
+            try
+            {
+                using var otherDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
+                var cfg = await otherDb.Set<TenantWabaConfig>()
+                    .Where(x => x.TenantId == tenant.Id && x.IsActive)
+                    .OrderByDescending(x => x.ConnectedAtUtc)
+                    .FirstOrDefaultAsync(ct);
+                if (cfg is null) continue;
+                var sameWaba = !string.IsNullOrWhiteSpace(wabaId) && string.Equals(cfg.WabaId, wabaId, StringComparison.OrdinalIgnoreCase);
+                var samePhone = !string.IsNullOrWhiteSpace(phoneNumberId) && string.Equals(cfg.PhoneNumberId, phoneNumberId, StringComparison.OrdinalIgnoreCase);
+                if (sameWaba || samePhone)
+                {
+                    return (tenant.Id, tenant.Slug, tenant.Name);
+                }
+            }
+            catch
+            {
+                // Ignore unreachable tenant DB in conflict scan.
+            }
+        }
+
+        return null;
     }
 
     private static List<string> ReadIdsFromDataArray(JsonDocument? doc)
