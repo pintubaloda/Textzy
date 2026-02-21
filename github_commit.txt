@@ -99,3 +99,12 @@ Pending commit (billing foundation):
 
 Summary:
 - Implemented billing backend source-of-truth and synced landing/platform/user billing UI with APIs.
+
+Pending hotfix commit:
+- backend-dotnet/Program.cs
+- Requirestatus.txt
+- github_commit.txt
+- masterrequirement.docx
+
+Summary:
+- Reduced production logging noise to avoid Railway deployment/runtime rate-limit log drops.

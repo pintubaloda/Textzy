@@ -9,6 +9,19 @@ using Textzy.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (builder.Environment.IsProduction())
+{
+    builder.Logging.ClearProviders();
+    builder.Logging.AddConsole();
+    builder.Logging.AddFilter("Default", LogLevel.Warning);
+    builder.Logging.AddFilter("Microsoft", LogLevel.Warning);
+    builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+    builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+    builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
+    builder.Logging.AddFilter("Microsoft.EntityFrameworkCore.Database.Command", LogLevel.Error);
+    builder.Logging.AddFilter("System", LogLevel.Warning);
+}
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();

@@ -127,3 +127,9 @@ Update: 2026-02-21 (Billing foundation implemented)
 - Wired frontend Billing page to real backend billing APIs (plan, usage, invoices, change/cancel).
 - Added Platform Settings Billing Plans tab with create/edit/archive + limits/features configuration.
 - Landing page pricing now fetches plans from backend public endpoint with fallback.
+
+Hotfix: 2026-02-21 (Railway log-rate reduction)
+- Added production logging filters in backend Program.cs to reduce log volume:
+  - Default/Microsoft/System -> Warning
+  - EF Core SQL command logs -> Error
+  - Request diagnostics noise reduced.
