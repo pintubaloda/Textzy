@@ -447,20 +447,22 @@ export default function AutomationsPage() {
           </Card>
 
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-            <Card className="xl:col-span-3">
-              <CardHeader><CardTitle>Node Palette</CardTitle></CardHeader>
+            <Card className="xl:col-span-2 bg-slate-900 text-slate-100 border-slate-800">
+              <CardHeader><CardTitle className="text-base text-slate-100">Node Palette</CardTitle></CardHeader>
               <CardContent className="space-y-3">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">
-                  <div className="font-semibold mb-1">Trigger Message</div>
-                  <div>This bot reacts on: <span className="font-medium">Hi, hello, HI, Hello</span></div>
+                <div className="rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-300">
+                  <div className="font-semibold mb-1 text-slate-100">Trigger Contains</div>
+                  <div className="truncate">{triggerKeywords}</div>
                 </div>
                 <ScrollArea className="h-[620px] pr-2">
                   {NODE_LIBRARY.map((s) => (
                     <div key={s.section} className="mb-3">
-                      <p className="text-xs uppercase tracking-wide text-slate-500 mb-1">{s.section}</p>
+                      <p className="text-[11px] uppercase tracking-wide text-slate-400 mb-1">{s.section}</p>
                       <div className="space-y-1">
                         {s.items.map((type) => (
-                          <button key={type} className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${s.color}`} onClick={() => addNode(type)}>{type}</button>
+                          <button key={type} className="w-full rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 px-2 py-2 text-left text-xs" onClick={() => addNode(type)}>
+                            {type.replaceAll("_", " ")}
+                          </button>
                         ))}
                       </div>
                     </div>
@@ -469,18 +471,18 @@ export default function AutomationsPage() {
               </CardContent>
             </Card>
 
-            <Card className="xl:col-span-6">
-              <CardHeader><CardTitle>Canvas Area</CardTitle><CardDescription>Drag connector from output dot to another node to create edges.</CardDescription></CardHeader>
+            <Card className="xl:col-span-7 border-slate-800 bg-[#173453]">
+              <CardHeader><CardTitle className="text-white">Canvas</CardTitle><CardDescription className="text-slate-300">Drag line from orange dot to another node.</CardDescription></CardHeader>
               <CardContent>
-                <div ref={canvasRef} className="relative border rounded-xl bg-slate-50 min-h-[640px] p-3" onMouseMove={onCanvasMouseMove} onMouseUp={() => setDragConnect(null)}>
+                <div ref={canvasRef} className="relative rounded-xl bg-[#173453] min-h-[640px] p-3" onMouseMove={onCanvasMouseMove} onMouseUp={() => setDragConnect(null)}>
                   <svg className="pointer-events-none absolute inset-0 w-full h-full">
                     {edgeLines.map((e, i) => (
                       <g key={i}>
-                        <path d={`M ${e.x1} ${e.y1} C ${e.x1 + 60} ${e.y1}, ${e.x2 - 60} ${e.y2}, ${e.x2} ${e.y2}`} fill="none" stroke="#f97316" strokeWidth="2" />
-                        <text x={(e.x1 + e.x2) / 2} y={(e.y1 + e.y2) / 2 - 4} fill="#64748b" fontSize="10">{e.label}</text>
+                        <path d={`M ${e.x1} ${e.y1} C ${e.x1 + 60} ${e.y1}, ${e.x2 - 60} ${e.y2}, ${e.x2} ${e.y2}`} fill="none" stroke="#60a5fa" strokeWidth="2" />
+                        <text x={(e.x1 + e.x2) / 2} y={(e.y1 + e.y2) / 2 - 4} fill="#cbd5e1" fontSize="10">{e.label}</text>
                       </g>
                     ))}
-                    {dragConnect && <path d={`M ${dragConnect.x1} ${dragConnect.y1} C ${dragConnect.x1 + 60} ${dragConnect.y1}, ${dragConnect.x2 - 60} ${dragConnect.y2}, ${dragConnect.x2} ${dragConnect.y2}`} fill="none" stroke="#3b82f6" strokeWidth="2" strokeDasharray="4 4" />}
+                    {dragConnect && <path d={`M ${dragConnect.x1} ${dragConnect.y1} C ${dragConnect.x1 + 60} ${dragConnect.y1}, ${dragConnect.x2 - 60} ${dragConnect.y2}, ${dragConnect.x2} ${dragConnect.y2}`} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="4 4" />}
                   </svg>
 
                   <div className="grid md:grid-cols-2 gap-3 relative z-10">
@@ -497,22 +499,19 @@ export default function AutomationsPage() {
                             <div className="text-xs text-slate-500">{n.type}</div>
                             <div className="font-semibold text-slate-900">{n.name || n.id}</div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-slate-400" />
-                            <button className="w-3 h-3 rounded-full bg-orange-500" onMouseDown={(ev) => onStartConnect(n.id, ev)} title="Drag to connect" />
-                          </div>
+                          <button className="w-3 h-3 rounded-full bg-orange-500" onMouseDown={(ev) => onStartConnect(n.id, ev)} title="Drag to connect" />
                         </div>
                         <div className="text-xs text-slate-600 mt-2">{n.next ? `Next: ${n.next}` : n.onTrue || n.onFalse ? `True: ${n.onTrue || "-"} | False: ${n.onFalse || "-"}` : "No connection"}</div>
                       </div>
                     ))}
-                    {!nodes.length && <div className="text-sm text-slate-500">No nodes yet. Add from palette.</div>}
+                    {!nodes.length && <div className="text-sm text-slate-300">No nodes yet. Add from palette.</div>}
                   </div>
                 </div>
               </CardContent>
             </Card>
 
             <Card className="xl:col-span-3">
-              <CardHeader><CardTitle>Properties</CardTitle></CardHeader>
+              <CardHeader><CardTitle>Interactions</CardTitle><CardDescription>Node configuration + live preview</CardDescription></CardHeader>
               <CardContent className="space-y-3">
                 {!selectedNode && <p className="text-sm text-slate-500">Select a node.</p>}
                 {selectedNode && (
