@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +23,7 @@ import {
   MapPin,
   Play,
 } from "lucide-react";
+import { getPublicPlans } from "@/lib/api";
 
 const LandingPage = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -60,7 +61,7 @@ const LandingPage = () => {
     },
   ];
 
-  const pricingPlans = [
+  const [pricingPlans, setPricingPlans] = useState([
     {
       name: "Starter",
       price: "₹2,999",
@@ -110,7 +111,26 @@ const LandingPage = () => {
       ],
       popular: false,
     },
-  ];
+  ]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const rows = await getPublicPlans();
+        if (!Array.isArray(rows) || rows.length === 0) return;
+        setPricingPlans(rows.map((p) => ({
+          name: p.name,
+          price: p.code === "enterprise" ? "Custom" : `₹${Number(p.priceMonthly || 0).toLocaleString()}`,
+          period: p.code === "enterprise" ? "" : "/month",
+          description: p.code === "starter" ? "Perfect for small businesses getting started" : p.code === "growth" ? "For growing businesses with higher volumes" : "For large organizations with custom needs",
+          features: Array.isArray(p.features) ? p.features : [],
+          popular: p.code === "growth"
+        })));
+      } catch {
+        // keep fallback plans
+      }
+    })();
+  }, []);
 
   const testimonials = [
     {

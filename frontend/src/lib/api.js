@@ -246,3 +246,49 @@ export async function autoCreatePaymentWebhook(provider) {
 export async function upsertPaymentWebhook(payload) {
   return apiPut('/api/platform/payment-webhooks', payload)
 }
+
+export async function listPlatformBillingPlans() {
+  return apiGet('/api/platform/billing/plans')
+}
+
+export async function createPlatformBillingPlan(payload) {
+  return apiPost('/api/platform/billing/plans', payload)
+}
+
+export async function updatePlatformBillingPlan(id, payload) {
+  return apiPut(`/api/platform/billing/plans/${id}`, payload)
+}
+
+export async function archivePlatformBillingPlan(id) {
+  return apiDelete(`/api/platform/billing/plans/${id}`)
+}
+
+export async function getBillingPlans() {
+  return apiGet('/api/billing/plans')
+}
+
+export async function getCurrentBillingPlan() {
+  return apiGet('/api/billing/current-plan')
+}
+
+export async function getBillingUsage() {
+  return apiGet('/api/billing/usage')
+}
+
+export async function getBillingInvoices() {
+  return apiGet('/api/billing/invoices')
+}
+
+export async function changeBillingPlan(planCode, billingCycle = 'monthly') {
+  return apiPost('/api/billing/change-plan', { planCode, billingCycle })
+}
+
+export async function cancelBillingSubscription() {
+  return apiPost('/api/billing/cancel', {})
+}
+
+export async function getPublicPlans() {
+  const res = await fetch(`${API_BASE}/api/public/plans`)
+  if (!res.ok) throw new Error(`GET /api/public/plans failed (${res.status})`)
+  return res.json()
+}

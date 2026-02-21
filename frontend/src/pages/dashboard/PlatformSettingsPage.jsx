@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { getPlatformSettings, savePlatformSettings, getPlatformWebhookLogs, listPaymentWebhooks, autoCreatePaymentWebhook, upsertPaymentWebhook } from "@/lib/api";
+import { getPlatformSettings, savePlatformSettings, getPlatformWebhookLogs, listPaymentWebhooks, autoCreatePaymentWebhook, upsertPaymentWebhook, listPlatformBillingPlans, createPlatformBillingPlan, updatePlatformBillingPlan, archivePlatformBillingPlan } from "@/lib/api";
 
 const PlatformSettingsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -18,10 +18,23 @@ const PlatformSettingsPage = () => {
   const [webhookEdit, setWebhookEdit] = useState({ provider: "razorpay", endpointUrl: "", webhookId: "", eventsCsv: "" });
   const [logs, setLogs] = useState([]);
   const [logProvider, setLogProvider] = useState("");
+  const [plans, setPlans] = useState([]);
+  const [planForm, setPlanForm] = useState({
+    id: "",
+    code: "",
+    name: "",
+    priceMonthly: 0,
+    priceYearly: 0,
+    currency: "INR",
+    isActive: true,
+    sortOrder: 1,
+    featuresText: "",
+    limitsText: "{\"contacts\":50000,\"teamMembers\":10,\"smsCredits\":50000,\"chatbots\":5,\"flows\":50}"
+  });
   const [loading, setLoading] = useState(false);
 
   const title = useMemo(
-    () => (tab === "payment-gateway" ? "Payment Gateway Setup" : tab === "webhook-logs" ? "Webhook Logs" : "Waba Master Config"),
+    () => (tab === "payment-gateway" ? "Payment Gateway Setup" : tab === "webhook-logs" ? "Webhook Logs" : tab === "billing-plans" ? "Billing Plans" : "Waba Master Config"),
     [tab],
   );
 
@@ -66,9 +79,15 @@ const PlatformSettingsPage = () => {
             eventsCsv: selected?.eventsCsv || "payment.captured,payment.failed",
           });
         } else {
-          const res = await getPlatformWebhookLogs({ provider: logProvider, limit: 100 });
-          if (!active) return;
-          setLogs(res || []);
+          if (tab === "billing-plans") {
+            const rows = await listPlatformBillingPlans();
+            if (!active) return;
+            setPlans(rows || []);
+          } else {
+            const res = await getPlatformWebhookLogs({ provider: logProvider, limit: 100 });
+            if (!active) return;
+            setLogs(res || []);
+          }
         }
       } catch {
         if (active) toast.error("Failed to load platform settings");
@@ -110,6 +129,13 @@ const PlatformSettingsPage = () => {
             onClick={() => setTab("webhook-logs")}
           >
             Webhook Logs
+          </Button>
+          <Button
+            variant={tab === "billing-plans" ? "default" : "outline"}
+            className={tab === "billing-plans" ? "bg-orange-500 hover:bg-orange-600" : ""}
+            onClick={() => setTab("billing-plans")}
+          >
+            Billing Plans
           </Button>
         </div>
       </div>
@@ -356,6 +382,83 @@ const PlatformSettingsPage = () => {
                       <td colSpan={3} className="px-3 py-6 text-center text-slate-500">No webhook logs found.</td>
                     </tr>
                   )}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "billing-plans" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>Plan Management</CardTitle>
+            <CardDescription>Create and manage platform plans with limits for contacts, team, sms, chatbot, flowbuilder.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="space-y-1"><Label>Code</Label><Input value={planForm.code} onChange={(e) => setPlanForm((p) => ({ ...p, code: e.target.value }))} /></div>
+              <div className="space-y-1"><Label>Name</Label><Input value={planForm.name} onChange={(e) => setPlanForm((p) => ({ ...p, name: e.target.value }))} /></div>
+              <div className="space-y-1"><Label>Currency</Label><Input value={planForm.currency} onChange={(e) => setPlanForm((p) => ({ ...p, currency: e.target.value }))} /></div>
+              <div className="space-y-1"><Label>Monthly Price</Label><Input type="number" value={planForm.priceMonthly} onChange={(e) => setPlanForm((p) => ({ ...p, priceMonthly: Number(e.target.value || 0) }))} /></div>
+              <div className="space-y-1"><Label>Yearly Price</Label><Input type="number" value={planForm.priceYearly} onChange={(e) => setPlanForm((p) => ({ ...p, priceYearly: Number(e.target.value || 0) }))} /></div>
+              <div className="space-y-1"><Label>Sort Order</Label><Input type="number" value={planForm.sortOrder} onChange={(e) => setPlanForm((p) => ({ ...p, sortOrder: Number(e.target.value || 1) }))} /></div>
+            </div>
+            <div className="space-y-1"><Label>Features (comma separated)</Label><Input value={planForm.featuresText} onChange={(e) => setPlanForm((p) => ({ ...p, featuresText: e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Limits JSON</Label><Input value={planForm.limitsText} onChange={(e) => setPlanForm((p) => ({ ...p, limitsText: e.target.value }))} /></div>
+            <div className="flex gap-2">
+              <Button className="bg-orange-500 hover:bg-orange-600" onClick={async () => {
+                try {
+                  const payload = {
+                    code: planForm.code,
+                    name: planForm.name,
+                    priceMonthly: planForm.priceMonthly,
+                    priceYearly: planForm.priceYearly,
+                    currency: planForm.currency,
+                    isActive: planForm.isActive,
+                    sortOrder: planForm.sortOrder,
+                    features: planForm.featuresText.split(",").map((x) => x.trim()).filter(Boolean),
+                    limits: JSON.parse(planForm.limitsText || "{}")
+                  };
+                  if (planForm.id) await updatePlatformBillingPlan(planForm.id, payload);
+                  else await createPlatformBillingPlan(payload);
+                  toast.success("Plan saved");
+                  setPlans(await listPlatformBillingPlans());
+                  setPlanForm({ id: "", code: "", name: "", priceMonthly: 0, priceYearly: 0, currency: "INR", isActive: true, sortOrder: 1, featuresText: "", limitsText: "{\"contacts\":50000,\"teamMembers\":10,\"smsCredits\":50000,\"chatbots\":5,\"flows\":50}" });
+                } catch {
+                  toast.error("Failed to save plan");
+                }
+              }}>{planForm.id ? "Update Plan" : "Create Plan"}</Button>
+            </div>
+            <div className="rounded-lg border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left px-3 py-2">Code</th>
+                    <th className="text-left px-3 py-2">Name</th>
+                    <th className="text-left px-3 py-2">Monthly</th>
+                    <th className="text-left px-3 py-2">Status</th>
+                    <th className="text-right px-3 py-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {plans.map((p) => (
+                    <tr key={p.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{p.code}</td>
+                      <td className="px-3 py-2">{p.name}</td>
+                      <td className="px-3 py-2">{p.currency} {Number(p.priceMonthly || 0).toLocaleString()}</td>
+                      <td className="px-3 py-2">{p.isActive ? "Active" : "Archived"}</td>
+                      <td className="px-3 py-2 text-right">
+                        <Button variant="outline" size="sm" className="mr-2" onClick={() => setPlanForm({
+                          id: p.id, code: p.code, name: p.name, priceMonthly: p.priceMonthly || 0, priceYearly: p.priceYearly || 0, currency: p.currency || "INR", isActive: !!p.isActive, sortOrder: p.sortOrder || 1, featuresText: (p.features || []).join(", "), limitsText: JSON.stringify(p.limits || {})
+                        })}>Edit</Button>
+                        <Button variant="outline" size="sm" onClick={async () => {
+                          try { await archivePlatformBillingPlan(p.id); setPlans(await listPlatformBillingPlans()); toast.success("Plan archived"); } catch { toast.error("Archive failed"); }
+                        }}>Archive</Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {plans.length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No plans</td></tr>}
                 </tbody>
               </table>
             </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,16 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
   CreditCard,
   Download,
@@ -28,84 +19,46 @@ import {
   Zap,
   MessageSquare,
   Users,
-  BarChart3,
-  ArrowRight,
-  Calendar,
-  Receipt,
   AlertTriangle,
 } from "lucide-react";
+import { changeBillingPlan, cancelBillingSubscription, getBillingInvoices, getBillingPlans, getBillingUsage, getCurrentBillingPlan } from "@/lib/api";
+import { toast } from "sonner";
 
 const BillingPage = () => {
   const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);
+  const [plans, setPlans] = useState([]);
+  const [sub, setSub] = useState(null);
+  const [usageValues, setUsageValues] = useState({});
+  const [invoices, setInvoices] = useState([]);
 
-  const currentPlan = {
-    name: "Growth",
-    price: "₹9,999",
-    period: "month",
-    renewalDate: "Feb 15, 2024",
-  };
+  useEffect(() => {
+    (async () => {
+      try {
+        const [p, c, u, i] = await Promise.all([
+          getBillingPlans(),
+          getCurrentBillingPlan(),
+          getBillingUsage(),
+          getBillingInvoices()
+        ]);
+        setPlans(Array.isArray(p) ? p : []);
+        setSub(c || null);
+        setUsageValues(u?.values || {});
+        setInvoices(Array.isArray(i) ? i : []);
+      } catch (e) {
+        toast.error(e.message || "Failed to load billing");
+      }
+    })();
+  }, []);
 
-  const usage = {
-    whatsapp: { used: 7234, limit: 10000, percentage: 72 },
-    sms: { used: 32100, limit: 50000, percentage: 64 },
-    contacts: { used: 8456, limit: 50000, percentage: 17 },
-    team: { used: 6, limit: 10, percentage: 60 },
-  };
-
-  const invoices = [
-    { id: "INV-2024-001", date: "Jan 15, 2024", amount: "₹9,999", status: "paid" },
-    { id: "INV-2023-012", date: "Dec 15, 2023", amount: "₹9,999", status: "paid" },
-    { id: "INV-2023-011", date: "Nov 15, 2023", amount: "₹9,999", status: "paid" },
-    { id: "INV-2023-010", date: "Oct 15, 2023", amount: "₹2,999", status: "paid" },
-    { id: "INV-2023-009", date: "Sep 15, 2023", amount: "₹2,999", status: "paid" },
-  ];
-
-  const plans = [
-    {
-      name: "Starter",
-      price: "₹2,999",
-      period: "/month",
-      features: [
-        "1,000 WhatsApp messages",
-        "5,000 SMS credits",
-        "2 Team members",
-        "Basic analytics",
-        "Email support",
-      ],
-      current: false,
-    },
-    {
-      name: "Growth",
-      price: "₹9,999",
-      period: "/month",
-      features: [
-        "10,000 WhatsApp messages",
-        "50,000 SMS credits",
-        "10 Team members",
-        "Advanced analytics",
-        "Priority support",
-        "Automation builder",
-        "Custom templates",
-      ],
-      current: true,
-      popular: true,
-    },
-    {
-      name: "Enterprise",
-      price: "Custom",
-      period: "",
-      features: [
-        "Unlimited messages",
-        "Custom SMS rates",
-        "Unlimited team members",
-        "Dedicated account manager",
-        "SLA guarantee",
-        "Custom integrations",
-        "On-premise deployment",
-      ],
-      current: false,
-    },
-  ];
+  const currentPlan = sub?.plan || null;
+  const limits = currentPlan?.limits || {};
+  const pct = (used, limit) => !limit ? 0 : Math.min(100, Math.round((used / limit) * 100));
+  const usage = useMemo(() => ({
+    whatsapp: { used: usageValues.whatsappMessages || 0, limit: limits.whatsappMessages || 0, percentage: pct(usageValues.whatsappMessages || 0, limits.whatsappMessages || 0) },
+    sms: { used: usageValues.smsCredits || 0, limit: limits.smsCredits || 0, percentage: pct(usageValues.smsCredits || 0, limits.smsCredits || 0) },
+    contacts: { used: usageValues.contacts || 0, limit: limits.contacts || 0, percentage: pct(usageValues.contacts || 0, limits.contacts || 0) },
+    team: { used: usageValues.teamMembers || 0, limit: limits.teamMembers || 0, percentage: pct(usageValues.teamMembers || 0, limits.teamMembers || 0) }
+  }), [usageValues, limits]);
 
   return (
     <div className="space-y-6" data-testid="billing-page">
@@ -135,10 +88,10 @@ const BillingPage = () => {
                   <Card
                     key={index}
                     className={`border-slate-200 relative ${
-                      plan.current ? "border-2 border-orange-500" : ""
-                    } ${plan.popular ? "shadow-glow" : ""}`}
+                      currentPlan?.code === plan.code ? "border-2 border-orange-500" : ""
+                    } ${index === 1 ? "shadow-glow" : ""}`}
                   >
-                    {plan.popular && (
+                    {index === 1 && (
                       <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                         <Badge className="bg-orange-500 text-white hover:bg-orange-500">Most Popular</Badge>
                       </div>
@@ -146,8 +99,8 @@ const BillingPage = () => {
                     <CardHeader className="pt-8">
                       <CardTitle className="text-lg">{plan.name}</CardTitle>
                       <div className="mt-2">
-                        <span className="text-3xl font-bold text-slate-900">{plan.price}</span>
-                        <span className="text-slate-500">{plan.period}</span>
+                        <span className="text-3xl font-bold text-slate-900">₹{Number(plan.priceMonthly || 0).toLocaleString()}</span>
+                        <span className="text-slate-500">/month</span>
                       </div>
                     </CardHeader>
                     <CardContent>
@@ -161,13 +114,25 @@ const BillingPage = () => {
                       </ul>
                       <Button
                         className={`w-full ${
-                          plan.current
+                          currentPlan?.code === plan.code
                             ? "bg-slate-100 text-slate-700 hover:bg-slate-200"
                             : "bg-orange-500 hover:bg-orange-600 text-white"
                         }`}
-                        disabled={plan.current}
+                        disabled={currentPlan?.code === plan.code}
+                        onClick={async () => {
+                          if (currentPlan?.code === plan.code) return;
+                          if (plan.code === "enterprise") return toast.info("Contact sales for enterprise.");
+                          try {
+                            await changeBillingPlan(plan.code, "monthly");
+                            toast.success("Plan changed");
+                            setSub(await getCurrentBillingPlan());
+                            setShowUpgradeDialog(false);
+                          } catch {
+                            toast.error("Failed to change plan");
+                          }
+                        }}
                       >
-                        {plan.current ? "Current Plan" : plan.name === "Enterprise" ? "Contact Sales" : "Upgrade"}
+                        {currentPlan?.code === plan.code ? "Current Plan" : plan.code === "enterprise" ? "Contact Sales" : "Upgrade"}
                       </Button>
                     </CardContent>
                   </Card>
@@ -188,17 +153,25 @@ const BillingPage = () => {
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-xl font-semibold text-slate-900">{currentPlan.name} Plan</h3>
+                  <h3 className="text-xl font-semibold text-slate-900">{currentPlan?.name || "Plan"} Plan</h3>
                   <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Active</Badge>
                 </div>
                 <p className="text-slate-600">
-                  {currentPlan.price}/{currentPlan.period} • Renews on {currentPlan.renewalDate}
+                  ₹{Number(currentPlan?.priceMonthly || 0).toLocaleString()}/month • Renews on {sub?.subscription?.renewAtUtc ? new Date(sub.subscription.renewAtUtc).toLocaleDateString() : "-"}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Button variant="outline" data-testid="change-plan-btn">Change Plan</Button>
-              <Button variant="outline" className="text-red-600 hover:text-red-700" data-testid="cancel-plan-btn">
+              <Button variant="outline" data-testid="change-plan-btn" onClick={() => setShowUpgradeDialog(true)}>Change Plan</Button>
+              <Button variant="outline" className="text-red-600 hover:text-red-700" data-testid="cancel-plan-btn" onClick={async () => {
+                try {
+                  await cancelBillingSubscription();
+                  toast.success("Subscription cancelled");
+                  setSub(await getCurrentBillingPlan());
+                } catch {
+                  toast.error("Failed to cancel subscription");
+                }
+              }}>
                 Cancel Subscription
               </Button>
             </div>
@@ -345,7 +318,7 @@ const BillingPage = () => {
           <CardContent className="space-y-4">
             <div className="flex justify-between items-center">
               <span className="text-slate-600">Plan Cost</span>
-              <span className="font-medium text-slate-900">₹9,999</span>
+              <span className="font-medium text-slate-900">₹{Number(currentPlan?.priceMonthly || 0).toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-slate-600">Additional SMS</span>
@@ -353,11 +326,11 @@ const BillingPage = () => {
             </div>
             <div className="flex justify-between items-center">
               <span className="text-slate-600">Taxes (18% GST)</span>
-              <span className="font-medium text-slate-900">₹1,800</span>
+              <span className="font-medium text-slate-900">₹{Math.round(Number(currentPlan?.priceMonthly || 0) * 0.18).toLocaleString()}</span>
             </div>
             <div className="border-t border-slate-200 pt-4 flex justify-between items-center">
               <span className="font-medium text-slate-900">Total</span>
-              <span className="text-xl font-bold text-slate-900">₹11,799</span>
+              <span className="text-xl font-bold text-slate-900">₹{Math.round(Number(currentPlan?.priceMonthly || 0) * 1.18).toLocaleString()}</span>
             </div>
           </CardContent>
         </Card>
@@ -390,17 +363,17 @@ const BillingPage = () => {
             </TableHeader>
             <TableBody>
               {invoices.map((invoice) => (
-                <TableRow key={invoice.id}>
-                  <TableCell className="font-medium">{invoice.id}</TableCell>
-                  <TableCell className="text-slate-600">{invoice.date}</TableCell>
-                  <TableCell className="text-slate-900">{invoice.amount}</TableCell>
+                <TableRow key={invoice.id || invoice.invoiceNo}>
+                  <TableCell className="font-medium">{invoice.invoiceNo || invoice.id}</TableCell>
+                  <TableCell className="text-slate-600">{invoice.createdAtUtc ? new Date(invoice.createdAtUtc).toLocaleDateString() : "-"}</TableCell>
+                  <TableCell className="text-slate-900">₹{Number(invoice.total || 0).toLocaleString()}</TableCell>
                   <TableCell>
                     <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
                       {invoice.status}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" className="gap-1" data-testid={`download-invoice-${invoice.id}`}>
+                    <Button variant="ghost" size="sm" className="gap-1" data-testid={`download-invoice-${invoice.invoiceNo || invoice.id}`}>
                       <Download className="w-4 h-4" />
                       Download
                     </Button>

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using Textzy.Api.Models;
 using Textzy.Api.Services;
 
@@ -108,6 +109,149 @@ public static class SeedData
         }
 
         db.SaveChanges();
+
+        EnsureBillingSeeds(db, tenantA.Id, tenantB.Id);
+        db.SaveChanges();
+    }
+
+    private static void EnsureBillingSeeds(ControlDbContext db, Guid tenantAId, Guid tenantBId)
+    {
+        var starter = db.BillingPlans.FirstOrDefault(x => x.Code == "starter");
+        if (starter is null)
+        {
+            starter = new BillingPlan
+            {
+                Id = Guid.NewGuid(),
+                Code = "starter",
+                Name = "Starter",
+                PriceMonthly = 2999,
+                PriceYearly = 29990,
+                Currency = "INR",
+                IsActive = true,
+                SortOrder = 1,
+                FeaturesJson = JsonSerializer.Serialize(new[] { "1,000 WhatsApp messages/month", "5,000 SMS credits", "2 Team members", "Basic analytics" }),
+                LimitsJson = JsonSerializer.Serialize(new Dictionary<string, int>
+                {
+                    ["whatsappMessages"] = 1000,
+                    ["smsCredits"] = 5000,
+                    ["contacts"] = 5000,
+                    ["teamMembers"] = 2,
+                    ["chatbots"] = 1,
+                    ["flows"] = 3
+                })
+            };
+            db.BillingPlans.Add(starter);
+        }
+
+        var growth = db.BillingPlans.FirstOrDefault(x => x.Code == "growth");
+        if (growth is null)
+        {
+            growth = new BillingPlan
+            {
+                Id = Guid.NewGuid(),
+                Code = "growth",
+                Name = "Growth",
+                PriceMonthly = 9999,
+                PriceYearly = 99990,
+                Currency = "INR",
+                IsActive = true,
+                SortOrder = 2,
+                FeaturesJson = JsonSerializer.Serialize(new[] { "10,000 WhatsApp messages/month", "50,000 SMS credits", "10 Team members", "Automation builder" }),
+                LimitsJson = JsonSerializer.Serialize(new Dictionary<string, int>
+                {
+                    ["whatsappMessages"] = 10000,
+                    ["smsCredits"] = 50000,
+                    ["contacts"] = 50000,
+                    ["teamMembers"] = 10,
+                    ["chatbots"] = 5,
+                    ["flows"] = 50
+                })
+            };
+            db.BillingPlans.Add(growth);
+        }
+
+        var enterprise = db.BillingPlans.FirstOrDefault(x => x.Code == "enterprise");
+        if (enterprise is null)
+        {
+            enterprise = new BillingPlan
+            {
+                Id = Guid.NewGuid(),
+                Code = "enterprise",
+                Name = "Enterprise",
+                PriceMonthly = 49999,
+                PriceYearly = 499990,
+                Currency = "INR",
+                IsActive = true,
+                SortOrder = 3,
+                FeaturesJson = JsonSerializer.Serialize(new[] { "Unlimited messages", "Unlimited team members", "Dedicated support", "Custom integrations" }),
+                LimitsJson = JsonSerializer.Serialize(new Dictionary<string, int>
+                {
+                    ["whatsappMessages"] = 99999999,
+                    ["smsCredits"] = 99999999,
+                    ["contacts"] = 99999999,
+                    ["teamMembers"] = 9999,
+                    ["chatbots"] = 999,
+                    ["flows"] = 9999
+                })
+            };
+            db.BillingPlans.Add(enterprise);
+        }
+
+        var monthKey = DateTime.UtcNow.ToString("yyyy-MM");
+        EnsureTenantBilling(db, tenantAId, growth.Id, monthKey);
+        EnsureTenantBilling(db, tenantBId, starter.Id, monthKey);
+    }
+
+    private static void EnsureTenantBilling(ControlDbContext db, Guid tenantId, Guid planId, string monthKey)
+    {
+        if (!db.TenantSubscriptions.Any(x => x.TenantId == tenantId))
+        {
+            db.TenantSubscriptions.Add(new TenantSubscription
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                PlanId = planId,
+                Status = "active",
+                BillingCycle = "monthly",
+                StartedAtUtc = DateTime.UtcNow.AddMonths(-2),
+                RenewAtUtc = DateTime.UtcNow.AddMonths(1)
+            });
+        }
+
+        if (!db.TenantUsages.Any(x => x.TenantId == tenantId && x.MonthKey == monthKey))
+        {
+            db.TenantUsages.Add(new TenantUsage
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                MonthKey = monthKey,
+                WhatsappMessagesUsed = 7234,
+                SmsCreditsUsed = 32100,
+                ContactsUsed = 8456,
+                TeamMembersUsed = 6,
+                ChatbotsUsed = 2,
+                FlowsUsed = 12,
+                ApiCallsUsed = 15500
+            });
+        }
+
+        if (!db.BillingInvoices.Any(x => x.TenantId == tenantId))
+        {
+            db.BillingInvoices.Add(new BillingInvoice
+            {
+                Id = Guid.NewGuid(),
+                InvoiceNo = $"INV-{DateTime.UtcNow:yyyy}-001",
+                TenantId = tenantId,
+                PeriodStartUtc = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddMonths(-1),
+                PeriodEndUtc = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1).AddDays(-1),
+                Subtotal = 9999,
+                TaxAmount = 1800,
+                Total = 11799,
+                Status = "paid",
+                PaidAtUtc = DateTime.UtcNow.AddDays(-10),
+                PdfUrl = string.Empty
+            });
+        }
     }
 
     public static void InitializeTenant(TenantDbContext db, Guid tenantId)

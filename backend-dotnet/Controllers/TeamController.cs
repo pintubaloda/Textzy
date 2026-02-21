@@ -16,6 +16,7 @@ public class TeamController(
     TenancyContext tenancy,
     PasswordHasher hasher,
     EmailService emailService,
+    BillingGuardService billingGuard,
     IConfiguration config,
     AuditLogService audit) : ControllerBase
 {
@@ -75,6 +76,10 @@ public class TeamController(
         var role = NormalizeRole(request.Role);
         if (string.IsNullOrWhiteSpace(email)) return BadRequest("Email is required.");
         if (string.IsNullOrWhiteSpace(role)) return BadRequest("Valid role is required.");
+
+        var currentMembers = await db.TenantUsers.CountAsync(tu => tu.TenantId == tenancy.TenantId, ct);
+        var limit = await billingGuard.CheckLimitAsync(tenancy.TenantId, "teamMembers", currentMembers + 1, ct);
+        if (!limit.Allowed) return BadRequest(limit.Message);
 
         var user = await db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email, ct);
         if (user is null)

@@ -21,7 +21,8 @@ public class TenantMiddleware(RequestDelegate next)
         var isPaymentWebhook = path.StartsWith("/api/payments/webhook", StringComparison.OrdinalIgnoreCase);
         var isAuthLogin = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase);
         var isAuthAcceptInvite = path.StartsWith("/api/auth/accept-invite", StringComparison.OrdinalIgnoreCase);
-        if (isSwaggerPath || isWabaWebhook || isPaymentWebhook || isAuthLogin || isAuthAcceptInvite)
+        var isPublicPath = path.StartsWith("/api/public", StringComparison.OrdinalIgnoreCase);
+        if (isSwaggerPath || isWabaWebhook || isPaymentWebhook || isAuthLogin || isAuthAcceptInvite || isPublicPath)
         {
             await _next(context);
             return;

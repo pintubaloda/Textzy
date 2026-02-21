@@ -13,4 +13,8 @@ public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbCo
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<TeamInvitation> TeamInvitations => Set<TeamInvitation>();
     public DbSet<TenantUserPermissionOverride> TenantUserPermissionOverrides => Set<TenantUserPermissionOverride>();
+    public DbSet<BillingPlan> BillingPlans => Set<BillingPlan>();
+    public DbSet<TenantSubscription> TenantSubscriptions => Set<TenantSubscription>();
+    public DbSet<TenantUsage> TenantUsages => Set<TenantUsage>();
+    public DbSet<BillingInvoice> BillingInvoices => Set<BillingInvoice>();
 }

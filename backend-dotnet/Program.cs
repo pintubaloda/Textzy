@@ -85,6 +85,7 @@ builder.Services.AddScoped<RbacService>();
 builder.Services.AddScoped<SecretCryptoService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<EmailService>();
+builder.Services.AddScoped<BillingGuardService>();
 builder.Services.AddScoped<IMessageProvider, MockMessageProvider>();
 builder.Services.AddScoped<MessagingService>();
 builder.Services.Configure<WhatsAppOptions>(builder.Configuration.GetSection("WhatsApp"));
@@ -258,6 +259,75 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TenantUserPermissionOverrides_Tenant_User_Permission" ON "TenantUserPermissionOverrides" ("TenantId","UserId","Permission");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "BillingPlans" (
+            "Id" uuid PRIMARY KEY,
+            "Code" text NOT NULL,
+            "Name" text NOT NULL,
+            "PriceMonthly" numeric(18,2) NOT NULL,
+            "PriceYearly" numeric(18,2) NOT NULL,
+            "Currency" text NOT NULL,
+            "IsActive" boolean NOT NULL,
+            "SortOrder" integer NOT NULL,
+            "FeaturesJson" text NOT NULL,
+            "LimitsJson" text NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL,
+            "UpdatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_BillingPlans_Code" ON "BillingPlans" ("Code");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "TenantSubscriptions" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NOT NULL,
+            "PlanId" uuid NOT NULL,
+            "Status" text NOT NULL,
+            "BillingCycle" text NOT NULL,
+            "StartedAtUtc" timestamp with time zone NOT NULL,
+            "RenewAtUtc" timestamp with time zone NOT NULL,
+            "CancelledAtUtc" timestamp with time zone NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL,
+            "UpdatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantSubscriptions_TenantId" ON "TenantSubscriptions" ("TenantId");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "TenantUsages" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NOT NULL,
+            "MonthKey" text NOT NULL,
+            "WhatsappMessagesUsed" integer NOT NULL,
+            "SmsCreditsUsed" integer NOT NULL,
+            "ContactsUsed" integer NOT NULL,
+            "TeamMembersUsed" integer NOT NULL,
+            "ChatbotsUsed" integer NOT NULL,
+            "FlowsUsed" integer NOT NULL,
+            "ApiCallsUsed" integer NOT NULL,
+            "UpdatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TenantUsages_Tenant_Month" ON "TenantUsages" ("TenantId","MonthKey");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "BillingInvoices" (
+            "Id" uuid PRIMARY KEY,
+            "InvoiceNo" text NOT NULL,
+            "TenantId" uuid NOT NULL,
+            "PeriodStartUtc" timestamp with time zone NOT NULL,
+            "PeriodEndUtc" timestamp with time zone NOT NULL,
+            "Subtotal" numeric(18,2) NOT NULL,
+            "TaxAmount" numeric(18,2) NOT NULL,
+            "Total" numeric(18,2) NOT NULL,
+            "Status" text NOT NULL,
+            "PaidAtUtc" timestamp with time zone NULL,
+            "PdfUrl" text NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingInvoices_TenantId" ON "BillingInvoices" ("TenantId");""");
 }
 
 static string NormalizeConnectionString(string raw)

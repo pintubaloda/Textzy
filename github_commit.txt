@@ -73,3 +73,29 @@ Pending hotfix commit:
 Summary:
 - Fix CORS origin matching with trailing-slash normalization.
 - Return controlled SMTP delivery errors for team invite/resend.
+
+Pending commit (billing foundation):
+- backend-dotnet/Models/BillingPlan.cs
+- backend-dotnet/Models/TenantSubscription.cs
+- backend-dotnet/Models/TenantUsage.cs
+- backend-dotnet/Models/BillingInvoice.cs
+- backend-dotnet/Services/BillingGuardService.cs
+- backend-dotnet/Data/ControlDbContext.cs
+- backend-dotnet/Data/SeedData.cs
+- backend-dotnet/Program.cs
+- backend-dotnet/Controllers/PlatformBillingPlansController.cs
+- backend-dotnet/Controllers/BillingController.cs
+- backend-dotnet/Controllers/PublicPlansController.cs
+- backend-dotnet/Middleware/AuthMiddleware.cs
+- backend-dotnet/Middleware/TenantMiddleware.cs
+- backend-dotnet/Controllers/TeamController.cs
+- frontend/src/lib/api.js
+- frontend/src/pages/dashboard/BillingPage.jsx
+- frontend/src/pages/dashboard/PlatformSettingsPage.jsx
+- frontend/src/pages/LandingPage.jsx
+- Requirestatus.txt
+- github_commit.txt
+- masterrequirement.docx
+
+Summary:
+- Implemented billing backend source-of-truth and synced landing/platform/user billing UI with APIs.

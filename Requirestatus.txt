@@ -107,3 +107,23 @@ Update: 2026-02-21 (Team completion)
 Hotfix: 2026-02-21 (Team invite CORS + SMTP handling)
 - Normalized `AllowedOrigins` parsing by trimming trailing `/` to prevent origin mismatch on Railway/Render URLs.
 - Team invite/resend now handle SMTP failures gracefully with explicit 502 response and audit log events instead of unhandled 500.
+
+Update: 2026-02-21 (Billing foundation implemented)
+- Added billing domain models and schema:
+  - BillingPlans, TenantSubscriptions, TenantUsages, BillingInvoices
+- Added plan/subscription/usage/invoice seed data for demo tenants.
+- Added platform billing plan CRUD API:
+  - GET/POST/PUT/DELETE /api/platform/billing/plans
+- Added user billing APIs:
+  - GET /api/billing/plans
+  - GET /api/billing/current-plan
+  - GET /api/billing/usage
+  - GET /api/billing/invoices
+  - POST /api/billing/change-plan
+  - POST /api/billing/cancel
+- Added public plans API for landing sync:
+  - GET /api/public/plans
+- Wired billing limit enforcement service and enabled team member limit check on invite.
+- Wired frontend Billing page to real backend billing APIs (plan, usage, invoices, change/cancel).
+- Added Platform Settings Billing Plans tab with create/edit/archive + limits/features configuration.
+- Landing page pricing now fetches plans from backend public endpoint with fallback.
