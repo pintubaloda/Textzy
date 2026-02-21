@@ -259,6 +259,38 @@ export async function updatePlatformBillingPlan(id, payload) {
   return apiPut(`/api/platform/billing/plans/${id}`, payload)
 }
 
+export async function getPlatformCustomers(q = '') {
+  const qs = new URLSearchParams()
+  if (q) qs.set('q', q)
+  return apiGet(`/api/platform/customers${qs.toString() ? `?${qs.toString()}` : ''}`)
+}
+
+export async function getPlatformCustomerDetails(tenantId) {
+  return apiGet(`/api/platform/customers/${tenantId}`)
+}
+
+export async function getPlatformCustomerUsage(tenantId, month = '') {
+  const qs = new URLSearchParams()
+  if (month) qs.set('month', month)
+  return apiGet(`/api/platform/customers/${tenantId}/usage${qs.toString() ? `?${qs.toString()}` : ''}`)
+}
+
+export async function getPlatformCustomerSubscriptions(tenantId) {
+  return apiGet(`/api/platform/customers/${tenantId}/subscriptions`)
+}
+
+export async function getPlatformCustomerInvoices(tenantId) {
+  return apiGet(`/api/platform/customers/${tenantId}/invoices`)
+}
+
+export async function getPlatformCustomerMembers(tenantId) {
+  return apiGet(`/api/platform/customers/${tenantId}/members`)
+}
+
+export async function getPlatformCustomerActivity(tenantId, limit = 100) {
+  return apiGet(`/api/platform/customers/${tenantId}/activity?limit=${encodeURIComponent(limit)}`)
+}
+
 export async function archivePlatformBillingPlan(id) {
   return apiDelete(`/api/platform/billing/plans/${id}`)
 }
