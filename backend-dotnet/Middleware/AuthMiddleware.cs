@@ -10,7 +10,8 @@ public class AuthMiddleware(RequestDelegate next)
     public async Task Invoke(HttpContext context, SessionService sessions, ControlDbContext db, TenancyContext tenancy, AuthContext auth)
     {
         var path = context.Request.Path.Value ?? string.Empty;
-        var isAuthPath = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase);
+        var isAuthPath = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/auth/accept-invite", StringComparison.OrdinalIgnoreCase);
         var isProjectPath = path.StartsWith("/api/auth/projects", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/switch-project", StringComparison.OrdinalIgnoreCase);
         var isPublicTenantPath = path.StartsWith("/api/tenants", StringComparison.OrdinalIgnoreCase);
@@ -94,7 +95,17 @@ public class AuthMiddleware(RequestDelegate next)
             return;
         }
 
-        auth.Set(user.Id, session.TenantId, user.Email, tenantUser.Role);
+        var effective = RolePermissionCatalog.GetPermissions(tenantUser.Role).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var overrides = db.TenantUserPermissionOverrides
+            .Where(x => x.TenantId == session.TenantId && x.UserId == session.UserId)
+            .ToList();
+        foreach (var ov in overrides)
+        {
+            if (ov.IsAllowed) effective.Add(ov.Permission);
+            else effective.Remove(ov.Permission);
+        }
+
+        auth.Set(user.Id, session.TenantId, user.Email, tenantUser.Role, effective.ToList());
         await _next(context);
     }
 }

@@ -11,6 +11,7 @@ import LoginPage from "@/pages/auth/LoginPage";
 import ProjectSelectPage from "@/pages/auth/ProjectSelectPage";
 import RegisterPage from "@/pages/auth/RegisterPage";
 import ForgotPasswordPage from "@/pages/auth/ForgotPasswordPage";
+import AcceptInvitePage from "@/pages/auth/AcceptInvitePage";
 
 // Dashboard Pages
 import DashboardLayout from "@/layouts/DashboardLayout";
@@ -41,6 +42,7 @@ function App() {
           <Route path="/projects" element={<ProjectSelectPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/accept-invite" element={<AcceptInvitePage />} />
 
           {/* Dashboard Routes */}
           <Route path="/dashboard" element={authed ? <DashboardLayout /> : <Navigate to="/login" replace />}>

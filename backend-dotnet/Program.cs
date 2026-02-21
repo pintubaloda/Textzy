@@ -79,6 +79,7 @@ builder.Services.AddScoped<SessionService>();
 builder.Services.AddScoped<RbacService>();
 builder.Services.AddScoped<SecretCryptoService>();
 builder.Services.AddScoped<AuditLogService>();
+builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<IMessageProvider, MockMessageProvider>();
 builder.Services.AddScoped<MessagingService>();
 builder.Services.Configure<WhatsAppOptions>(builder.Configuration.GetSection("WhatsApp"));
@@ -220,6 +221,38 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AuditLogs_CreatedAtUtc" ON "AuditLogs" ("CreatedAtUtc");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "TeamInvitations" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NOT NULL,
+            "Email" text NOT NULL,
+            "Name" text NOT NULL,
+            "Role" text NOT NULL,
+            "TokenHash" text NOT NULL,
+            "Status" text NOT NULL,
+            "SendCount" integer NOT NULL,
+            "SentAtUtc" timestamp with time zone NOT NULL,
+            "ExpiresAtUtc" timestamp with time zone NOT NULL,
+            "AcceptedAtUtc" timestamp with time zone NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL,
+            "CreatedByUserId" uuid NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TeamInvitations_Tenant_Email_Status" ON "TeamInvitations" ("TenantId","Email","Status");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TeamInvitations_TokenHash" ON "TeamInvitations" ("TokenHash");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "TenantUserPermissionOverrides" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NOT NULL,
+            "UserId" uuid NOT NULL,
+            "Permission" text NOT NULL,
+            "IsAllowed" boolean NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TenantUserPermissionOverrides_Tenant_User_Permission" ON "TenantUserPermissionOverrides" ("TenantId","UserId","Permission");""");
 }
 
 static string NormalizeConnectionString(string raw)

@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
+using System.Text;
 using Textzy.Api.Data;
 using Textzy.Api.DTOs;
 using Textzy.Api.Models;
@@ -145,6 +147,59 @@ public class AuthController(
         return Ok(new AuthTokenResponse { AccessToken = rotated });
     }
 
+    [HttpPost("accept-invite")]
+    public async Task<IActionResult> AcceptInvite([FromBody] AcceptInviteRequest request, CancellationToken ct)
+    {
+        var token = (request.Token ?? string.Empty).Trim();
+        var password = request.Password ?? string.Empty;
+        var fullName = (request.FullName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(token)) return BadRequest("Invite token is required.");
+        if (string.IsNullOrWhiteSpace(password) || password.Length < 8) return BadRequest("Password must be at least 8 characters.");
+
+        var tokenHash = HashToken(token);
+        var invite = await db.TeamInvitations
+            .Where(i => i.TokenHash == tokenHash)
+            .OrderByDescending(i => i.SentAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (invite is null) return BadRequest("Invalid invite token.");
+        if (invite.Status == "accepted") return BadRequest("Invite already accepted.");
+        if (invite.ExpiresAtUtc <= DateTime.UtcNow) return BadRequest("Invite expired.");
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == invite.Email.ToLower(), ct);
+        if (user is null) return BadRequest("Invited user not found.");
+        var member = await db.TenantUsers.FirstOrDefaultAsync(tu => tu.TenantId == invite.TenantId && tu.UserId == user.Id, ct);
+        if (member is null)
+        {
+            db.TenantUsers.Add(new TenantUser
+            {
+                Id = Guid.NewGuid(),
+                TenantId = invite.TenantId,
+                UserId = user.Id,
+                Role = invite.Role
+            });
+        }
+        else
+        {
+            member.Role = invite.Role;
+        }
+
+        var (hash, salt) = hasher.HashPassword(password);
+        user.PasswordHash = hash;
+        user.PasswordSalt = salt;
+        user.IsActive = true;
+        if (!string.IsNullOrWhiteSpace(fullName)) user.FullName = fullName;
+
+        invite.Status = "accepted";
+        invite.AcceptedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        var tenant = await db.Tenants.FirstOrDefaultAsync(t => t.Id == invite.TenantId, ct);
+        if (tenant is null) return BadRequest("Invite tenant not found.");
+
+        var sessionToken = await sessions.CreateSessionAsync(user.Id, invite.TenantId, ct);
+        return Ok(new { accessToken = sessionToken, tenantSlug = tenant.Slug, projectName = tenant.Name, role = invite.Role });
+    }
+
     [HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
@@ -285,5 +340,18 @@ public class AuthController(
         var slug = new string(chars);
         while (slug.Contains("--", StringComparison.Ordinal)) slug = slug.Replace("--", "-", StringComparison.Ordinal);
         return slug.Trim('-');
+    }
+
+    private static string HashToken(string token)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
+        return Convert.ToHexString(bytes);
+    }
+
+    public sealed class AcceptInviteRequest
+    {
+        public string Token { get; set; } = string.Empty;
+        public string FullName { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
     }
 }

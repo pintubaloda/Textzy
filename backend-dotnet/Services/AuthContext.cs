@@ -9,12 +9,12 @@ public class AuthContext
     public IReadOnlyList<string> Permissions { get; private set; } = [];
     public bool IsAuthenticated => UserId != Guid.Empty;
 
-    public void Set(Guid userId, Guid tenantId, string email, string role)
+    public void Set(Guid userId, Guid tenantId, string email, string role, IReadOnlyList<string>? permissions = null)
     {
         UserId = userId;
         TenantId = tenantId;
         Email = email;
         Role = role;
-        Permissions = RolePermissionCatalog.GetPermissions(role);
+        Permissions = permissions ?? RolePermissionCatalog.GetPermissions(role);
     }
 }

@@ -75,3 +75,31 @@ Update: 2026-02-21 (Contact default New)
 Update: 2026-02-21 (Project switch logout fix)
 - Fixed auto-logout after project selection by using full redirect after create/switch in project selection flow.
 - Prevents stale auth-guard state in SPA route gate from sending user back to login.
+
+Update: 2026-02-21 (Team module real APIs + wiring)
+- Added backend Team APIs with tenant-scoped access and RBAC gate (owner/admin/super_admin):
+  - GET /api/team/members
+  - POST /api/team/invite
+  - PATCH /api/team/members/{userId}/role
+  - DELETE /api/team/members/{userId}
+  - GET /api/team/members/{userId}/activity
+- Added team audit events for invite/role update/remove in AuditLogs.
+- Replaced Team page mock data with real API wiring:
+  - live member list, search, role stats
+  - invite member dialog (name/email/role)
+  - edit role action + persistence
+  - remove member action + persistence
+  - view activity dialog (member audit trail)
+- Added frontend apiPatch helper for PATCH calls.
+
+Update: 2026-02-21 (Team completion)
+- Implemented SMTP-backed email invite delivery with secure opaque invite token links.
+- Added invite lifecycle state model (`pending`, `accepted`, expiry, send count) and resend invitation workflow.
+- Added public invite acceptance API (`POST /api/auth/accept-invite`) and frontend accept-invite page.
+- Team members API now returns invitation-aware status.
+- Implemented fine-grained per-member permission override APIs and persisted override model.
+- Auth middleware now resolves effective permissions as Role permissions +/- member overrides.
+- Team UI now includes:
+  - Resend Invitation action for pending invites
+  - Role & Permissions dialog with per-permission override toggles
+  - Backend-wired save for overrides

@@ -91,6 +91,16 @@ export async function apiPut(path, body) {
   return text ? JSON.parse(text) : null
 }
 
+export async function apiPatch(path, body) {
+  const res = await apiRequest(path, { method: 'PATCH', body: JSON.stringify(body) })
+  if (!res.ok) {
+    const msg = await res.text()
+    throw new Error(msg || `PATCH ${path} failed (${res.status})`)
+  }
+  const text = await res.text()
+  return text ? JSON.parse(text) : null
+}
+
 export async function apiDelete(path) {
   const res = await apiRequest(path, { method: 'DELETE' })
   if (!res.ok && res.status !== 204) throw new Error(`DELETE ${path} failed (${res.status})`)
@@ -108,6 +118,19 @@ export async function authLogin({ email, password, tenantSlug }) {
   if (!res.ok) {
     const msg = await res.text()
     throw new Error(msg || 'Invalid login')
+  }
+  return res.json()
+}
+
+export async function authAcceptInvite({ token, fullName, password }) {
+  const res = await fetch(`${API_BASE}/api/auth/accept-invite`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, fullName, password })
+  })
+  if (!res.ok) {
+    const msg = await res.text()
+    throw new Error(msg || 'Failed to accept invite')
   }
   return res.json()
 }

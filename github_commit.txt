@@ -33,3 +33,32 @@ Latest defaults update
 
 Latest auth/navigation fix
 - Project selection now hard-redirects to /dashboard after switch/create to avoid stale auth guard logout.
+
+Pending commit (team module):
+- backend-dotnet/Controllers/TeamController.cs
+- frontend/src/pages/dashboard/TeamPage.jsx
+- frontend/src/lib/api.js
+
+Summary:
+- Team module now uses real backend endpoints for invite, role edit, remove, and member activity.
+- Added tenant-scoped team APIs with audit logging and RBAC checks.
+
+Pending commit (team invite + permission overrides):
+- backend-dotnet/Controllers/TeamController.cs
+- backend-dotnet/Controllers/AuthController.cs
+- backend-dotnet/Middleware/AuthMiddleware.cs
+- backend-dotnet/Middleware/TenantMiddleware.cs
+- backend-dotnet/Data/ControlDbContext.cs
+- backend-dotnet/Program.cs
+- backend-dotnet/Models/TeamInvitation.cs
+- backend-dotnet/Models/TenantUserPermissionOverride.cs
+- backend-dotnet/Services/EmailService.cs
+- backend-dotnet/Services/AuthContext.cs
+- frontend/src/pages/dashboard/TeamPage.jsx
+- frontend/src/pages/auth/AcceptInvitePage.jsx
+- frontend/src/App.js
+- frontend/src/lib/api.js
+
+Summary:
+- Added SMTP invite delivery + token acceptance + resend workflow with invitation state.
+- Added per-member fine-grained permission overrides with effective RBAC resolution.

@@ -11,4 +11,6 @@ public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbCo
     public DbSet<SessionToken> SessionTokens => Set<SessionToken>();
     public DbSet<PlatformSetting> PlatformSettings => Set<PlatformSetting>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<TeamInvitation> TeamInvitations => Set<TeamInvitation>();
+    public DbSet<TenantUserPermissionOverride> TenantUserPermissionOverrides => Set<TenantUserPermissionOverride>();
 }
