@@ -655,9 +655,9 @@ export default function AutomationsPage() {
                 onMouseMove={onCanvasMouseMove}
                 onMouseUp={() => setDragConnect(null)}
               >
-                <div className="absolute left-4 top-4 w-[220px] rounded-xl border bg-white p-3 shadow-sm z-20">
+                <div className="absolute left-4 top-4 w-[260px] rounded-xl border bg-white p-3 shadow-sm z-30 pointer-events-auto">
                   <div className="text-xs font-bold tracking-wide text-slate-500 mb-2">CONTENTS</div>
-                  <ScrollArea className="h-[560px] pr-1">
+                  <div className="max-h-[calc(100vh-260px)] min-h-[560px] overflow-y-auto pr-1">
                     {NODE_LIBRARY.map((s) => (
                       <div key={s.section} className="mb-3">
                         <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">{s.section}</p>
@@ -666,7 +666,11 @@ export default function AutomationsPage() {
                             <button
                               key={type}
                               className="rounded-lg border bg-slate-50 hover:bg-slate-100 px-2 py-2 text-left"
-                              onClick={() => addNode(type)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                addNode(type);
+                              }}
+                              type="button"
                             >
                               <div className="flex items-start gap-2">
                                 {(() => {
@@ -683,7 +687,7 @@ export default function AutomationsPage() {
                         </div>
                       </div>
                     ))}
-                  </ScrollArea>
+                  </div>
                 </div>
 
                 <svg className="pointer-events-none absolute inset-0 w-full h-full z-10">
@@ -695,7 +699,7 @@ export default function AutomationsPage() {
                   {dragConnect && <path d={`M ${dragConnect.x1} ${dragConnect.y1} C ${dragConnect.x1 + 60} ${dragConnect.y1}, ${dragConnect.x2 - 60} ${dragConnect.y2}, ${dragConnect.x2} ${dragConnect.y2}`} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="4 4" />}
                 </svg>
 
-                <div className="relative z-20 pl-[260px] pr-4 pt-6">
+                <div className="relative z-20 pl-[300px] pr-4 pt-6">
                   <div className="grid md:grid-cols-2 gap-4">
                     {nodes.map((n) => (
                       <div

@@ -14,3 +14,8 @@ a82dc27 - Use targeted schema-utils overrides to avoid validateOptions break
 314e516 - Pin ajv6 stack for CRA build compatibility
 75ca065 - Fix Render build by removing incompatible AJV overrides
 177204e - Add platform settings submenu and pages for platform owner
+
+Latest automation commits
+41c4a42 - Enhance automation flow builder with WhatsApp-style nodes and advanced config
+af53152 - Fix JSX template label braces in automations builder
+(Pending current commit) - Fix CONTENTS panel visibility/clickability and layout spacing

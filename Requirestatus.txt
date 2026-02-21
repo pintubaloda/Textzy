@@ -41,3 +41,12 @@ In-progress / Pending:
 2. End-to-end test coverage (auth/project switch/templates/inbox)
 3. Monitoring and alert setup for webhook and queue failures
 4. Full RBAC UI hide/disable sweep for all pages/actions
+
+Update: 2026-02-21
+- Automation flow builder upgraded with WhatsApp-style canvas node rendering.
+- Added richer node palette with icons and expanded WhatsApp bot node options.
+- Added Form node support (multi-field config and preview).
+- Added template variable mapping validation in builder and publish guard.
+- Removed hard quick-reply cap in builder UI as requested.
+- Fixed JSX template-label syntax compile failure.
+- Fixed CONTENTS panel usability: wider panel, proper scroll, click-safe interactions, no overlap.
