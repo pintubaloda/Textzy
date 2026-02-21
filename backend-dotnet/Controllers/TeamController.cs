@@ -45,7 +45,7 @@ public class TeamController(
             .ToList()
             .Select(x =>
             {
-                pendingByEmail.TryGetValue((x.email ?? string.Empty).ToLowerInvariant(), out var inv);
+                pendingInvites.TryGetValue((x.email ?? string.Empty).ToLowerInvariant(), out var inv);
                 return new
                 {
                     x.id,
