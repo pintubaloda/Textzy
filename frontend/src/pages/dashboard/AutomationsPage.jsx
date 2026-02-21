@@ -295,19 +295,6 @@ export default function AutomationsPage() {
     setDragConnect(null);
   };
 
-  const onConnectToNode = (targetId) => {
-    if (!dragConnect || dragConnect.from === targetId) return;
-    const source = nodes.find((n) => n.id === dragConnect.from);
-    if (!source) return setDragConnect(null);
-    if (source.type === "condition") {
-      if (!source.onTrue) updateNode(source.id, { onTrue: targetId });
-      else updateNode(source.id, { onFalse: targetId });
-    } else {
-      updateNode(source.id, { next: targetId });
-    }
-    setDragConnect(null);
-  };
-
   const saveFaq = async () => {
     try {
       if (!faqForm.question.trim() || !faqForm.answer.trim()) return toast.error("Question and answer required");
