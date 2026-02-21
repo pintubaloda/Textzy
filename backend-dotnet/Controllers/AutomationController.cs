@@ -23,17 +23,17 @@ public class AutomationController(
 
     private void EnsureAutomationSchema()
     {
-        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationFlows" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "Name" text NOT NULL DEFAULT '', "Description" text NOT NULL DEFAULT '', "Channel" text NOT NULL DEFAULT 'waba', "TriggerType" text NOT NULL DEFAULT 'keyword', "TriggerConfigJson" text NOT NULL DEFAULT '{}', "IsActive" boolean NOT NULL DEFAULT true, "LifecycleStatus" text NOT NULL DEFAULT 'draft', "CurrentVersionId" uuid NULL, "PublishedVersionId" uuid NULL, "LastPublishedAtUtc" timestamp with time zone NULL, "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationFlows" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "Name" text NOT NULL DEFAULT '', "Description" text NOT NULL DEFAULT '', "Channel" text NOT NULL DEFAULT 'waba', "TriggerType" text NOT NULL DEFAULT 'keyword', "TriggerConfigJson" text NOT NULL DEFAULT '{{}}', "IsActive" boolean NOT NULL DEFAULT true, "LifecycleStatus" text NOT NULL DEFAULT 'draft', "CurrentVersionId" uuid NULL, "PublishedVersionId" uuid NULL, "LastPublishedAtUtc" timestamp with time zone NULL, "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "Description" text NOT NULL DEFAULT '';""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "Channel" text NOT NULL DEFAULT 'waba';""");
-        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "TriggerConfigJson" text NOT NULL DEFAULT '{}';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "TriggerConfigJson" text NOT NULL DEFAULT '{{}}';""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "LifecycleStatus" text NOT NULL DEFAULT 'draft';""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "CurrentVersionId" uuid NULL;""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "PublishedVersionId" uuid NULL;""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "LastPublishedAtUtc" timestamp with time zone NULL;""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now();""");
 
-        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationFlowVersions" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "FlowId" uuid NOT NULL, "VersionNumber" integer NOT NULL DEFAULT 1, "Status" text NOT NULL DEFAULT 'draft', "DefinitionJson" text NOT NULL DEFAULT '{}', "ChangeNote" text NOT NULL DEFAULT '', "IsStagedRelease" boolean NOT NULL DEFAULT false, "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "PublishedAtUtc" timestamp with time zone NULL);""");
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationFlowVersions" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "FlowId" uuid NOT NULL, "VersionNumber" integer NOT NULL DEFAULT 1, "Status" text NOT NULL DEFAULT 'draft', "DefinitionJson" text NOT NULL DEFAULT '{{}}', "ChangeNote" text NOT NULL DEFAULT '', "IsStagedRelease" boolean NOT NULL DEFAULT false, "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "PublishedAtUtc" timestamp with time zone NULL);""");
         db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AutomationFlowVersions_FlowId" ON "AutomationFlowVersions" ("FlowId");""");
 
         db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationNodes" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "FlowId" uuid NOT NULL, "VersionId" uuid NULL, "NodeKey" text NOT NULL DEFAULT '', "NodeType" text NOT NULL DEFAULT '', "Name" text NOT NULL DEFAULT '', "ConfigJson" text NOT NULL DEFAULT '', "EdgesJson" text NOT NULL DEFAULT '[]', "Sequence" integer NOT NULL DEFAULT 0, "IsReusable" boolean NOT NULL DEFAULT false);""");
@@ -43,7 +43,7 @@ public class AutomationController(
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationNodes" ADD COLUMN IF NOT EXISTS "EdgesJson" text NOT NULL DEFAULT '[]';""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationNodes" ADD COLUMN IF NOT EXISTS "IsReusable" boolean NOT NULL DEFAULT false;""");
 
-        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationRuns" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "FlowId" uuid NOT NULL, "VersionId" uuid NULL, "Mode" text NOT NULL DEFAULT 'live', "TriggerType" text NOT NULL DEFAULT '', "IdempotencyKey" text NOT NULL DEFAULT '', "TriggerPayloadJson" text NOT NULL DEFAULT '{}', "Status" text NOT NULL DEFAULT 'Started', "Log" text NOT NULL DEFAULT '', "TraceJson" text NOT NULL DEFAULT '[]', "FailureReason" text NOT NULL DEFAULT '', "RetryCount" integer NOT NULL DEFAULT 0, "StartedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "CompletedAtUtc" timestamp with time zone NULL);""");
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationRuns" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "FlowId" uuid NOT NULL, "VersionId" uuid NULL, "Mode" text NOT NULL DEFAULT 'live', "TriggerType" text NOT NULL DEFAULT '', "IdempotencyKey" text NOT NULL DEFAULT '', "TriggerPayloadJson" text NOT NULL DEFAULT '{{}}', "Status" text NOT NULL DEFAULT 'Started', "Log" text NOT NULL DEFAULT '', "TraceJson" text NOT NULL DEFAULT '[]', "FailureReason" text NOT NULL DEFAULT '', "RetryCount" integer NOT NULL DEFAULT 0, "StartedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "CompletedAtUtc" timestamp with time zone NULL);""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationRuns" ADD COLUMN IF NOT EXISTS "VersionId" uuid NULL;""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationRuns" ADD COLUMN IF NOT EXISTS "Mode" text NOT NULL DEFAULT 'live';""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationRuns" ADD COLUMN IF NOT EXISTS "TriggerType" text NOT NULL DEFAULT '';""");
@@ -110,20 +110,54 @@ public class AutomationController(
     public IActionResult Limits()
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
-        if (!TryEnsureAutomationSchema(out var schemaError)) return schemaError!;
         var limits = GetLimits();
-        var usage = GetOrCreateUsageCounter();
-        return Ok(new
+        if (!TryEnsureAutomationSchema(out _))
         {
-            limits,
-            usage = new
+            return Ok(new
             {
-                runsToday = usage.RunCount,
-                apiCallsToday = usage.ApiCallCount,
-                activeFlows = db.AutomationFlows.Count(x => x.TenantId == tenancy.TenantId && x.IsActive),
-                bucketDateUtc = usage.BucketDateUtc
-            }
-        });
+                limits,
+                usage = new
+                {
+                    runsToday = 0,
+                    apiCallsToday = 0,
+                    activeFlows = 0,
+                    bucketDateUtc = DateTime.UtcNow.Date
+                },
+                warning = "automation_schema_unavailable"
+            });
+        }
+
+        try
+        {
+            var usage = GetOrCreateUsageCounter();
+            return Ok(new
+            {
+                limits,
+                usage = new
+                {
+                    runsToday = usage.RunCount,
+                    apiCallsToday = usage.ApiCallCount,
+                    activeFlows = db.AutomationFlows.Count(x => x.TenantId == tenancy.TenantId && x.IsActive),
+                    bucketDateUtc = usage.BucketDateUtc
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Automation limits query failed for tenant {TenantId}", tenancy.TenantId);
+            return Ok(new
+            {
+                limits,
+                usage = new
+                {
+                    runsToday = 0,
+                    apiCallsToday = 0,
+                    activeFlows = 0,
+                    bucketDateUtc = DateTime.UtcNow.Date
+                },
+                warning = "automation_limits_query_failed"
+            });
+        }
     }
 
     [HttpPost("flows")]
@@ -168,63 +202,71 @@ public class AutomationController(
     public async Task<IActionResult> ListFlows(CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
-        if (!TryEnsureAutomationSchema(out var schemaError)) return schemaError!;
+        if (!TryEnsureAutomationSchema(out _)) return Ok(Array.Empty<object>());
 
-        var flows = await db.AutomationFlows
-            .Where(x => x.TenantId == tenancy.TenantId)
-            .OrderByDescending(x => x.UpdatedAtUtc)
-            .ToListAsync(ct);
-
-        var flowIds = flows.Select(x => x.Id).ToList();
-        var versions = await db.AutomationFlowVersions
-            .Where(x => x.TenantId == tenancy.TenantId && flowIds.Contains(x.FlowId))
-            .GroupBy(x => x.FlowId)
-            .Select(g => new
-            {
-                flowId = g.Key,
-                totalVersions = g.Count(),
-                latestVersion = g.Max(x => x.VersionNumber)
-            })
-            .ToListAsync(ct);
-
-        var runs = await db.AutomationRuns
-            .Where(x => x.TenantId == tenancy.TenantId && flowIds.Contains(x.FlowId))
-            .GroupBy(x => x.FlowId)
-            .Select(g => new
-            {
-                flowId = g.Key,
-                runs = g.Count(),
-                failed = g.Count(x => x.Status == "failed"),
-                lastRunAtUtc = g.Max(x => x.StartedAtUtc)
-            })
-            .ToListAsync(ct);
-
-        return Ok(flows.Select(flow =>
+        try
         {
-            var v = versions.FirstOrDefault(x => x.flowId == flow.Id);
-            var r = runs.FirstOrDefault(x => x.flowId == flow.Id);
-            var successRate = r is null || r.runs == 0 ? 100 : Math.Round(((double)(r.runs - r.failed) / r.runs) * 100, 2);
-            return new
+            var flows = await db.AutomationFlows
+                .Where(x => x.TenantId == tenancy.TenantId)
+                .OrderByDescending(x => x.UpdatedAtUtc)
+                .ToListAsync(ct);
+
+            var flowIds = flows.Select(x => x.Id).ToList();
+            var versions = await db.AutomationFlowVersions
+                .Where(x => x.TenantId == tenancy.TenantId && flowIds.Contains(x.FlowId))
+                .GroupBy(x => x.FlowId)
+                .Select(g => new
+                {
+                    flowId = g.Key,
+                    totalVersions = g.Count(),
+                    latestVersion = g.Max(x => x.VersionNumber)
+                })
+                .ToListAsync(ct);
+
+            var runs = await db.AutomationRuns
+                .Where(x => x.TenantId == tenancy.TenantId && flowIds.Contains(x.FlowId))
+                .GroupBy(x => x.FlowId)
+                .Select(g => new
+                {
+                    flowId = g.Key,
+                    runs = g.Count(),
+                    failed = g.Count(x => x.Status == "failed"),
+                    lastRunAtUtc = g.Max(x => x.StartedAtUtc)
+                })
+                .ToListAsync(ct);
+
+            return Ok(flows.Select(flow =>
             {
-                flow.Id,
-                flow.Name,
-                flow.Description,
-                flow.Channel,
-                flow.TriggerType,
-                flow.IsActive,
-                flow.LifecycleStatus,
-                flow.CurrentVersionId,
-                flow.PublishedVersionId,
-                flow.LastPublishedAtUtc,
-                flow.UpdatedAtUtc,
-                flow.CreatedAtUtc,
-                versionCount = v?.totalVersions ?? 0,
-                latestVersion = v?.latestVersion ?? 0,
-                runs = r?.runs ?? 0,
-                successRate,
-                lastRunAtUtc = r?.lastRunAtUtc
-            };
-        }));
+                var v = versions.FirstOrDefault(x => x.flowId == flow.Id);
+                var r = runs.FirstOrDefault(x => x.flowId == flow.Id);
+                var successRate = r is null || r.runs == 0 ? 100 : Math.Round(((double)(r.runs - r.failed) / r.runs) * 100, 2);
+                return new
+                {
+                    flow.Id,
+                    flow.Name,
+                    flow.Description,
+                    flow.Channel,
+                    flow.TriggerType,
+                    flow.IsActive,
+                    flow.LifecycleStatus,
+                    flow.CurrentVersionId,
+                    flow.PublishedVersionId,
+                    flow.LastPublishedAtUtc,
+                    flow.UpdatedAtUtc,
+                    flow.CreatedAtUtc,
+                    versionCount = v?.totalVersions ?? 0,
+                    latestVersion = v?.latestVersion ?? 0,
+                    runs = r?.runs ?? 0,
+                    successRate,
+                    lastRunAtUtc = r?.lastRunAtUtc
+                };
+            }));
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Automation flows query failed for tenant {TenantId}", tenancy.TenantId);
+            return Ok(Array.Empty<object>());
+        }
     }
 
     [HttpGet("flows/{flowId:guid}")]
