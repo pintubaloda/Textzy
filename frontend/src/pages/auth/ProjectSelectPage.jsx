@@ -77,14 +77,14 @@ export default function ProjectSelectPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.3),transparent_40%),radial-gradient(circle_at_bottom_left,rgba(251,191,36,0.2),transparent_40%)]" />
+    <div className="min-h-screen bg-slate-50 relative overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(251,146,60,0.18),transparent_40%),radial-gradient(circle_at_bottom_left,rgba(251,191,36,0.14),transparent_35%)]" />
       <div className="relative z-10 px-6 py-10 lg:px-16">
         <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-8 items-center min-h-[78vh]">
-          <div className="text-white space-y-6">
+          <div className="text-slate-900 space-y-6">
             <p className="text-4xl font-bold">Welcome {session.email?.split("@")[0] || "User"}..!</p>
             <h1 className="text-5xl lg:text-7xl font-heading font-bold leading-tight">Achieve Design Excellence</h1>
-            <p className="text-slate-300 text-lg max-w-xl">One Business Project is associated with one WhatsApp Business API Number</p>
+            <p className="text-slate-600 text-lg max-w-xl">One Business Project is associated with one WhatsApp Business API Number</p>
 
             <div className="space-y-4 max-w-2xl">
               <div className="relative">
@@ -93,7 +93,7 @@ export default function ProjectSelectPage() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Enter Your Project Name"
-                  className="h-14 pl-12 rounded-full border-white/20 bg-white/10 text-white placeholder:text-slate-300"
+                  className="h-14 pl-12 rounded-full border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"
                 />
               </div>
               <Button onClick={onCreate} disabled={creating} className="w-full h-14 rounded-full text-xl bg-orange-500 hover:bg-orange-600 text-white">
@@ -105,15 +105,15 @@ export default function ProjectSelectPage() {
           <div className="space-y-4">
             <div className="grid md:grid-cols-2 gap-4">
               {slides.map((p, idx) => (
-                <Card key={`${p.slug}-${idx}`} className={`rounded-3xl border-white/20 ${idx === 1 ? "bg-white text-slate-900 scale-105 shadow-2xl shadow-orange-500/20" : "bg-white/10 text-white"}`}>
+                <Card key={`${p.slug}-${idx}`} className={`rounded-3xl border-slate-200 ${idx === 1 ? "bg-white text-slate-900 scale-105 shadow-2xl shadow-orange-500/20" : "bg-slate-900 text-white"}`}>
                   <CardContent className="p-6 space-y-4">
                     <div className="flex items-center gap-3">
-                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${idx === 1 ? "bg-slate-100" : "bg-white/20"}`}>
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${idx === 1 ? "bg-slate-100" : "bg-white/15"}`}>
                         <Building2 className={`w-6 h-6 ${idx === 1 ? "text-slate-700" : "text-white"}`} />
                       </div>
                       <div className="font-semibold text-2xl leading-tight">{p.name}</div>
                     </div>
-                    <div className={`border-t border-dashed ${idx === 1 ? "border-slate-300" : "border-white/30"}`} />
+                    <div className={`border-t border-dashed ${idx === 1 ? "border-slate-300" : "border-white/25"}`} />
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <p className={`text-sm ${idx === 1 ? "text-slate-500" : "text-slate-300"}`}>Status</p>
@@ -138,13 +138,13 @@ export default function ProjectSelectPage() {
             </div>
 
             <div className="flex items-center justify-center gap-2">
-              {[0, 1, 2].map((x) => <CircleDot key={x} className={`w-4 h-4 ${x === 1 ? "text-white" : "text-white/40"}`} />)}
+              {[0, 1, 2].map((x) => <CircleDot key={x} className={`w-4 h-4 ${x === 1 ? "text-orange-500" : "text-slate-300"}`} />)}
             </div>
 
             {!loading && !!projects.length && (
               <div className="flex flex-wrap gap-2">
                 {projects.map((p) => (
-                  <Badge key={p.slug} className="bg-white/20 text-white hover:bg-white/30 rounded-full px-3 py-1 cursor-pointer" onClick={() => onView(p.slug)}>
+                  <Badge key={p.slug} className="bg-slate-200 text-slate-700 hover:bg-slate-300 rounded-full px-3 py-1 cursor-pointer" onClick={() => onView(p.slug)}>
                     {p.name}
                   </Badge>
                 ))}
