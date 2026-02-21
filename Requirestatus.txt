@@ -71,3 +71,7 @@ Update: 2026-02-21 (Contact default New)
   - Default Segment: New (auto-created per tenant if missing)
   - Default Tag: New
 - Applied to all entry points: manual add, CSV import, outbound auto-create, inbound WABA webhook auto-create.
+
+Update: 2026-02-21 (Project switch logout fix)
+- Fixed auto-logout after project selection by using full redirect after create/switch in project selection flow.
+- Prevents stale auth-guard state in SPA route gate from sending user back to login.

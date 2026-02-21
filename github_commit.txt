@@ -30,3 +30,6 @@ Latest contact action fixes
 
 Latest defaults update
 - New contacts now get default Segment=New and Tag=New across all create flows.
+
+Latest auth/navigation fix
+- Project selection now hard-redirects to /dashboard after switch/create to avoid stale auth guard logout.

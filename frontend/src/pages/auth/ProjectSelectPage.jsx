@@ -56,7 +56,7 @@ export default function ProjectSelectPage() {
     try {
       await createProject(next);
       toast.success("Project created");
-      navigate("/dashboard", { replace: true });
+      window.location.assign("/dashboard");
     } catch (e) {
       toast.error(e.message || "Failed to create project");
     } finally {
@@ -68,7 +68,7 @@ export default function ProjectSelectPage() {
     setSwitchingSlug(slug);
     try {
       await switchProject(slug);
-      navigate("/dashboard", { replace: true });
+      window.location.assign("/dashboard");
     } catch (e) {
       toast.error(e.message || "Failed to switch project");
     } finally {
