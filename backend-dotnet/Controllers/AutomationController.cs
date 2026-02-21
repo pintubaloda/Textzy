@@ -16,9 +16,70 @@ public class AutomationController(
     TenancyContext tenancy,
     AuthContext auth,
     RbacService rbac,
-    MessagingService messaging) : ControllerBase
+    MessagingService messaging,
+    ILogger<AutomationController> logger) : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private void EnsureAutomationSchema()
+    {
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationFlows" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "Name" text NOT NULL DEFAULT '', "Description" text NOT NULL DEFAULT '', "Channel" text NOT NULL DEFAULT 'waba', "TriggerType" text NOT NULL DEFAULT 'keyword', "TriggerConfigJson" text NOT NULL DEFAULT '{}', "IsActive" boolean NOT NULL DEFAULT true, "LifecycleStatus" text NOT NULL DEFAULT 'draft', "CurrentVersionId" uuid NULL, "PublishedVersionId" uuid NULL, "LastPublishedAtUtc" timestamp with time zone NULL, "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "Description" text NOT NULL DEFAULT '';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "Channel" text NOT NULL DEFAULT 'waba';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "TriggerConfigJson" text NOT NULL DEFAULT '{}';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "LifecycleStatus" text NOT NULL DEFAULT 'draft';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "CurrentVersionId" uuid NULL;""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "PublishedVersionId" uuid NULL;""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "LastPublishedAtUtc" timestamp with time zone NULL;""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationFlows" ADD COLUMN IF NOT EXISTS "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now();""");
+
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationFlowVersions" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "FlowId" uuid NOT NULL, "VersionNumber" integer NOT NULL DEFAULT 1, "Status" text NOT NULL DEFAULT 'draft', "DefinitionJson" text NOT NULL DEFAULT '{}', "ChangeNote" text NOT NULL DEFAULT '', "IsStagedRelease" boolean NOT NULL DEFAULT false, "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "PublishedAtUtc" timestamp with time zone NULL);""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AutomationFlowVersions_FlowId" ON "AutomationFlowVersions" ("FlowId");""");
+
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationNodes" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "FlowId" uuid NOT NULL, "VersionId" uuid NULL, "NodeKey" text NOT NULL DEFAULT '', "NodeType" text NOT NULL DEFAULT '', "Name" text NOT NULL DEFAULT '', "ConfigJson" text NOT NULL DEFAULT '', "EdgesJson" text NOT NULL DEFAULT '[]', "Sequence" integer NOT NULL DEFAULT 0, "IsReusable" boolean NOT NULL DEFAULT false);""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationNodes" ADD COLUMN IF NOT EXISTS "VersionId" uuid NULL;""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationNodes" ADD COLUMN IF NOT EXISTS "NodeKey" text NOT NULL DEFAULT '';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationNodes" ADD COLUMN IF NOT EXISTS "Name" text NOT NULL DEFAULT '';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationNodes" ADD COLUMN IF NOT EXISTS "EdgesJson" text NOT NULL DEFAULT '[]';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationNodes" ADD COLUMN IF NOT EXISTS "IsReusable" boolean NOT NULL DEFAULT false;""");
+
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationRuns" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "FlowId" uuid NOT NULL, "VersionId" uuid NULL, "Mode" text NOT NULL DEFAULT 'live', "TriggerType" text NOT NULL DEFAULT '', "IdempotencyKey" text NOT NULL DEFAULT '', "TriggerPayloadJson" text NOT NULL DEFAULT '{}', "Status" text NOT NULL DEFAULT 'Started', "Log" text NOT NULL DEFAULT '', "TraceJson" text NOT NULL DEFAULT '[]', "FailureReason" text NOT NULL DEFAULT '', "RetryCount" integer NOT NULL DEFAULT 0, "StartedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "CompletedAtUtc" timestamp with time zone NULL);""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationRuns" ADD COLUMN IF NOT EXISTS "VersionId" uuid NULL;""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationRuns" ADD COLUMN IF NOT EXISTS "Mode" text NOT NULL DEFAULT 'live';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationRuns" ADD COLUMN IF NOT EXISTS "TriggerType" text NOT NULL DEFAULT '';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationRuns" ADD COLUMN IF NOT EXISTS "IdempotencyKey" text NOT NULL DEFAULT '';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationRuns" ADD COLUMN IF NOT EXISTS "TraceJson" text NOT NULL DEFAULT '[]';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationRuns" ADD COLUMN IF NOT EXISTS "FailureReason" text NOT NULL DEFAULT '';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "AutomationRuns" ADD COLUMN IF NOT EXISTS "RetryCount" integer NOT NULL DEFAULT 0;""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AutomationRuns_IdempotencyKey" ON "AutomationRuns" ("IdempotencyKey");""");
+
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationApprovals" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "FlowId" uuid NOT NULL, "VersionId" uuid NOT NULL, "RequestedBy" text NOT NULL DEFAULT '', "RequestedByRole" text NOT NULL DEFAULT '', "Status" text NOT NULL DEFAULT 'pending', "DecisionComment" text NOT NULL DEFAULT '', "DecidedBy" text NOT NULL DEFAULT '', "RequestedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "DecidedAtUtc" timestamp with time zone NULL);""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AutomationApprovals_FlowId" ON "AutomationApprovals" ("FlowId");""");
+
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationUsageCounters" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "BucketDateUtc" timestamp with time zone NOT NULL DEFAULT now(), "RunCount" integer NOT NULL DEFAULT 0, "ApiCallCount" integer NOT NULL DEFAULT 0, "ActiveFlowCount" integer NOT NULL DEFAULT 0, "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AutomationUsageCounters_Tenant_Bucket" ON "AutomationUsageCounters" ("TenantId","BucketDateUtc");""");
+    }
+
+    private bool TryEnsureAutomationSchema(out IActionResult? errorResult)
+    {
+        try
+        {
+            EnsureAutomationSchema();
+            errorResult = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Automation schema ensure failed for tenant {TenantId}", tenancy.TenantId);
+            errorResult = StatusCode(500, new
+            {
+                error = "automation_schema_init_failed",
+                message = "Automation DB initialization failed.",
+                detail = ex.Message
+            });
+            return false;
+        }
+    }
 
     [HttpGet("catalogs/node-types")]
     public IActionResult NodeTypes()
@@ -49,6 +110,7 @@ public class AutomationController(
     public IActionResult Limits()
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        if (!TryEnsureAutomationSchema(out var schemaError)) return schemaError!;
         var limits = GetLimits();
         var usage = GetOrCreateUsageCounter();
         return Ok(new
@@ -68,6 +130,7 @@ public class AutomationController(
     public async Task<IActionResult> CreateFlow([FromBody] CreateAutomationFlowRequest req, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
         if (string.IsNullOrWhiteSpace(req.Name)) return BadRequest("Flow name is required.");
 
         var flow = new AutomationFlow
@@ -105,6 +168,7 @@ public class AutomationController(
     public async Task<IActionResult> ListFlows(CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        if (!TryEnsureAutomationSchema(out var schemaError)) return schemaError!;
 
         var flows = await db.AutomationFlows
             .Where(x => x.TenantId == tenancy.TenantId)
@@ -167,6 +231,7 @@ public class AutomationController(
     public async Task<IActionResult> GetFlow(Guid flowId, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        EnsureAutomationSchema();
         var flow = await db.AutomationFlows.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
         if (flow is null) return NotFound();
 
@@ -182,6 +247,7 @@ public class AutomationController(
     public async Task<IActionResult> UpdateFlow(Guid flowId, [FromBody] UpdateAutomationFlowRequest req, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
         var flow = await db.AutomationFlows.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
         if (flow is null) return NotFound();
 
@@ -200,6 +266,7 @@ public class AutomationController(
     public async Task<IActionResult> ListVersions(Guid flowId, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        EnsureAutomationSchema();
         var versions = await db.AutomationFlowVersions
             .Where(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId)
             .OrderByDescending(x => x.VersionNumber)
@@ -211,6 +278,7 @@ public class AutomationController(
     public async Task<IActionResult> CreateVersion(Guid flowId, [FromBody] CreateFlowVersionRequest req, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
         var flow = await db.AutomationFlows.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
         if (flow is null) return NotFound();
 
@@ -258,6 +326,7 @@ public class AutomationController(
     public async Task<IActionResult> PublishVersion(Guid flowId, Guid versionId, [FromBody] PublishFlowVersionRequest req, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
         var flow = await db.AutomationFlows.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
         if (flow is null) return NotFound();
         var version = await db.AutomationFlowVersions.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId && x.Id == versionId, ct);
@@ -288,6 +357,7 @@ public class AutomationController(
     public async Task<IActionResult> Rollback(Guid flowId, Guid versionId, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
         if (!rbac.HasAnyRole("owner", "admin", "super_admin")) return Forbid();
 
         var flow = await db.AutomationFlows.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
@@ -316,6 +386,7 @@ public class AutomationController(
     public async Task<IActionResult> RequestApproval(Guid flowId, [FromBody] RequestFlowApprovalRequest req, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
         var version = await db.AutomationFlowVersions
             .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId && x.Id == req.VersionId, ct);
         if (version is null) return NotFound();
@@ -342,6 +413,7 @@ public class AutomationController(
     public async Task<IActionResult> DecideApproval(Guid flowId, Guid approvalId, [FromBody] DecideFlowApprovalRequest req, CancellationToken ct)
     {
         if (!rbac.HasAnyRole("owner", "admin", "super_admin")) return Forbid();
+        EnsureAutomationSchema();
         var approval = await db.AutomationApprovals
             .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId && x.Id == approvalId, ct);
         if (approval is null) return NotFound();
@@ -362,6 +434,7 @@ public class AutomationController(
     public async Task<IActionResult> AddNode(Guid flowId, [FromBody] UpsertAutomationNodeRequest req, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
         var flow = await db.AutomationFlows.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
         if (flow is null) return NotFound();
 
@@ -389,6 +462,7 @@ public class AutomationController(
     public async Task<IActionResult> Simulate(Guid flowId, [FromBody] SimulateAutomationRequest req, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
         var run = await Execute(flowId, req.VersionId, req.TriggerType, req.TriggerPayloadJson, "simulate", $"sim-{Guid.NewGuid():N}", false, ct);
         return Ok(run);
     }
@@ -397,6 +471,7 @@ public class AutomationController(
     public async Task<IActionResult> Run(Guid flowId, [FromBody] RunAutomationRequest req, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
         var idempotency = (req.IdempotencyKey ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(idempotency)) idempotency = $"run-{Guid.NewGuid():N}";
 
@@ -411,6 +486,7 @@ public class AutomationController(
     public async Task<IActionResult> ListRuns([FromQuery] Guid? flowId, [FromQuery] int limit = 100, CancellationToken ct = default)
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        EnsureAutomationSchema();
         limit = Math.Clamp(limit, 1, 200);
 
         var q = db.AutomationRuns.Where(x => x.TenantId == tenancy.TenantId);
@@ -423,6 +499,7 @@ public class AutomationController(
     public async Task<IActionResult> GetRun(Guid runId, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        EnsureAutomationSchema();
         var item = await db.AutomationRuns.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == runId, ct);
         return item is null ? NotFound() : Ok(item);
     }
