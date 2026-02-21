@@ -447,67 +447,85 @@ export default function AutomationsPage() {
           </Card>
 
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-            <Card className="xl:col-span-2 bg-slate-900 text-slate-100 border-slate-800">
-              <CardHeader><CardTitle className="text-base text-slate-100">Node Palette</CardTitle></CardHeader>
-              <CardContent className="space-y-3">
-                <div className="rounded-lg border border-slate-700 bg-slate-800 p-2 text-xs text-slate-300">
-                  <div className="font-semibold mb-1 text-slate-100">Trigger Contains</div>
-                  <div className="truncate">{triggerKeywords}</div>
+            <Card className="xl:col-span-9 overflow-hidden">
+              <div className="h-14 border-b bg-white px-4 flex items-center justify-between">
+                <div className="font-semibold text-slate-900">{selectedFlow?.name || "Untitled Flow"}</div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={saveDraft}>Save Changes</Button>
+                  <Button size="sm" className="bg-orange-500 hover:bg-orange-600 text-white" onClick={() => publish(selectedFlowId)}>Publish</Button>
                 </div>
-                <ScrollArea className="h-[620px] pr-2">
-                  {NODE_LIBRARY.map((s) => (
-                    <div key={s.section} className="mb-3">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-400 mb-1">{s.section}</p>
-                      <div className="space-y-1">
-                        {s.items.map((type) => (
-                          <button key={type} className="w-full rounded-md border border-slate-700 bg-slate-800 hover:bg-slate-700 px-2 py-2 text-left text-xs" onClick={() => addNode(type)}>
-                            {type.replaceAll("_", " ")}
-                          </button>
-                        ))}
+              </div>
+              <div
+                ref={canvasRef}
+                className="relative min-h-[680px]"
+                style={{
+                  backgroundColor: "#f8fafc",
+                  backgroundImage: "radial-gradient(#cbd5e1 1px, transparent 1px)",
+                  backgroundSize: "18px 18px",
+                }}
+                onMouseMove={onCanvasMouseMove}
+                onMouseUp={() => setDragConnect(null)}
+              >
+                <div className="absolute left-4 top-4 w-[220px] rounded-xl border bg-white p-3 shadow-sm z-20">
+                  <div className="text-xs font-bold tracking-wide text-slate-500 mb-2">CONTENTS</div>
+                  <ScrollArea className="h-[560px] pr-1">
+                    {NODE_LIBRARY.map((s) => (
+                      <div key={s.section} className="mb-3">
+                        <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">{s.section}</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {s.items.map((type) => (
+                            <button
+                              key={type}
+                              className="rounded-lg border bg-slate-50 hover:bg-slate-100 px-2 py-2 text-[11px] text-left"
+                              onClick={() => addNode(type)}
+                            >
+                              {type.replaceAll("_", " ")}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </ScrollArea>
-              </CardContent>
-            </Card>
-
-            <Card className="xl:col-span-7 border-slate-800 bg-[#173453]">
-              <CardHeader><CardTitle className="text-white">Canvas</CardTitle><CardDescription className="text-slate-300">Drag line from orange dot to another node.</CardDescription></CardHeader>
-              <CardContent>
-                <div ref={canvasRef} className="relative rounded-xl bg-[#173453] min-h-[640px] p-3" onMouseMove={onCanvasMouseMove} onMouseUp={() => setDragConnect(null)}>
-                  <svg className="pointer-events-none absolute inset-0 w-full h-full">
-                    {edgeLines.map((e, i) => (
-                      <g key={i}>
-                        <path d={`M ${e.x1} ${e.y1} C ${e.x1 + 60} ${e.y1}, ${e.x2 - 60} ${e.y2}, ${e.x2} ${e.y2}`} fill="none" stroke="#60a5fa" strokeWidth="2" />
-                        <text x={(e.x1 + e.x2) / 2} y={(e.y1 + e.y2) / 2 - 4} fill="#cbd5e1" fontSize="10">{e.label}</text>
-                      </g>
                     ))}
-                    {dragConnect && <path d={`M ${dragConnect.x1} ${dragConnect.y1} C ${dragConnect.x1 + 60} ${dragConnect.y1}, ${dragConnect.x2 - 60} ${dragConnect.y2}, ${dragConnect.x2} ${dragConnect.y2}`} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="4 4" />}
-                  </svg>
+                  </ScrollArea>
+                </div>
 
-                  <div className="grid md:grid-cols-2 gap-3 relative z-10">
+                <svg className="pointer-events-none absolute inset-0 w-full h-full z-10">
+                  {edgeLines.map((e, i) => (
+                    <g key={i}>
+                      <path d={`M ${e.x1} ${e.y1} C ${e.x1 + 60} ${e.y1}, ${e.x2 - 60} ${e.y2}, ${e.x2} ${e.y2}`} fill="none" stroke="#14b8a6" strokeWidth="2" strokeDasharray="5 4" />
+                    </g>
+                  ))}
+                  {dragConnect && <path d={`M ${dragConnect.x1} ${dragConnect.y1} C ${dragConnect.x1 + 60} ${dragConnect.y1}, ${dragConnect.x2 - 60} ${dragConnect.y2}, ${dragConnect.x2} ${dragConnect.y2}`} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="4 4" />}
+                </svg>
+
+                <div className="relative z-20 pl-[260px] pr-4 pt-6">
+                  <div className="grid md:grid-cols-2 gap-4">
                     {nodes.map((n) => (
                       <div
                         key={n.id}
                         ref={(el) => { nodeRefs.current[n.id] = el; }}
-                        className={`rounded-xl border p-3 cursor-pointer ${getNodeColor(n.type)} ${selectedNodeId === n.id ? "ring-2 ring-orange-400" : ""}`}
+                        className={`rounded-xl border border-emerald-200 bg-white p-3 shadow-sm cursor-pointer ${selectedNodeId === n.id ? "ring-2 ring-emerald-400" : ""}`}
                         onClick={() => setSelectedNodeId(n.id)}
                         onMouseUp={() => onConnectToNode(n.id)}
                       >
                         <div className="flex items-center justify-between">
-                          <div>
-                            <div className="text-xs text-slate-500">{n.type}</div>
-                            <div className="font-semibold text-slate-900">{n.name || n.id}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-8 rounded bg-emerald-500" />
+                            <div>
+                              <div className="text-xs text-slate-500">{n.type}</div>
+                              <div className="font-semibold text-slate-900">{n.name || n.id}</div>
+                            </div>
                           </div>
-                          <button className="w-3 h-3 rounded-full bg-orange-500" onMouseDown={(ev) => onStartConnect(n.id, ev)} title="Drag to connect" />
+                          <button className="w-3 h-3 rounded-full border-2 border-emerald-500 bg-white" onMouseDown={(ev) => onStartConnect(n.id, ev)} title="Drag to connect" />
                         </div>
-                        <div className="text-xs text-slate-600 mt-2">{n.next ? `Next: ${n.next}` : n.onTrue || n.onFalse ? `True: ${n.onTrue || "-"} | False: ${n.onFalse || "-"}` : "No connection"}</div>
+                        <div className="mt-3 rounded-md bg-slate-50 p-2 text-xs text-slate-700">
+                          {n.config?.simpleText || n.config?.body || "Configure message in Interactions panel"}
+                        </div>
                       </div>
                     ))}
-                    {!nodes.length && <div className="text-sm text-slate-300">No nodes yet. Add from palette.</div>}
+                    {!nodes.length && <div className="text-sm text-slate-500">No nodes yet. Add from CONTENTS palette.</div>}
                   </div>
                 </div>
-              </CardContent>
+              </div>
             </Card>
 
             <Card className="xl:col-span-3">
