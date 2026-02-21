@@ -114,6 +114,10 @@ export default function AutomationsPage() {
   const [edgeLines, setEdgeLines] = useState([]);
   const [dragConnect, setDragConnect] = useState(null);
 
+  const selectedFlow = useMemo(
+    () => flows.find((f) => String(f.id) === String(selectedFlowId)) || null,
+    [flows, selectedFlowId]
+  );
   const selectedNode = useMemo(() => nodes.find((n) => n.id === selectedNodeId) || null, [nodes, selectedNodeId]);
 
   const loadAll = async () => {
