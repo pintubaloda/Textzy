@@ -18,7 +18,12 @@ builder.Services.AddCors(options =>
     {
         var origins = builder.Configuration["AllowedOrigins"]?
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (origins is { Length: > 0 }) policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
+        var normalized = origins?
+            .Select(o => (o ?? string.Empty).Trim().TrimEnd('/'))
+            .Where(o => !string.IsNullOrWhiteSpace(o))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalized is { Length: > 0 }) policy.WithOrigins(normalized).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
         else policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
     });
 });

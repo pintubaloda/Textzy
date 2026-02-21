@@ -103,3 +103,7 @@ Update: 2026-02-21 (Team completion)
   - Resend Invitation action for pending invites
   - Role & Permissions dialog with per-permission override toggles
   - Backend-wired save for overrides
+
+Hotfix: 2026-02-21 (Team invite CORS + SMTP handling)
+- Normalized `AllowedOrigins` parsing by trimming trailing `/` to prevent origin mismatch on Railway/Render URLs.
+- Team invite/resend now handle SMTP failures gracefully with explicit 502 response and audit log events instead of unhandled 500.

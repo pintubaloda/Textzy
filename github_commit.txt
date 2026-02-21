@@ -62,3 +62,14 @@ Pending commit (team invite + permission overrides):
 Summary:
 - Added SMTP invite delivery + token acceptance + resend workflow with invitation state.
 - Added per-member fine-grained permission overrides with effective RBAC resolution.
+
+Pending hotfix commit:
+- backend-dotnet/Program.cs
+- backend-dotnet/Controllers/TeamController.cs
+- Requirestatus.txt
+- github_commit.txt
+- masterrequirement.docx
+
+Summary:
+- Fix CORS origin matching with trailing-slash normalization.
+- Return controlled SMTP delivery errors for team invite/resend.

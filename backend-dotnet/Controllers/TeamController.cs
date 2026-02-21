@@ -150,7 +150,15 @@ public class TeamController(
 
         await db.SaveChangesAsync(ct);
         var inviteUrl = BuildInviteUrl(rawToken);
-        await emailService.SendInviteAsync(email, request.Name ?? string.Empty, inviteUrl, ct);
+        try
+        {
+            await emailService.SendInviteAsync(email, request.Name ?? string.Empty, inviteUrl, ct);
+        }
+        catch (Exception ex)
+        {
+            await audit.WriteAsync("team.invite.email_failed", $"tenant={tenancy.TenantId}; email={email}; err={ex.Message}", ct);
+            return StatusCode(StatusCodes.Status502BadGateway, "Invite created but email delivery failed. Check SMTP settings.");
+        }
         await audit.WriteAsync("team.invite", $"tenant={tenancy.TenantId}; email={email}; role={role}", ct);
 
         return Ok(new { email, role, invitationStatus = "pending", inviteUrl });
@@ -181,7 +189,15 @@ public class TeamController(
         await db.SaveChangesAsync(ct);
 
         var inviteUrl = BuildInviteUrl(rawToken);
-        await emailService.SendInviteAsync(invite.Email, invite.Name, inviteUrl, ct);
+        try
+        {
+            await emailService.SendInviteAsync(invite.Email, invite.Name, inviteUrl, ct);
+        }
+        catch (Exception ex)
+        {
+            await audit.WriteAsync("team.invite.resend_email_failed", $"tenant={tenancy.TenantId}; email={email}; err={ex.Message}", ct);
+            return StatusCode(StatusCodes.Status502BadGateway, "Invitation resent in system but email delivery failed. Check SMTP settings.");
+        }
         await audit.WriteAsync("team.invite.resend", $"tenant={tenancy.TenantId}; email={email}; count={invite.SendCount}", ct);
         return Ok(new { email = invite.Email, invitationStatus = invite.Status, sentAtUtc = invite.SentAtUtc, sendCount = invite.SendCount, inviteUrl });
     }
