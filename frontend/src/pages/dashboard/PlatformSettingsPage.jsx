@@ -8,6 +8,33 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { getPlatformSettings, savePlatformSettings, getPlatformWebhookLogs, listPaymentWebhooks, autoCreatePaymentWebhook, upsertPaymentWebhook, listPlatformBillingPlans, createPlatformBillingPlan, updatePlatformBillingPlan, archivePlatformBillingPlan } from "@/lib/api";
 
+const FEATURE_CATALOG = [
+  "WhatsApp Business API",
+  "SMS Broadcast",
+  "Unified Inbox",
+  "Automation Builder",
+  "Flow Builder",
+  "Template Manager",
+  "Analytics Dashboard",
+  "Priority Support",
+  "Dedicated Manager",
+  "API Access",
+  "Webhook Access",
+  "Custom Integrations",
+  "Team Collaboration",
+  "Role-based Access",
+];
+
+const DEFAULT_LIMITS = {
+  contacts: 50000,
+  teamMembers: 10,
+  smsCredits: 50000,
+  whatsappMessages: 10000,
+  chatbots: 5,
+  flows: 50,
+  apiCalls: 100000,
+};
+
 const PlatformSettingsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "waba-master";
@@ -28,8 +55,9 @@ const PlatformSettingsPage = () => {
     currency: "INR",
     isActive: true,
     sortOrder: 1,
-    featuresText: "",
-    limitsText: "{\"contacts\":50000,\"teamMembers\":10,\"smsCredits\":50000,\"chatbots\":5,\"flows\":50}"
+    features: [],
+    customFeature: "",
+    limits: { ...DEFAULT_LIMITS }
   });
   const [loading, setLoading] = useState(false);
 
@@ -404,8 +432,104 @@ const PlatformSettingsPage = () => {
               <div className="space-y-1"><Label>Yearly Price</Label><Input type="number" value={planForm.priceYearly} onChange={(e) => setPlanForm((p) => ({ ...p, priceYearly: Number(e.target.value || 0) }))} /></div>
               <div className="space-y-1"><Label>Sort Order</Label><Input type="number" value={planForm.sortOrder} onChange={(e) => setPlanForm((p) => ({ ...p, sortOrder: Number(e.target.value || 1) }))} /></div>
             </div>
-            <div className="space-y-1"><Label>Features (comma separated)</Label><Input value={planForm.featuresText} onChange={(e) => setPlanForm((p) => ({ ...p, featuresText: e.target.value }))} /></div>
-            <div className="space-y-1"><Label>Limits JSON</Label><Input value={planForm.limitsText} onChange={(e) => setPlanForm((p) => ({ ...p, limitsText: e.target.value }))} /></div>
+            <div className="space-y-2">
+              <Label>Features</Label>
+              <div className="grid gap-2 md:grid-cols-3">
+                {FEATURE_CATALOG.map((feature) => {
+                  const selected = planForm.features.includes(feature);
+                  return (
+                    <button
+                      key={feature}
+                      type="button"
+                      className={`rounded-md border px-3 py-2 text-left text-sm transition ${
+                        selected
+                          ? "border-orange-300 bg-orange-50 text-orange-700"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-orange-200"
+                      }`}
+                      onClick={() =>
+                        setPlanForm((p) => ({
+                          ...p,
+                          features: selected ? p.features.filter((f) => f !== feature) : [...p.features, feature],
+                        }))
+                      }
+                    >
+                      {feature}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Add custom feature"
+                  value={planForm.customFeature}
+                  onChange={(e) => setPlanForm((p) => ({ ...p, customFeature: e.target.value }))}
+                />
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() => {
+                    const value = (planForm.customFeature || "").trim();
+                    if (!value) return;
+                    if (planForm.features.includes(value)) {
+                      setPlanForm((p) => ({ ...p, customFeature: "" }));
+                      return;
+                    }
+                    setPlanForm((p) => ({ ...p, features: [...p.features, value], customFeature: "" }));
+                  }}
+                >
+                  Add
+                </Button>
+              </div>
+              {planForm.features.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {planForm.features.map((f) => (
+                    <span key={f} className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs text-orange-700">
+                      {f}
+                      <button
+                        type="button"
+                        className="text-orange-500 hover:text-orange-700"
+                        onClick={() => setPlanForm((p) => ({ ...p, features: p.features.filter((x) => x !== f) }))}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Plan Limits</Label>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">Contacts</Label>
+                  <Input type="number" value={planForm.limits.contacts ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, contacts: Number(e.target.value || 0) } }))} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">Team Members</Label>
+                  <Input type="number" value={planForm.limits.teamMembers ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, teamMembers: Number(e.target.value || 0) } }))} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">SMS Credits</Label>
+                  <Input type="number" value={planForm.limits.smsCredits ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, smsCredits: Number(e.target.value || 0) } }))} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">WhatsApp Messages</Label>
+                  <Input type="number" value={planForm.limits.whatsappMessages ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, whatsappMessages: Number(e.target.value || 0) } }))} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">Chatbots</Label>
+                  <Input type="number" value={planForm.limits.chatbots ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, chatbots: Number(e.target.value || 0) } }))} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">Flows</Label>
+                  <Input type="number" value={planForm.limits.flows ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, flows: Number(e.target.value || 0) } }))} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-500">API Calls</Label>
+                  <Input type="number" value={planForm.limits.apiCalls ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, apiCalls: Number(e.target.value || 0) } }))} />
+                </div>
+              </div>
+            </div>
             <div className="flex gap-2">
               <Button className="bg-orange-500 hover:bg-orange-600" onClick={async () => {
                 try {
@@ -417,14 +541,14 @@ const PlatformSettingsPage = () => {
                     currency: planForm.currency,
                     isActive: planForm.isActive,
                     sortOrder: planForm.sortOrder,
-                    features: planForm.featuresText.split(",").map((x) => x.trim()).filter(Boolean),
-                    limits: JSON.parse(planForm.limitsText || "{}")
+                    features: (planForm.features || []).filter(Boolean),
+                    limits: planForm.limits || {}
                   };
                   if (planForm.id) await updatePlatformBillingPlan(planForm.id, payload);
                   else await createPlatformBillingPlan(payload);
                   toast.success("Plan saved");
                   setPlans(await listPlatformBillingPlans());
-                  setPlanForm({ id: "", code: "", name: "", priceMonthly: 0, priceYearly: 0, currency: "INR", isActive: true, sortOrder: 1, featuresText: "", limitsText: "{\"contacts\":50000,\"teamMembers\":10,\"smsCredits\":50000,\"chatbots\":5,\"flows\":50}" });
+                  setPlanForm({ id: "", code: "", name: "", priceMonthly: 0, priceYearly: 0, currency: "INR", isActive: true, sortOrder: 1, features: [], customFeature: "", limits: { ...DEFAULT_LIMITS } });
                 } catch {
                   toast.error("Failed to save plan");
                 }
@@ -450,7 +574,17 @@ const PlatformSettingsPage = () => {
                       <td className="px-3 py-2">{p.isActive ? "Active" : "Archived"}</td>
                       <td className="px-3 py-2 text-right">
                         <Button variant="outline" size="sm" className="mr-2" onClick={() => setPlanForm({
-                          id: p.id, code: p.code, name: p.name, priceMonthly: p.priceMonthly || 0, priceYearly: p.priceYearly || 0, currency: p.currency || "INR", isActive: !!p.isActive, sortOrder: p.sortOrder || 1, featuresText: (p.features || []).join(", "), limitsText: JSON.stringify(p.limits || {})
+                          id: p.id,
+                          code: p.code,
+                          name: p.name,
+                          priceMonthly: p.priceMonthly || 0,
+                          priceYearly: p.priceYearly || 0,
+                          currency: p.currency || "INR",
+                          isActive: !!p.isActive,
+                          sortOrder: p.sortOrder || 1,
+                          features: Array.isArray(p.features) ? p.features : [],
+                          customFeature: "",
+                          limits: { ...DEFAULT_LIMITS, ...(p.limits || {}) }
                         })}>Edit</Button>
                         <Button variant="outline" size="sm" onClick={async () => {
                           try { await archivePlatformBillingPlan(p.id); setPlans(await listPlatformBillingPlans()); toast.success("Plan archived"); } catch { toast.error("Archive failed"); }

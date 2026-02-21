@@ -118,12 +118,20 @@ const LandingPage = () => {
       try {
         const rows = await getPublicPlans();
         if (!Array.isArray(rows) || rows.length === 0) return;
-        setPricingPlans(rows.map((p) => ({
+        const activeRows = rows
+          .filter((p) => p?.isActive !== false)
+          .sort((a, b) => (a?.sortOrder || 0) - (b?.sortOrder || 0));
+        setPricingPlans(activeRows.map((p) => ({
           name: p.name,
-          price: p.code === "enterprise" ? "Custom" : `₹${Number(p.priceMonthly || 0).toLocaleString()}`,
-          period: p.code === "enterprise" ? "" : "/month",
+          price: Number(p.priceMonthly || 0) <= 0 ? "Custom" : `₹${Number(p.priceMonthly || 0).toLocaleString()}`,
+          period: Number(p.priceMonthly || 0) <= 0 ? "" : "/month",
           description: p.code === "starter" ? "Perfect for small businesses getting started" : p.code === "growth" ? "For growing businesses with higher volumes" : "For large organizations with custom needs",
-          features: Array.isArray(p.features) ? p.features : [],
+          features: Array.isArray(p.features) && p.features.length > 0 ? p.features : [
+            `${Number(p?.limits?.whatsappMessages || 0).toLocaleString()} WhatsApp messages`,
+            `${Number(p?.limits?.smsCredits || 0).toLocaleString()} SMS credits`,
+            `${Number(p?.limits?.contacts || 0).toLocaleString()} contacts`,
+            `${Number(p?.limits?.teamMembers || 0).toLocaleString()} team members`,
+          ],
           popular: p.code === "growth"
         })));
       } catch {
