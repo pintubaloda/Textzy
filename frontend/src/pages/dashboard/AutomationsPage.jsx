@@ -795,7 +795,7 @@ export default function AutomationsPage() {
                         <div><Label>Template Name</Label><Input placeholder="approved_template_name" value={selectedNode.config?.templateName || ""} onChange={(e) => updateNode(selectedNode.id, { config: { ...selectedNode.config, templateName: e.target.value } })} /></div>
                         <div><Label>Language Code</Label><Input placeholder="en" value={selectedNode.config?.languageCode || ""} onChange={(e) => updateNode(selectedNode.id, { config: { ...selectedNode.config, languageCode: e.target.value } })} /></div>
                         <div className="space-y-2">
-                          <Label>Template Body (use {{1}}, {{2}}...)</Label>
+                          <Label>{"Template Body (use {{1}}, {{2}}...)"}</Label>
                           <Textarea rows={3} value={selectedNode.config?.body || ""} onChange={(e) => updateNode(selectedNode.id, { config: { ...selectedNode.config, body: e.target.value } })} />
                         </div>
                         <div className="space-y-2">
