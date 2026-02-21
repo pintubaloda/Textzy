@@ -304,6 +304,51 @@ public class AutomationController(
         return Ok(flow);
     }
 
+    [HttpPost("flows/{flowId:guid}/unpublish")]
+    public async Task<IActionResult> UnpublishFlow(Guid flowId, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
+        var flow = await db.AutomationFlows.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
+        if (flow is null) return NotFound();
+
+        var published = await db.AutomationFlowVersions
+            .Where(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId && x.Status == "published")
+            .ToListAsync(ct);
+        foreach (var item in published) item.Status = "archived";
+
+        flow.PublishedVersionId = null;
+        flow.LifecycleStatus = "draft";
+        flow.IsActive = false;
+        flow.UpdatedAtUtc = DateTime.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+        return Ok(new { flowId, status = "unpublished" });
+    }
+
+    [HttpDelete("flows/{flowId:guid}")]
+    public async Task<IActionResult> DeleteFlow(Guid flowId, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
+        var flow = await db.AutomationFlows.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
+        if (flow is null) return NoContent();
+
+        var nodes = await db.AutomationNodes.Where(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId).ToListAsync(ct);
+        var versions = await db.AutomationFlowVersions.Where(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId).ToListAsync(ct);
+        var runs = await db.AutomationRuns.Where(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId).ToListAsync(ct);
+        var approvals = await db.AutomationApprovals.Where(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId).ToListAsync(ct);
+
+        if (nodes.Count > 0) db.AutomationNodes.RemoveRange(nodes);
+        if (versions.Count > 0) db.AutomationFlowVersions.RemoveRange(versions);
+        if (runs.Count > 0) db.AutomationRuns.RemoveRange(runs);
+        if (approvals.Count > 0) db.AutomationApprovals.RemoveRange(approvals);
+        db.AutomationFlows.Remove(flow);
+
+        await db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
     [HttpGet("flows/{flowId:guid}/versions")]
     public async Task<IActionResult> ListVersions(Guid flowId, CancellationToken ct)
     {
