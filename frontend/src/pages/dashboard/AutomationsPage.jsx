@@ -358,7 +358,7 @@ export default function AutomationsPage() {
                   <td className="py-3">{f.updatedAtUtc ? new Date(f.updatedAtUtc).toLocaleString() : "-"}</td>
                   <td className="py-3">
                     <div className="flex gap-2 flex-wrap">
-                      <Button size="sm" variant="outline" onClick={() => { setSelectedFlowId(String(f.id)); navigate(\"/dashboard/automations/workflow\"); }}>Edit</Button>
+                      <Button size="sm" variant="outline" onClick={() => { setSelectedFlowId(String(f.id)); navigate("/dashboard/automations/workflow"); }}>Edit</Button>
                       <Button size="sm" variant="outline" onClick={() => { setSelectedFlowId(String(f.id)); navigate("/dashboard/automations/workflow"); }}>Workflow</Button>
                       <Button size="sm" className="bg-orange-500 hover:bg-orange-600 text-white" onClick={() => publish(f.id)}>Publish</Button>
                       <Button size="sm" variant="outline" onClick={() => unpublish(f.id)}>Unpublish</Button>
