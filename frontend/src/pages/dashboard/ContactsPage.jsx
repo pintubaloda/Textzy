@@ -49,22 +49,27 @@ import {
   Tag,
   Trash2,
   Edit,
-  Mail,
   Phone,
   MessageSquare,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { apiDelete, apiGet, apiPost } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
 import { toast } from "sonner";
 
 const ContactsPage = () => {
   const [selectedContacts, setSelectedContacts] = useState([]);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [showSendDialog, setShowSendDialog] = useState(false);
   const [contacts, setContacts] = useState([]);
   const [newContact, setNewContact] = useState({ name: "", phone: "", email: "", segmentId: "" });
+  const [editContact, setEditContact] = useState(null);
+  const [sendContact, setSendContact] = useState(null);
+  const [messageBody, setMessageBody] = useState("");
+  const [messageChannel, setMessageChannel] = useState("whatsapp");
   const [segmentsApi, setSegmentsApi] = useState([]);
   const [newSegmentName, setNewSegmentName] = useState("");
 
@@ -133,6 +138,113 @@ const ContactsPage = () => {
       toast.success("Contact deleted");
     } catch {
       toast.error("Failed to delete contact");
+    }
+  };
+
+  const handleEditContact = (contact) => {
+    setEditContact({
+      id: contact.id,
+      name: contact.name || "",
+      phone: contact.phone || "",
+      email: contact.email || "",
+      segmentId: contact.segmentId || "",
+      tagsCsv: contact.tagsCsv || (Array.isArray(contact.tags) ? contact.tags.join(",") : ""),
+    });
+    setShowEditDialog(true);
+  };
+
+  const handleUpdateContact = async () => {
+    if (!editContact?.id) return;
+    try {
+      await apiPut(`/api/contacts/${editContact.id}`, {
+        name: editContact.name,
+        phone: editContact.phone,
+        email: editContact.email || "",
+        tagsCsv: editContact.tagsCsv || "",
+        groupId: null,
+        segmentId: editContact.segmentId || null,
+      });
+      setShowEditDialog(false);
+      setEditContact(null);
+      await load();
+      toast.success("Contact updated");
+    } catch {
+      toast.error("Failed to update contact");
+    }
+  };
+
+  const handleAddTag = async (contact) => {
+    const value = window.prompt("Enter tag(s), comma separated", "");
+    if (value === null) return;
+    const existing = Array.isArray(contact.tags) ? contact.tags : [];
+    const next = [...new Set([...existing, ...value.split(",").map((x) => x.trim()).filter(Boolean)])];
+    try {
+      await apiPut(`/api/contacts/${contact.id}`, {
+        name: contact.name || "",
+        phone: contact.phone || "",
+        email: contact.email || "",
+        tagsCsv: next.join(","),
+        groupId: contact.groupId || null,
+        segmentId: contact.segmentId || null,
+      });
+      await load();
+      toast.success("Tag updated");
+    } catch {
+      toast.error("Failed to update tag");
+    }
+  };
+
+  const handleBulkAddTag = async () => {
+    if (!selectedContacts.length) return;
+    const value = window.prompt("Enter tag(s), comma separated", "");
+    if (value === null) return;
+    const tagParts = value.split(",").map((x) => x.trim()).filter(Boolean);
+    if (!tagParts.length) return;
+    try {
+      const selectedRows = contacts.filter((c) => selectedContacts.includes(c.id));
+      await Promise.all(selectedRows.map((c) => {
+        const existing = Array.isArray(c.tags) ? c.tags : [];
+        const next = [...new Set([...existing, ...tagParts])];
+        return apiPut(`/api/contacts/${c.id}`, {
+          name: c.name || "",
+          phone: c.phone || "",
+          email: c.email || "",
+          tagsCsv: next.join(","),
+          groupId: c.groupId || null,
+          segmentId: c.segmentId || null,
+        });
+      }));
+      await load();
+      toast.success("Tags updated");
+    } catch {
+      toast.error("Bulk tag update failed");
+    }
+  };
+
+  const handleCall = (contact) => {
+    window.open(`tel:${contact.phone}`, "_self");
+  };
+
+  const handleOpenSendDialog = (contact) => {
+    setSendContact(contact);
+    setMessageBody("");
+    setMessageChannel("whatsapp");
+    setShowSendDialog(true);
+  };
+
+  const handleSendMessage = async () => {
+    if (!sendContact || !messageBody.trim()) return;
+    try {
+      await apiPost("/api/messages/send", {
+        channel: messageChannel === "sms" ? 1 : 2,
+        recipient: sendContact.phone,
+        body: messageBody.trim(),
+      });
+      toast.success("Message sent");
+      setShowSendDialog(false);
+      setSendContact(null);
+    } catch {
+      toast.error("Send message failed");
     }
   };
 
@@ -392,7 +504,7 @@ const ContactsPage = () => {
                 {selectedContacts.length > 0 && (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-slate-600">{selectedContacts.length} selected</span>
-                    <Button variant="outline" size="sm" className="gap-2">
+                    <Button variant="outline" size="sm" className="gap-2" onClick={handleBulkAddTag}>
                       <Tag className="w-4 h-4" />
                       Add Tag
                     </Button>
@@ -472,17 +584,21 @@ const ContactsPage = () => {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleEditContact(contact)}>
                               <Edit className="w-4 h-4 mr-2" />
                               Edit
                             </DropdownMenuItem>
-                            <DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleOpenSendDialog(contact)}>
                               <MessageSquare className="w-4 h-4 mr-2" />
                               Send Message
                             </DropdownMenuItem>
-                            <DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleCall(contact)}>
                               <Phone className="w-4 h-4 mr-2" />
                               Call
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleAddTag(contact)}>
+                              <Tag className="w-4 h-4 mr-2" />
+                              Add Tag
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem className="text-red-600" onClick={() => handleDeleteContact(contact.id)}>
@@ -520,6 +636,64 @@ const ContactsPage = () => {
           </Card>
         </div>
       </div>
+
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Contact</DialogTitle>
+          </DialogHeader>
+          {editContact && (
+            <div className="space-y-3">
+              <div><Label>Name</Label><Input value={editContact.name} onChange={(e) => setEditContact((p) => ({ ...p, name: e.target.value }))} /></div>
+              <div><Label>Phone</Label><Input value={editContact.phone} onChange={(e) => setEditContact((p) => ({ ...p, phone: e.target.value }))} /></div>
+              <div><Label>Email</Label><Input value={editContact.email} onChange={(e) => setEditContact((p) => ({ ...p, email: e.target.value }))} /></div>
+              <div>
+                <Label>Segment</Label>
+                <Select value={editContact.segmentId || ""} onValueChange={(v) => setEditContact((p) => ({ ...p, segmentId: v }))}>
+                  <SelectTrigger><SelectValue placeholder="Select segment" /></SelectTrigger>
+                  <SelectContent>
+                    {segmentsApi.map((segment) => <SelectItem key={segment.id} value={segment.id}>{segment.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div><Label>Tags (comma separated)</Label><Input value={editContact.tagsCsv || ""} onChange={(e) => setEditContact((p) => ({ ...p, tagsCsv: e.target.value }))} /></div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditDialog(false)}>Cancel</Button>
+            <Button className="bg-orange-500 hover:bg-orange-600" onClick={handleUpdateContact}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showSendDialog} onOpenChange={setShowSendDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send Message</DialogTitle>
+            <DialogDescription>{sendContact?.name} ({sendContact?.phone})</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Channel</Label>
+              <Select value={messageChannel} onValueChange={setMessageChannel}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                  <SelectItem value="sms">SMS</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Message</Label>
+              <Textarea rows={4} value={messageBody} onChange={(e) => setMessageBody(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSendDialog(false)}>Cancel</Button>
+            <Button className="bg-orange-500 hover:bg-orange-600" onClick={handleSendMessage}>Send</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

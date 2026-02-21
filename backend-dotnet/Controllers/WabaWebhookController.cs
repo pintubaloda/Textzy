@@ -208,6 +208,10 @@ public class WabaWebhookController(
                         CreatedAtUtc = DateTime.UtcNow
                     });
                 }
+                else if (!string.IsNullOrWhiteSpace(item.Name))
+                {
+                    existingContact.Name = item.Name;
+                }
 
                 var inboundProviderId = string.IsNullOrWhiteSpace(item.MessageId) ? $"wa_in_{Guid.NewGuid():N}" : item.MessageId;
                 var existingInbound = await tenantDb.Set<Message>()

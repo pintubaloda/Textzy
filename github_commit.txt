@@ -23,3 +23,7 @@ af53152 - Fix JSX template label braces in automations builder
 Latest contacts update
 - Contact auto-save from outbound messaging and segment mapping support added.
 - Dashboard + WABA contacts pages wired to real segment create/map flow.
+
+Latest contact action fixes
+- Dashboard contact action menu fully wired (edit/tag/send/call/delete).
+- Contact model/API extended with Email + TagsCsv and segment mapping continuity.

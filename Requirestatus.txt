@@ -58,3 +58,10 @@ Update: 2026-02-21 (Contacts)
 - Outbound message send now auto-creates/updates contact by recipient number.
 - Dashboard Contacts page now uses real segments API, supports create segment, and maps segment while creating contact.
 - WABA Contacts page updated to map segment on add/edit and display segment column.
+
+Update: 2026-02-21 (Contact actions)
+- Fixed dashboard Contacts actions: Edit, Add Tag, Send Message, Call, Delete.
+- Added bulk Add Tag action support for selected contacts.
+- Added edit/send dialogs with backend wiring.
+- Added contact Email/Tags persistence in backend and schema.
+- Inbound webhook now updates existing contact name when available.

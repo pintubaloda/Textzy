@@ -30,6 +30,11 @@ public class ContactsController(TenantDbContext db, TenancyContext tenancy, Rbac
                 c.SegmentId,
                 Segment = s != null ? s.Name : null,
                 c.Name,
+                c.Email,
+                c.TagsCsv,
+                Tags = string.IsNullOrWhiteSpace(c.TagsCsv)
+                    ? Array.Empty<string>()
+                    : c.TagsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                 c.Phone,
                 c.OptInStatus,
                 c.CreatedAtUtc
@@ -46,6 +51,8 @@ public class ContactsController(TenantDbContext db, TenancyContext tenancy, Rbac
             Id = Guid.NewGuid(),
             TenantId = tenancy.TenantId,
             Name = request.Name,
+            Email = request.Email ?? string.Empty,
+            TagsCsv = request.TagsCsv ?? string.Empty,
             Phone = request.Phone,
             GroupId = request.GroupId,
             SegmentId = request.SegmentId
@@ -62,6 +69,8 @@ public class ContactsController(TenantDbContext db, TenancyContext tenancy, Rbac
         var item = db.Contacts.FirstOrDefault(x => x.Id == id && x.TenantId == tenancy.TenantId);
         if (item is null) return NotFound();
         item.Name = request.Name;
+        item.Email = request.Email ?? string.Empty;
+        item.TagsCsv = request.TagsCsv ?? string.Empty;
         item.Phone = request.Phone;
         item.GroupId = request.GroupId;
         item.SegmentId = request.SegmentId;
