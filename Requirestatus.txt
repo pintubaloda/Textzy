@@ -65,3 +65,9 @@ Update: 2026-02-21 (Contact actions)
 - Added edit/send dialogs with backend wiring.
 - Added contact Email/Tags persistence in backend and schema.
 - Inbound webhook now updates existing contact name when available.
+
+Update: 2026-02-21 (Contact default New)
+- Enforced default contact attributes for all newly created contacts:
+  - Default Segment: New (auto-created per tenant if missing)
+  - Default Tag: New
+- Applied to all entry points: manual add, CSV import, outbound auto-create, inbound WABA webhook auto-create.

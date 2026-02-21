@@ -17,6 +17,22 @@ public class ContactDataController(TenantDbContext db, TenancyContext tenancy, R
         if (!rbac.HasPermission(ContactsWrite)) return Forbid();
         if (file is null || file.Length == 0) return BadRequest("CSV file required.");
 
+        var defaultSegment = await db.ContactSegments
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Name.ToLower() == "new", ct);
+        if (defaultSegment is null)
+        {
+            defaultSegment = new ContactSegment
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenancy.TenantId,
+                Name = "New",
+                RuleJson = "{}",
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            db.ContactSegments.Add(defaultSegment);
+            await db.SaveChangesAsync(ct);
+        }
+
         using var reader = new StreamReader(file.OpenReadStream());
         var content = await reader.ReadToEndAsync(ct);
         var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -29,7 +45,16 @@ public class ContactDataController(TenantDbContext db, TenancyContext tenancy, R
             var name = cols[0].Trim();
             var phone = cols[1].Trim();
             var optIn = cols.Length > 2 ? cols[2].Trim().ToLowerInvariant() : "unknown";
-            db.Contacts.Add(new Contact { Id = Guid.NewGuid(), TenantId = tenancy.TenantId, Name = name, Phone = phone, OptInStatus = optIn });
+            db.Contacts.Add(new Contact
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenancy.TenantId,
+                Name = name,
+                Phone = phone,
+                OptInStatus = optIn,
+                SegmentId = defaultSegment.Id,
+                TagsCsv = "New"
+            });
             imported++;
         }
 

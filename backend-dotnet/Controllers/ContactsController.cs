@@ -46,16 +46,33 @@ public class ContactsController(TenantDbContext db, TenancyContext tenancy, Rbac
     public async Task<IActionResult> Create([FromBody] UpsertContactRequest request, CancellationToken ct)
     {
         if (!rbac.HasPermission(ContactsWrite)) return Forbid();
+
+        var defaultSegment = await db.ContactSegments
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Name.ToLower() == "new", ct);
+        if (defaultSegment is null)
+        {
+            defaultSegment = new ContactSegment
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenancy.TenantId,
+                Name = "New",
+                RuleJson = "{}",
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            db.ContactSegments.Add(defaultSegment);
+        }
+
+        var tagsCsv = string.IsNullOrWhiteSpace(request.TagsCsv) ? "New" : request.TagsCsv;
         var item = new Contact
         {
             Id = Guid.NewGuid(),
             TenantId = tenancy.TenantId,
             Name = request.Name,
             Email = request.Email ?? string.Empty,
-            TagsCsv = request.TagsCsv ?? string.Empty,
+            TagsCsv = tagsCsv,
             Phone = request.Phone,
             GroupId = request.GroupId,
-            SegmentId = request.SegmentId
+            SegmentId = request.SegmentId ?? defaultSegment.Id
         };
         db.Contacts.Add(item);
         await db.SaveChangesAsync(ct);

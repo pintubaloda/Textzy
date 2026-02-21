@@ -198,12 +198,29 @@ public class WabaWebhookController(
                     .FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.Phone == from, ct);
                 if (existingContact is null)
                 {
+                    var defaultSegment = await tenantDb.Set<ContactSegment>()
+                        .FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.Name.ToLower() == "new", ct);
+                    if (defaultSegment is null)
+                    {
+                        defaultSegment = new ContactSegment
+                        {
+                            Id = Guid.NewGuid(),
+                            TenantId = tenant.Id,
+                            Name = "New",
+                            RuleJson = "{}",
+                            CreatedAtUtc = DateTime.UtcNow
+                        };
+                        tenantDb.Set<ContactSegment>().Add(defaultSegment);
+                    }
+
                     tenantDb.Set<Contact>().Add(new Contact
                     {
                         Id = Guid.NewGuid(),
                         TenantId = tenant.Id,
                         Name = string.IsNullOrWhiteSpace(item.Name) ? from : item.Name,
                         Phone = from,
+                        SegmentId = defaultSegment.Id,
+                        TagsCsv = "New",
                         OptInStatus = "opted_in",
                         CreatedAtUtc = DateTime.UtcNow
                     });

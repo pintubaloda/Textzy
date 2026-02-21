@@ -27,3 +27,6 @@ Latest contacts update
 Latest contact action fixes
 - Dashboard contact action menu fully wired (edit/tag/send/call/delete).
 - Contact model/API extended with Email + TagsCsv and segment mapping continuity.
+
+Latest defaults update
+- New contacts now get default Segment=New and Tag=New across all create flows.

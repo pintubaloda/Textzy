@@ -59,12 +59,28 @@ public class MessagingService(
         var existingContact = db.Contacts.FirstOrDefault(x => x.TenantId == tenancy.TenantId && x.Phone == request.Recipient);
         if (existingContact is null)
         {
+            var defaultSegment = db.ContactSegments.FirstOrDefault(x => x.TenantId == tenancy.TenantId && x.Name.ToLower() == "new");
+            if (defaultSegment is null)
+            {
+                defaultSegment = new ContactSegment
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenancy.TenantId,
+                    Name = "New",
+                    RuleJson = "{}",
+                    CreatedAtUtc = DateTime.UtcNow
+                };
+                db.ContactSegments.Add(defaultSegment);
+            }
+
             db.Contacts.Add(new Contact
             {
                 Id = Guid.NewGuid(),
                 TenantId = tenancy.TenantId,
                 Name = request.Recipient,
                 Phone = request.Recipient,
+                SegmentId = defaultSegment.Id,
+                TagsCsv = "New",
                 OptInStatus = "unknown",
                 CreatedAtUtc = DateTime.UtcNow
             });
