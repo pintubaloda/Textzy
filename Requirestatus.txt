@@ -150,3 +150,18 @@ Update: 2026-02-22 (Webhook map + state model + idempotency/events hardening)
 - Added WABA error policy catalog seed for deterministic retryable/permanent classification:
   - Includes core codes (2,4,80007,131016 retryable; 190,200,10,131026,132000,132001 permanent).
 - Outbound queue-first/idempotency work remains active with in-memory+Redis provider support and memory fallback for rabbitmq/sqs providers.
+
+Update: 2026-02-22 (Plan-limit enforcement + frontend wiring)
+- Backend hard limit enforcement expanded:
+  - Contacts create checks `contacts` plan limit before insert.
+  - CSV import checks projected contact usage before bulk insert.
+  - Automation flow create checks `flows` limit.
+  - Automation publish checks `chatbots` (active bots) limit.
+- Backend usage sync expanded:
+  - Contacts usage absolute counter updated after create/delete/import.
+  - Team member usage absolute counter updated after invite/remove.
+  - Automation usage absolute counters synced for `flows` and `chatbots` on create/publish/unpublish/delete/rollback.
+- Frontend billing-aware UX wiring:
+  - Contacts page loads billing usage+limits and disables Add Contact when plan limit is reached.
+  - Automations page loads billing usage+limits and disables Create Bot / Publish when flow or active-bot limits are reached.
+  - Added inline plan usage hints on contacts and automation KPI cards.

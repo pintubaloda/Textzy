@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPut, getBillingUsage, getCurrentBillingPlan } from "@/lib/api";
 import { toast } from "sonner";
 import {
   Plus,
@@ -286,6 +286,8 @@ export default function AutomationsPage() {
 
   const [faqItems, setFaqItems] = useState([]);
   const [faqForm, setFaqForm] = useState({ question: "", answer: "", category: "", isActive: true });
+  const [billingUsage, setBillingUsage] = useState({});
+  const [billingLimits, setBillingLimits] = useState({});
 
   const canvasRef = useRef(null);
   const nodeRefs = useRef({});
@@ -300,10 +302,18 @@ export default function AutomationsPage() {
 
   const loadAll = async () => {
     try {
-      const [f, l, q] = await Promise.all([apiGet("/api/automation/flows"), apiGet("/api/automation/limits"), apiGet("/api/automation/faq")]);
+      const [f, l, q, usageRes, planRes] = await Promise.all([
+        apiGet("/api/automation/flows"),
+        apiGet("/api/automation/limits"),
+        apiGet("/api/automation/faq"),
+        getBillingUsage().catch(() => ({ values: {} })),
+        getCurrentBillingPlan().catch(() => ({ plan: { limits: {} } })),
+      ]);
       setFlows(f || []);
       setLimits(l || null);
       setFaqItems(q || []);
+      setBillingUsage(usageRes?.values || {});
+      setBillingLimits(planRes?.plan?.limits || {});
       if (!selectedFlowId && f?.length) setSelectedFlowId(String(f[0].id));
     } catch {
       toast.error("Failed to load automation data");
@@ -349,6 +359,7 @@ export default function AutomationsPage() {
   }, [selectedFlow]);
 
   const createFlow = async () => {
+    if (!canCreateFlow) return toast.error("Flow limit reached. Upgrade your plan.");
     try {
       const payload = {
         name: createForm.name,
@@ -410,6 +421,10 @@ export default function AutomationsPage() {
 
   const publish = async (flowId = selectedFlowId) => {
     if (!flowId) return;
+    const selected = flows.find((x) => String(x.id) === String(flowId));
+    if (!canPublishBot && selected?.lifecycleStatus !== "published") {
+      return toast.error("Active bot limit reached. Upgrade your plan.");
+    }
     try {
       if (String(flowId) === String(selectedFlowId)) {
         const hasStart = nodes.some((n) => n.type === "start") || nodes.length > 0;
@@ -550,24 +565,31 @@ export default function AutomationsPage() {
     { key: "qa", label: "Q&A", href: "/dashboard/automations/qa" },
   ];
 
+  const flowLimit = Number(billingLimits.flows || 0);
+  const chatbotLimit = Number(billingLimits.chatbots || 0);
+  const flowUsed = Number(billingUsage.flows || flows.length || 0);
+  const activeBots = Number(billingUsage.chatbots || flows.filter((x) => x.lifecycleStatus === "published").length || 0);
+  const canCreateFlow = flowLimit <= 0 || flowUsed < flowLimit;
+  const canPublishBot = chatbotLimit <= 0 || activeBots < chatbotLimit;
+
   const renderOverview = () => (
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card><CardHeader><CardTitle>Total Bots</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{flows.length}</CardContent></Card>
+        <Card><CardHeader><CardTitle>Total Bots</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{flows.length}<div className="text-xs text-slate-500 mt-1">Plan: {flowUsed} / {flowLimit > 0 ? flowLimit : "Unlimited"}</div></CardContent></Card>
         <Card><CardHeader><CardTitle>Runs Today</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{limits?.usage?.runsToday ?? 0}</CardContent></Card>
-        <Card><CardHeader><CardTitle>Active Bots</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{flows.filter((x) => x.lifecycleStatus === "published").length}</CardContent></Card>
+        <Card><CardHeader><CardTitle>Active Bots</CardTitle></CardHeader><CardContent className="text-2xl font-bold">{flows.filter((x) => x.lifecycleStatus === "published").length}<div className="text-xs text-slate-500 mt-1">Plan: {activeBots} / {chatbotLimit > 0 ? chatbotLimit : "Unlimited"}</div></CardContent></Card>
       </div>
 
       <div className="flex justify-end">
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
-          <DialogTrigger asChild><Button className="bg-orange-500 hover:bg-orange-600 text-white"><Plus className="w-4 h-4 mr-2" />Create Bot</Button></DialogTrigger>
+          <DialogTrigger asChild><Button className="bg-orange-500 hover:bg-orange-600 text-white" disabled={!canCreateFlow} title={!canCreateFlow ? "Flow limit reached" : ""}><Plus className="w-4 h-4 mr-2" />Create Bot</Button></DialogTrigger>
           <DialogContent>
             <DialogHeader><DialogTitle>Create Bot</DialogTitle><DialogDescription>Create professional chatbot with trigger and starter workflow.</DialogDescription></DialogHeader>
             <div className="space-y-3">
               <div><Label>Bot Name</Label><Input value={createForm.name} onChange={(e) => setCreateForm((p) => ({ ...p, name: e.target.value }))} /></div>
               <div><Label>Company Name</Label><Input value={createForm.companyName} onChange={(e) => setCreateForm((p) => ({ ...p, companyName: e.target.value }))} /></div>
               <div><Label>Description</Label><Textarea rows={2} value={createForm.description} onChange={(e) => setCreateForm((p) => ({ ...p, description: e.target.value }))} /></div>
-              <Button className="w-full bg-orange-500 hover:bg-orange-600 text-white" onClick={createFlow}>Create</Button>
+              <Button className="w-full bg-orange-500 hover:bg-orange-600 text-white" onClick={createFlow} disabled={!canCreateFlow}>Create</Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -588,7 +610,7 @@ export default function AutomationsPage() {
                     <div className="flex gap-2 flex-wrap">
                       <Button size="sm" variant="outline" onClick={() => { setSelectedFlowId(String(f.id)); navigate("/dashboard/automations/workflow"); }}>Edit</Button>
                       <Button size="sm" variant="outline" onClick={() => { setSelectedFlowId(String(f.id)); navigate("/dashboard/automations/workflow"); }}>Workflow</Button>
-                      <Button size="sm" className="bg-orange-500 hover:bg-orange-600 text-white" onClick={() => publish(f.id)}>Publish</Button>
+                      <Button size="sm" className="bg-orange-500 hover:bg-orange-600 text-white" onClick={() => publish(f.id)} disabled={!canPublishBot && f.lifecycleStatus !== "published"}>Publish</Button>
                       <Button size="sm" variant="outline" onClick={() => unpublish(f.id)}>Unpublish</Button>
                       <Button size="sm" variant="destructive" onClick={() => deleteFlow(f.id)}><Trash2 className="w-3 h-3 mr-1" />Delete</Button>
                     </div>
@@ -614,7 +636,7 @@ export default function AutomationsPage() {
               <SelectContent>{flows.map((f) => <SelectItem key={f.id} value={String(f.id)}>{f.name}</SelectItem>)}</SelectContent>
             </Select>
             <Button variant="outline" onClick={saveDraft}><Save className="w-4 h-4 mr-2" />Save</Button>
-            <Button className="bg-orange-500 hover:bg-orange-600 text-white" onClick={() => publish(selectedFlowId)}><UploadCloud className="w-4 h-4 mr-2" />Publish</Button>
+            <Button className="bg-orange-500 hover:bg-orange-600 text-white" onClick={() => publish(selectedFlowId)} disabled={!canPublishBot && selectedFlow?.lifecycleStatus !== "published"}><UploadCloud className="w-4 h-4 mr-2" />Publish</Button>
             <label className="ml-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={outside24h} onChange={(e) => setOutside24h(e.target.checked)} />Outside 24h session</label>
           </div>
 

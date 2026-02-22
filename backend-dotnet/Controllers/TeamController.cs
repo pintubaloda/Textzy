@@ -154,6 +154,8 @@ public class TeamController(
         }
 
         await db.SaveChangesAsync(ct);
+        var memberCount = await db.TenantUsers.CountAsync(tu => tu.TenantId == tenancy.TenantId, ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "teamMembers", memberCount, ct);
         var inviteUrl = BuildInviteUrl(rawToken);
         try
         {
@@ -245,6 +247,8 @@ public class TeamController(
         var overrides = db.TenantUserPermissionOverrides.Where(x => x.TenantId == tenancy.TenantId && x.UserId == userId);
         db.TenantUserPermissionOverrides.RemoveRange(overrides);
         await db.SaveChangesAsync(ct);
+        var memberCount = await db.TenantUsers.CountAsync(tu => tu.TenantId == tenancy.TenantId, ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "teamMembers", memberCount, ct);
         await audit.WriteAsync("team.remove", $"tenant={tenancy.TenantId}; user={userId}; role={member.Role}", ct);
         return NoContent();
     }

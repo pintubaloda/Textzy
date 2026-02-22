@@ -17,6 +17,7 @@ public class AutomationController(
     AuthContext auth,
     RbacService rbac,
     MessagingService messaging,
+    BillingGuardService billingGuard,
     ILogger<AutomationController> logger) : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -168,6 +169,9 @@ public class AutomationController(
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
         EnsureAutomationSchema();
         if (string.IsNullOrWhiteSpace(req.Name)) return BadRequest("Flow name is required.");
+        var currentFlows = await db.AutomationFlows.CountAsync(x => x.TenantId == tenancy.TenantId, ct);
+        var flowLimit = await billingGuard.CheckLimitAsync(tenancy.TenantId, "flows", currentFlows + 1, ct);
+        if (!flowLimit.Allowed) return BadRequest(flowLimit.Message);
 
         var flow = new AutomationFlow
         {
@@ -197,6 +201,7 @@ public class AutomationController(
         db.AutomationFlows.Add(flow);
         db.AutomationFlowVersions.Add(version);
         await db.SaveChangesAsync(ct);
+        await SyncAutomationUsageAsync(ct);
         return Ok(new { flow, version });
     }
 
@@ -325,6 +330,7 @@ public class AutomationController(
         flow.UpdatedAtUtc = DateTime.UtcNow;
 
         await db.SaveChangesAsync(ct);
+        await SyncAutomationUsageAsync(ct);
         return Ok(new { flowId, status = "unpublished" });
     }
 
@@ -348,6 +354,7 @@ public class AutomationController(
         db.AutomationFlows.Remove(flow);
 
         await db.SaveChangesAsync(ct);
+        await SyncAutomationUsageAsync(ct);
         return NoContent();
     }
 
@@ -426,6 +433,11 @@ public class AutomationController(
             return BadRequest("Approval required from owner/admin/super_admin.");
         }
 
+        var activeBots = await db.AutomationFlows.CountAsync(x =>
+            x.TenantId == tenancy.TenantId && x.PublishedVersionId != null && x.Id != flowId, ct);
+        var chatbotLimit = await billingGuard.CheckLimitAsync(tenancy.TenantId, "chatbots", activeBots + 1, ct);
+        if (!chatbotLimit.Allowed) return BadRequest(chatbotLimit.Message);
+
         var oldPublished = await db.AutomationFlowVersions
             .Where(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId && x.Status == "published")
             .ToListAsync(ct);
@@ -439,6 +451,7 @@ public class AutomationController(
         flow.LastPublishedAtUtc = DateTime.UtcNow;
         flow.UpdatedAtUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await SyncAutomationUsageAsync(ct);
         return Ok(new { flowId, versionId, status = "published" });
     }
 
@@ -468,6 +481,7 @@ public class AutomationController(
         flow.UpdatedAtUtc = DateTime.UtcNow;
 
         await db.SaveChangesAsync(ct);
+        await SyncAutomationUsageAsync(ct);
         return Ok(new { status = "rolled_back", versionId });
     }
 
@@ -872,6 +886,15 @@ public class AutomationController(
         if (run.Log.Contains("api_call", StringComparison.OrdinalIgnoreCase)) usage.ApiCallCount += 1;
         usage.ActiveFlowCount = db.AutomationFlows.Count(x => x.TenantId == tenancy.TenantId && x.IsActive);
         usage.UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    private async Task SyncAutomationUsageAsync(CancellationToken ct)
+    {
+        var flows = await db.AutomationFlows.CountAsync(x => x.TenantId == tenancy.TenantId, ct);
+        var activeBots = await db.AutomationFlows.CountAsync(x =>
+            x.TenantId == tenancy.TenantId && x.PublishedVersionId != null, ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "flows", flows, ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "chatbots", activeBots, ct);
     }
 
     private static string NormalizeTrigger(string value)

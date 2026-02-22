@@ -137,3 +137,17 @@ Pending commit:
 
 Summary:
 - Completed webhook payload normalization expansion, strict state transition model, idempotency/event schema, and seeded WABA error taxonomy for retry classification.
+
+Pending commit:
+- backend-dotnet/Controllers/ContactsController.cs
+- backend-dotnet/Controllers/ContactDataController.cs
+- backend-dotnet/Controllers/AutomationController.cs
+- backend-dotnet/Controllers/TeamController.cs
+- frontend/src/pages/dashboard/ContactsPage.jsx
+- frontend/src/pages/dashboard/AutomationsPage.jsx
+- Requirestatus.txt
+- github_commit.txt
+- masterrequirement.docx
+
+Summary:
+- Added hard plan-limit enforcement and usage synchronization for contacts/team/automation, and wired frontend create/publish CTA gating against billing limits.

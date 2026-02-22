@@ -9,7 +9,11 @@ namespace Textzy.Api.Controllers;
 
 [ApiController]
 [Route("api/contact-data")]
-public class ContactDataController(TenantDbContext db, TenancyContext tenancy, RbacService rbac) : ControllerBase
+public class ContactDataController(
+    TenantDbContext db,
+    TenancyContext tenancy,
+    RbacService rbac,
+    BillingGuardService billingGuard) : ControllerBase
 {
     [HttpPost("import/csv")]
     public async Task<IActionResult> ImportCsv([FromForm] IFormFile file, CancellationToken ct)
@@ -36,6 +40,10 @@ public class ContactDataController(TenantDbContext db, TenancyContext tenancy, R
         using var reader = new StreamReader(file.OpenReadStream());
         var content = await reader.ReadToEndAsync(ct);
         var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var currentCount = await db.Contacts.CountAsync(x => x.TenantId == tenancy.TenantId, ct);
+        var importable = Math.Max(0, lines.Length - 1);
+        var limit = await billingGuard.CheckLimitAsync(tenancy.TenantId, "contacts", currentCount + importable, ct);
+        if (!limit.Allowed) return BadRequest(limit.Message);
         var imported = 0;
 
         foreach (var line in lines.Skip(1))
@@ -59,6 +67,7 @@ public class ContactDataController(TenantDbContext db, TenancyContext tenancy, R
         }
 
         await db.SaveChangesAsync(ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "contacts", currentCount + imported, ct);
         return Ok(new { imported });
     }
 

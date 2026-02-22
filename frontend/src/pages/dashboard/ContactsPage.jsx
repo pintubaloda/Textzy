@@ -55,7 +55,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { apiDelete, apiGet, apiPost, apiPut, buildIdempotencyKey } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPut, buildIdempotencyKey, getBillingUsage, getCurrentBillingPlan } from "@/lib/api";
 import { toast } from "sonner";
 
 const ContactsPage = () => {
@@ -72,15 +72,26 @@ const ContactsPage = () => {
   const [messageChannel, setMessageChannel] = useState("whatsapp");
   const [segmentsApi, setSegmentsApi] = useState([]);
   const [newSegmentName, setNewSegmentName] = useState("");
+  const [billingUsage, setBillingUsage] = useState({});
+  const [billingLimits, setBillingLimits] = useState({});
 
   const load = async () => {
     try {
-      const [c, s] = await Promise.all([apiGet("/api/contacts"), apiGet("/api/contact-data/segments")]);
+      const [c, s, usageRes, planRes] = await Promise.all([
+        apiGet("/api/contacts"),
+        apiGet("/api/contact-data/segments"),
+        getBillingUsage().catch(() => ({ values: {} })),
+        getCurrentBillingPlan().catch(() => ({ plan: { limits: {} } })),
+      ]);
       setContacts(Array.isArray(c) ? c : []);
       setSegmentsApi(Array.isArray(s) ? s : []);
+      setBillingUsage(usageRes?.values || {});
+      setBillingLimits(planRes?.plan?.limits || {});
     } catch {
       setContacts([]);
       setSegmentsApi([]);
+      setBillingUsage({});
+      setBillingLimits({});
     }
   };
 
@@ -115,6 +126,10 @@ const ContactsPage = () => {
 
   const handleAddContact = async () => {
     if (!newContact.name || !newContact.phone) return;
+    if (!canCreateContact) {
+      toast.error("Contact limit reached. Upgrade your plan.");
+      return;
+    }
     try {
       await apiPost("/api/contacts", {
         name: newContact.name,
@@ -130,6 +145,10 @@ const ContactsPage = () => {
       toast.error("Failed to add contact");
     }
   };
+
+  const contactsUsed = Number(billingUsage.contacts ?? contacts.length ?? 0);
+  const contactsLimit = Number(billingLimits.contacts ?? 0);
+  const canCreateContact = contactsLimit <= 0 || contactsUsed < contactsLimit;
 
   const handleDeleteContact = async (id) => {
     try {
@@ -316,7 +335,12 @@ const ContactsPage = () => {
 
           <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
             <DialogTrigger asChild>
-              <Button className="bg-orange-500 hover:bg-orange-600 text-white gap-2" data-testid="add-contact-btn">
+              <Button
+                className="bg-orange-500 hover:bg-orange-600 text-white gap-2"
+                data-testid="add-contact-btn"
+                disabled={!canCreateContact}
+                title={!canCreateContact ? "Contact limit reached" : ""}
+              >
                 <Plus className="w-4 h-4" />
                 Add Contact
               </Button>
@@ -374,7 +398,7 @@ const ContactsPage = () => {
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
-                <Button className="bg-orange-500 hover:bg-orange-600" onClick={handleAddContact}>Add Contact</Button>
+                <Button className="bg-orange-500 hover:bg-orange-600" onClick={handleAddContact} disabled={!canCreateContact}>Add Contact</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -389,6 +413,7 @@ const ContactsPage = () => {
               <div>
                 <p className="text-sm text-slate-600">Total Contacts</p>
                 <p className="text-2xl font-bold text-slate-900">{contacts.length.toLocaleString()}</p>
+                <p className="text-xs text-slate-500 mt-1">Plan: {contactsUsed.toLocaleString()} / {contactsLimit > 0 ? contactsLimit.toLocaleString() : "Unlimited"}</p>
               </div>
               <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
                 <Users className="w-5 h-5 text-orange-600" />

@@ -10,7 +10,11 @@ namespace Textzy.Api.Controllers;
 
 [ApiController]
 [Route("api/contacts")]
-public class ContactsController(TenantDbContext db, TenancyContext tenancy, RbacService rbac) : ControllerBase
+public class ContactsController(
+    TenantDbContext db,
+    TenancyContext tenancy,
+    RbacService rbac,
+    BillingGuardService billingGuard) : ControllerBase
 {
     [HttpGet]
     public IActionResult List()
@@ -46,6 +50,9 @@ public class ContactsController(TenantDbContext db, TenancyContext tenancy, Rbac
     public async Task<IActionResult> Create([FromBody] UpsertContactRequest request, CancellationToken ct)
     {
         if (!rbac.HasPermission(ContactsWrite)) return Forbid();
+        var currentCount = await db.Contacts.CountAsync(x => x.TenantId == tenancy.TenantId, ct);
+        var limit = await billingGuard.CheckLimitAsync(tenancy.TenantId, "contacts", currentCount + 1, ct);
+        if (!limit.Allowed) return BadRequest(limit.Message);
 
         var defaultSegment = await db.ContactSegments
             .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Name.ToLower() == "new", ct);
@@ -76,6 +83,7 @@ public class ContactsController(TenantDbContext db, TenancyContext tenancy, Rbac
         };
         db.Contacts.Add(item);
         await db.SaveChangesAsync(ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "contacts", currentCount + 1, ct);
         return Ok(item);
     }
 
@@ -103,6 +111,8 @@ public class ContactsController(TenantDbContext db, TenancyContext tenancy, Rbac
         if (item is null) return NotFound();
         db.Contacts.Remove(item);
         await db.SaveChangesAsync(ct);
+        var currentCount = await db.Contacts.CountAsync(x => x.TenantId == tenancy.TenantId, ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "contacts", currentCount, ct);
         return NoContent();
     }
 }
