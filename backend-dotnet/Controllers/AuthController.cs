@@ -44,7 +44,7 @@ public class AuthController(
             user.PasswordHash = newHash;
             user.PasswordSalt = newSalt;
             user.IsActive = true;
-            user.IsSuperAdmin = true;
+            user.IsSuperAdmin = email == "owner@textzy.local";
             await db.SaveChangesAsync(ct);
             verified = hasher.Verify(password, user.PasswordHash, user.PasswordSalt);
         }
@@ -121,7 +121,7 @@ public class AuthController(
             PasswordHash = hash,
             PasswordSalt = salt,
             IsActive = true,
-            IsSuperAdmin = true
+            IsSuperAdmin = email == "owner@textzy.local"
         };
         db.Users.Add(user);
 

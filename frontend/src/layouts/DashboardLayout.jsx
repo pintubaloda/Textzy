@@ -53,7 +53,7 @@ const DashboardLayout = () => {
   const [switchingProject, setSwitchingProject] = useState("");
   const session = getSession();
   const role = (session.role || "").toLowerCase();
-  const canAccessPlatformSettings = role === "super_admin" || role === "owner";
+  const canAccessPlatformSettings = role === "super_admin";
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
   const isTemplatesPage = location.pathname.startsWith("/dashboard/templates");
   const isSmsSetupPage = location.pathname.startsWith("/dashboard/sms-setup");
@@ -95,7 +95,7 @@ const DashboardLayout = () => {
     { name: "Team", href: "/dashboard/team", icon: UsersRound },
     { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
     { name: "Settings", href: "/dashboard/settings", icon: Settings },
-    { name: "Admin", href: "/dashboard/admin", icon: Shield },
+    ...(canAccessPlatformSettings ? [{ name: "Admin", href: "/dashboard/admin", icon: Shield }] : []),
   ];
 
   const isActive = (href) => {

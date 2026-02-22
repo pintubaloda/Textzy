@@ -50,7 +50,7 @@ public static class SeedData
                 PasswordHash = hash,
                 PasswordSalt = salt,
                 IsActive = true,
-                IsSuperAdmin = true
+                IsSuperAdmin = false
             };
             db.Users.Add(user);
         }
@@ -60,7 +60,7 @@ public static class SeedData
             user.PasswordHash = hash;
             user.PasswordSalt = salt;
             user.IsActive = true;
-            user.IsSuperAdmin = true;
+            user.IsSuperAdmin = false;
         }
 
         var mappings = new (Guid TenantId, string Role)[]
