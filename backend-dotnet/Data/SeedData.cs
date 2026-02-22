@@ -111,6 +111,7 @@ public static class SeedData
         db.SaveChanges();
 
         EnsureBillingSeeds(db, tenantA.Id, tenantB.Id);
+        EnsureWabaErrorPolicies(db);
         db.SaveChanges();
     }
 
@@ -255,6 +256,46 @@ public static class SeedData
         }
     }
 
+    private static void EnsureWabaErrorPolicies(ControlDbContext db)
+    {
+        var defaults = new (string Code, string Classification, string Description)[]
+        {
+            ("2", "retryable", "Service temporarily unavailable"),
+            ("4", "retryable", "Rate limit hit"),
+            ("80007", "retryable", "Rate limited by platform"),
+            ("131016", "retryable", "Transient delivery failure"),
+            ("190", "permanent", "Invalid or expired OAuth token"),
+            ("200", "permanent", "Permission denied"),
+            ("10", "permanent", "Permission denied"),
+            ("131026", "permanent", "Message undeliverable / invalid recipient"),
+            ("132000", "permanent", "Template parameter invalid"),
+            ("132001", "permanent", "Template does not exist or not approved")
+        };
+
+        foreach (var row in defaults)
+        {
+            var existing = db.WabaErrorPolicies.FirstOrDefault(x => x.Code == row.Code);
+            if (existing is null)
+            {
+                db.WabaErrorPolicies.Add(new WabaErrorPolicy
+                {
+                    Id = Guid.NewGuid(),
+                    Code = row.Code,
+                    Classification = row.Classification,
+                    Description = row.Description,
+                    IsActive = true,
+                    UpdatedAtUtc = DateTime.UtcNow
+                });
+                continue;
+            }
+
+            existing.Classification = row.Classification;
+            existing.Description = row.Description;
+            existing.IsActive = true;
+            existing.UpdatedAtUtc = DateTime.UtcNow;
+        }
+    }
+
     public static void InitializeTenant(TenantDbContext db, Guid tenantId)
     {
         // Ensure WABA config table exists for older/shared tenant DBs before seeding.
@@ -298,6 +339,43 @@ public static class SeedData
         db.Database.ExecuteSqlRaw("""ALTER TABLE "Messages" ADD COLUMN IF NOT EXISTS "LastError" text NOT NULL DEFAULT '';""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "Messages" ADD COLUMN IF NOT EXISTS "QueueProvider" text NOT NULL DEFAULT 'memory';""");
         db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_Messages_Tenant_IdempotencyKey" ON "Messages" ("TenantId","IdempotencyKey");""");
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "IdempotencyKeys" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "Key" text NOT NULL DEFAULT '', "MessageId" uuid NULL, "Status" text NOT NULL DEFAULT 'reserved', "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
+        db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_IdempotencyKeys_Tenant_Key" ON "IdempotencyKeys" ("TenantId","Key");""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_IdempotencyKeys_MessageId" ON "IdempotencyKeys" ("MessageId");""");
+        db.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "MessageEvents" (
+                "Id" uuid PRIMARY KEY,
+                "TenantId" uuid NOT NULL,
+                "MessageId" uuid NULL,
+                "ProviderMessageId" text NOT NULL DEFAULT '',
+                "Direction" text NOT NULL DEFAULT 'outbound',
+                "EventType" text NOT NULL DEFAULT '',
+                "State" text NOT NULL DEFAULT '',
+                "StatePriority" integer NOT NULL DEFAULT 0,
+                "EventTimestampUtc" timestamp with time zone NULL,
+                "RecipientId" text NOT NULL DEFAULT '',
+                "CustomerPhone" text NOT NULL DEFAULT '',
+                "ConversationId" text NOT NULL DEFAULT '',
+                "ConversationOriginType" text NOT NULL DEFAULT '',
+                "ConversationExpirationUtc" timestamp with time zone NULL,
+                "PricingBillable" boolean NULL,
+                "PricingCategory" text NOT NULL DEFAULT '',
+                "MessageType" text NOT NULL DEFAULT '',
+                "MediaId" text NOT NULL DEFAULT '',
+                "MediaMimeType" text NOT NULL DEFAULT '',
+                "MediaSha256" text NOT NULL DEFAULT '',
+                "ButtonPayload" text NOT NULL DEFAULT '',
+                "ButtonText" text NOT NULL DEFAULT '',
+                "InteractiveType" text NOT NULL DEFAULT '',
+                "ListReplyId" text NOT NULL DEFAULT '',
+                "ListReplyTitle" text NOT NULL DEFAULT '',
+                "RawPayloadJson" text NOT NULL DEFAULT '',
+                "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now()
+            );
+            """);
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_MessageEvents_Tenant_CreatedAtUtc" ON "MessageEvents" ("TenantId","CreatedAtUtc");""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_MessageEvents_MessageId" ON "MessageEvents" ("MessageId");""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_MessageEvents_ProviderMessageId" ON "MessageEvents" ("ProviderMessageId");""");
 
         if (db.Campaigns.Any(c => c.TenantId == tenantId)) return;
 

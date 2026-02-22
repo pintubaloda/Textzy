@@ -117,3 +117,23 @@ Pending hotfix commit:
 
 Summary:
 - Fix startup crash caused by Unspecified DateTime kind in billing invoice seed data.
+
+Pending commit:
+- backend-dotnet/Services/MessageStateMachine.cs
+- backend-dotnet/Services/WabaWebhookWorker.cs
+- backend-dotnet/Data/SeedData.cs
+- backend-dotnet/Data/ControlDbContext.cs
+- backend-dotnet/Data/TenantDbContext.cs
+- backend-dotnet/Program.cs
+- backend-dotnet/Services/BillingGuardService.cs
+- backend-dotnet/Services/MessagingService.cs
+- backend-dotnet/Services/OutboundMessageWorker.cs
+- backend-dotnet/Services/WabaWebhookQueueService.cs
+- backend-dotnet/Models/IdempotencyKeyRecord.cs
+- backend-dotnet/Models/MessageEvent.cs
+- backend-dotnet/Models/WabaErrorPolicy.cs
+- Requirestatus.txt
+- github_commit.txt
+
+Summary:
+- Completed webhook payload normalization expansion, strict state transition model, idempotency/event schema, and seeded WABA error taxonomy for retry classification.

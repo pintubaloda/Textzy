@@ -18,6 +18,18 @@ public class WabaWebhookWorker(
         public string From { get; init; } = string.Empty;
         public string Name { get; init; } = string.Empty;
         public string Body { get; init; } = string.Empty;
+        public string MessageType { get; init; } = string.Empty;
+        public DateTime? AtUtc { get; init; }
+        public string MediaId { get; init; } = string.Empty;
+        public string MediaMimeType { get; init; } = string.Empty;
+        public string MediaSha256 { get; init; } = string.Empty;
+        public string ButtonPayload { get; init; } = string.Empty;
+        public string ButtonText { get; init; } = string.Empty;
+        public string InteractiveType { get; init; } = string.Empty;
+        public string ListReplyId { get; init; } = string.Empty;
+        public string ListReplyTitle { get; init; } = string.Empty;
+        public string LocationSummary { get; init; } = string.Empty;
+        public string RawJson { get; init; } = "{}";
     }
 
     private sealed class StatusItem
@@ -25,9 +37,16 @@ public class WabaWebhookWorker(
         public string MessageId { get; init; } = string.Empty;
         public string Status { get; init; } = string.Empty;
         public DateTime? AtUtc { get; init; }
+        public string RecipientId { get; init; } = string.Empty;
+        public string ConversationId { get; init; } = string.Empty;
+        public string ConversationOriginType { get; init; } = string.Empty;
+        public DateTime? ConversationExpirationUtc { get; init; }
+        public bool? PricingBillable { get; init; }
+        public string PricingCategory { get; init; } = string.Empty;
         public string ErrorCode { get; init; } = string.Empty;
         public string ErrorTitle { get; init; } = string.Empty;
         public string ErrorDetail { get; init; } = string.Empty;
+        public string RawJson { get; init; } = "{}";
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -152,8 +171,32 @@ public class WabaWebhookWorker(
                 {
                     var msg = await tenantDb.Set<Message>()
                         .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.ProviderMessageId == status.MessageId, stoppingToken);
-                    if (msg is null) continue;
-                    ApplyStatusTransition(msg, status);
+                    if (msg is not null)
+                    {
+                        ApplyStatusTransition(msg, status, controlDb);
+                    }
+                    tenantDb.MessageEvents.Add(new MessageEvent
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = resolved.TenantId,
+                        MessageId = msg?.Id,
+                        ProviderMessageId = status.MessageId,
+                        Direction = "outbound",
+                        EventType = $"status.{status.Status.ToLowerInvariant()}",
+                        State = MessageStateMachine.NormalizeWebhookStatus(status.Status),
+                        StatePriority = MessageStateMachine.Priority(MessageStateMachine.NormalizeWebhookStatus(status.Status)),
+                        EventTimestampUtc = status.AtUtc ?? DateTime.UtcNow,
+                        RecipientId = status.RecipientId,
+                        CustomerPhone = status.RecipientId,
+                        ConversationId = status.ConversationId,
+                        ConversationOriginType = status.ConversationOriginType,
+                        ConversationExpirationUtc = status.ConversationExpirationUtc,
+                        PricingBillable = status.PricingBillable,
+                        PricingCategory = status.PricingCategory,
+                        MessageType = msg?.MessageType ?? "session",
+                        RawPayloadJson = status.RawJson,
+                        CreatedAtUtc = DateTime.UtcNow
+                    });
                 }
 
                 foreach (var inbound in parse.Inbound)
@@ -248,13 +291,38 @@ public class WabaWebhookWorker(
                             TenantId = resolved.TenantId,
                             Channel = ChannelType.WhatsApp,
                             Recipient = inbound.From,
-                            Body = string.IsNullOrWhiteSpace(inbound.Body) ? "[Inbound message]" : inbound.Body,
+                            Body = string.IsNullOrWhiteSpace(inbound.Body) ? (!string.IsNullOrWhiteSpace(inbound.LocationSummary) ? inbound.LocationSummary : "[Inbound message]") : inbound.Body,
                             MessageType = "session",
                             Status = "Received",
                             ProviderMessageId = inboundProviderId,
-                            CreatedAtUtc = DateTime.UtcNow
+                            CreatedAtUtc = inbound.AtUtc ?? DateTime.UtcNow
                         });
                     }
+                    tenantDb.MessageEvents.Add(new MessageEvent
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = resolved.TenantId,
+                        MessageId = existingInbound?.Id,
+                        ProviderMessageId = inboundProviderId,
+                        Direction = "inbound",
+                        EventType = "received",
+                        State = MessageStateMachine.Received,
+                        StatePriority = MessageStateMachine.Priority(MessageStateMachine.Received),
+                        EventTimestampUtc = inbound.AtUtc ?? DateTime.UtcNow,
+                        RecipientId = inbound.From,
+                        CustomerPhone = inbound.From,
+                        MessageType = string.IsNullOrWhiteSpace(inbound.MessageType) ? "text" : inbound.MessageType,
+                        MediaId = inbound.MediaId,
+                        MediaMimeType = inbound.MediaMimeType,
+                        MediaSha256 = inbound.MediaSha256,
+                        ButtonPayload = inbound.ButtonPayload,
+                        ButtonText = inbound.ButtonText,
+                        InteractiveType = inbound.InteractiveType,
+                        ListReplyId = inbound.ListReplyId,
+                        ListReplyTitle = inbound.ListReplyTitle,
+                        RawPayloadJson = inbound.RawJson,
+                        CreatedAtUtc = DateTime.UtcNow
+                    });
                 }
 
                 await tenantDb.SaveChangesAsync(stoppingToken);
@@ -357,6 +425,26 @@ public class WabaWebhookWorker(
                             DateTime? atUtc = null;
                             if (s.TryGetProperty("timestamp", out var tsNode) && long.TryParse(tsNode.GetString(), out var unixTs))
                                 atUtc = DateTimeOffset.FromUnixTimeSeconds(unixTs).UtcDateTime;
+                            var recipientId = s.TryGetProperty("recipient_id", out var recNode) ? recNode.GetString() ?? string.Empty : string.Empty;
+                            var conversationId = string.Empty;
+                            var conversationOriginType = string.Empty;
+                            DateTime? conversationExpirationUtc = null;
+                            if (s.TryGetProperty("conversation", out var convNode))
+                            {
+                                conversationId = convNode.TryGetProperty("id", out var convIdNode) ? convIdNode.GetString() ?? string.Empty : string.Empty;
+                                if (convNode.TryGetProperty("origin", out var originNode))
+                                    conversationOriginType = originNode.TryGetProperty("type", out var typeNode) ? typeNode.GetString() ?? string.Empty : string.Empty;
+                                if (convNode.TryGetProperty("expiration_timestamp", out var expNode) && long.TryParse(expNode.GetString(), out var expUnix))
+                                    conversationExpirationUtc = DateTimeOffset.FromUnixTimeSeconds(expUnix).UtcDateTime;
+                            }
+                            bool? pricingBillable = null;
+                            var pricingCategory = string.Empty;
+                            if (s.TryGetProperty("pricing", out var pricingNode))
+                            {
+                                if (pricingNode.TryGetProperty("billable", out var billNode) && (billNode.ValueKind == JsonValueKind.True || billNode.ValueKind == JsonValueKind.False))
+                                    pricingBillable = billNode.GetBoolean();
+                                pricingCategory = pricingNode.TryGetProperty("category", out var catNode) ? catNode.GetString() ?? string.Empty : string.Empty;
+                            }
                             var errorCode = string.Empty;
                             var errorTitle = string.Empty;
                             var errorDetail = string.Empty;
@@ -366,6 +454,8 @@ public class WabaWebhookWorker(
                                 errorCode = err.TryGetProperty("code", out var cNode) ? cNode.ToString() : string.Empty;
                                 errorTitle = err.TryGetProperty("title", out var tNode) ? tNode.GetString() ?? string.Empty : string.Empty;
                                 errorDetail = err.TryGetProperty("details", out var dNode) ? dNode.GetString() ?? string.Empty : string.Empty;
+                                if (string.IsNullOrWhiteSpace(errorDetail) && err.TryGetProperty("message", out var mNode))
+                                    errorDetail = mNode.GetString() ?? string.Empty;
                             }
                             if (!string.IsNullOrWhiteSpace(messageId) && !string.IsNullOrWhiteSpace(status))
                                 statuses.Add(new StatusItem
@@ -373,9 +463,16 @@ public class WabaWebhookWorker(
                                     MessageId = messageId,
                                     Status = status,
                                     AtUtc = atUtc,
+                                    RecipientId = recipientId,
+                                    ConversationId = conversationId,
+                                    ConversationOriginType = conversationOriginType,
+                                    ConversationExpirationUtc = conversationExpirationUtc,
+                                    PricingBillable = pricingBillable,
+                                    PricingCategory = pricingCategory,
                                     ErrorCode = errorCode,
                                     ErrorTitle = errorTitle,
-                                    ErrorDetail = errorDetail
+                                    ErrorDetail = errorDetail,
+                                    RawJson = s.GetRawText()
                                 });
                         }
                     }
@@ -389,6 +486,57 @@ public class WabaWebhookWorker(
                         var textBody = msg.TryGetProperty("text", out var textNode) && textNode.TryGetProperty("body", out var bodyNode)
                             ? bodyNode.GetString() ?? string.Empty
                             : string.Empty;
+                        var type = msg.TryGetProperty("type", out var typeNode) ? typeNode.GetString() ?? string.Empty : string.Empty;
+                        DateTime? atUtc = null;
+                        if (msg.TryGetProperty("timestamp", out var msgTsNode) && long.TryParse(msgTsNode.GetString(), out var msgUnixTs))
+                            atUtc = DateTimeOffset.FromUnixTimeSeconds(msgUnixTs).UtcDateTime;
+                        var mediaId = string.Empty;
+                        var mediaMime = string.Empty;
+                        var mediaSha = string.Empty;
+                        if (type is "image" or "video" or "audio" or "document" or "sticker")
+                        {
+                            if (msg.TryGetProperty(type, out var mediaNode))
+                            {
+                                mediaId = mediaNode.TryGetProperty("id", out var mId) ? mId.GetString() ?? string.Empty : string.Empty;
+                                mediaMime = mediaNode.TryGetProperty("mime_type", out var mMime) ? mMime.GetString() ?? string.Empty : string.Empty;
+                                mediaSha = mediaNode.TryGetProperty("sha256", out var mSha) ? mSha.GetString() ?? string.Empty : string.Empty;
+                            }
+                        }
+                        var buttonPayload = string.Empty;
+                        var buttonText = string.Empty;
+                        if (msg.TryGetProperty("button", out var buttonNode))
+                        {
+                            buttonPayload = buttonNode.TryGetProperty("payload", out var pNode) ? pNode.GetString() ?? string.Empty : string.Empty;
+                            buttonText = buttonNode.TryGetProperty("text", out var btNode) ? btNode.GetString() ?? string.Empty : string.Empty;
+                        }
+                        var interactiveType = string.Empty;
+                        var listReplyId = string.Empty;
+                        var listReplyTitle = string.Empty;
+                        if (msg.TryGetProperty("interactive", out var interNode))
+                        {
+                            interactiveType = interNode.TryGetProperty("type", out var iTypeNode) ? iTypeNode.GetString() ?? string.Empty : string.Empty;
+                            if (interNode.TryGetProperty("list_reply", out var listReply))
+                            {
+                                listReplyId = listReply.TryGetProperty("id", out var lrId) ? lrId.GetString() ?? string.Empty : string.Empty;
+                                listReplyTitle = listReply.TryGetProperty("title", out var lrTitle) ? lrTitle.GetString() ?? string.Empty : string.Empty;
+                            }
+                            if (interNode.TryGetProperty("button_reply", out var buttonReply))
+                            {
+                                if (string.IsNullOrWhiteSpace(listReplyId))
+                                    listReplyId = buttonReply.TryGetProperty("id", out var brId) ? brId.GetString() ?? string.Empty : string.Empty;
+                                if (string.IsNullOrWhiteSpace(listReplyTitle))
+                                    listReplyTitle = buttonReply.TryGetProperty("title", out var brTitle) ? brTitle.GetString() ?? string.Empty : string.Empty;
+                            }
+                        }
+                        var locationSummary = string.Empty;
+                        if (msg.TryGetProperty("location", out var locNode))
+                        {
+                            var nameText = locNode.TryGetProperty("name", out var nm) ? nm.GetString() ?? string.Empty : string.Empty;
+                            var addr = locNode.TryGetProperty("address", out var ad) ? ad.GetString() ?? string.Empty : string.Empty;
+                            var lat = locNode.TryGetProperty("latitude", out var latNode) ? latNode.ToString() : string.Empty;
+                            var lng = locNode.TryGetProperty("longitude", out var lngNode) ? lngNode.ToString() : string.Empty;
+                            locationSummary = $"Location: {nameText} {addr} ({lat},{lng})".Trim();
+                        }
                         var name = value.TryGetProperty("contacts", out var contactsNode)
                             && contactsNode.ValueKind == JsonValueKind.Array
                             && contactsNode.GetArrayLength() > 0
@@ -402,7 +550,19 @@ public class WabaWebhookWorker(
                             MessageId = messageId,
                             From = from,
                             Name = name,
-                            Body = textBody
+                            Body = textBody,
+                            MessageType = type,
+                            AtUtc = atUtc,
+                            MediaId = mediaId,
+                            MediaMimeType = mediaMime,
+                            MediaSha256 = mediaSha,
+                            ButtonPayload = buttonPayload,
+                            ButtonText = buttonText,
+                            InteractiveType = interactiveType,
+                            ListReplyId = listReplyId,
+                            ListReplyTitle = listReplyTitle,
+                            LocationSummary = locationSummary,
+                            RawJson = msg.GetRawText()
                         });
                     }
                 }
@@ -416,61 +576,27 @@ public class WabaWebhookWorker(
         }
     }
 
-    private static void ApplyStatusTransition(Message msg, StatusItem incoming)
+    private static void ApplyStatusTransition(Message msg, StatusItem incoming, ControlDbContext controlDb)
     {
-        var next = NormalizeStatus(incoming.Status);
+        var next = MessageStateMachine.NormalizeWebhookStatus(incoming.Status);
         if (string.IsNullOrWhiteSpace(next)) return;
-        var currentPriority = StatusPriority(msg.Status);
-        var nextPriority = StatusPriority(next);
-        if (IsTerminal(msg.Status)) return;
-        if (nextPriority <= currentPriority) return;
+        if (!MessageStateMachine.CanTransition(msg.Status, next)) return;
 
         msg.Status = next;
         if (next == "Delivered" && incoming.AtUtc.HasValue) msg.DeliveredAtUtc = incoming.AtUtc.Value;
         if (next == "Read" && incoming.AtUtc.HasValue) msg.ReadAtUtc = incoming.AtUtc.Value;
-        if (next.StartsWith("Failed", StringComparison.Ordinal))
+        if (next.StartsWith("Failed", StringComparison.OrdinalIgnoreCase))
         {
-            var reasonType = IsRetryableError(incoming.ErrorCode, incoming.ErrorTitle, incoming.ErrorDetail) ? "retryable" : "permanent";
+            var reasonType = IsRetryableError(controlDb, incoming.ErrorCode, incoming.ErrorTitle, incoming.ErrorDetail) ? "retryable" : "permanent";
             msg.LastError = $"{reasonType}; code={incoming.ErrorCode}; title={incoming.ErrorTitle}; details={incoming.ErrorDetail}".Trim();
         }
     }
 
-    private static bool IsTerminal(string status)
-        => string.Equals(status, "Read", StringComparison.OrdinalIgnoreCase)
-           || status.StartsWith("Failed", StringComparison.OrdinalIgnoreCase);
-
-    private static string NormalizeStatus(string raw)
+    private static bool IsRetryableError(ControlDbContext controlDb, string code, string title, string details)
     {
-        return (raw ?? string.Empty).Trim().ToLowerInvariant() switch
-        {
-            "accepted" => "AcceptedByMeta",
-            "sent" => "Sent",
-            "delivered" => "Delivered",
-            "read" => "Read",
-            "failed" => "Failed",
-            _ => string.Empty
-        };
-    }
+        var policy = controlDb.WabaErrorPolicies.FirstOrDefault(x => x.Code == (code ?? string.Empty) && x.IsActive);
+        if (policy is not null) return string.Equals(policy.Classification, "retryable", StringComparison.OrdinalIgnoreCase);
 
-    private static int StatusPriority(string status)
-    {
-        var s = (status ?? string.Empty).Trim();
-        if (s.StartsWith("Failed", StringComparison.OrdinalIgnoreCase)) return 99;
-        return s switch
-        {
-            "Queued" => 10,
-            "Accepted" => 15,
-            "AcceptedByMeta" => 20,
-            "Sent" => 30,
-            "Delivered" => 40,
-            "Read" => 50,
-            "Received" => 60,
-            _ => 0
-        };
-    }
-
-    private static bool IsRetryableError(string code, string title, string details)
-    {
         var raw = $"{code} {title} {details}".ToLowerInvariant();
         if (raw.Contains("rate limit") || raw.Contains("temporar") || raw.Contains("timeout") || raw.Contains("server") || raw.Contains("5xx")) return true;
         if (raw.Contains("invalid") || raw.Contains("permission") || raw.Contains("policy") || raw.Contains("rejected") || raw.Contains("not registered") || raw.Contains("token")) return false;

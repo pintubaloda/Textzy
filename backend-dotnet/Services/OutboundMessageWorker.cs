@@ -39,7 +39,7 @@ public class OutboundMessageWorker(
                 using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
                 var message = await tenantDb.Messages.FirstOrDefaultAsync(x => x.Id == job.MessageId, stoppingToken);
                 if (message is null) continue;
-                if (message.Status is "Accepted" or "Sent" or "Delivered" or "Read") continue;
+                if (message.Status is "Accepted" or "AcceptedByMeta" or "Sent" or "Delivered" or "Read") continue;
                 if (message.NextRetryAtUtc.HasValue && message.NextRetryAtUtc.Value > DateTime.UtcNow)
                 {
                     await queue.EnqueueAsync(job, stoppingToken);
@@ -48,7 +48,8 @@ public class OutboundMessageWorker(
 
                 var provider = scope.ServiceProvider.GetRequiredService<IMessageProvider>();
                 var whatsapp = scope.ServiceProvider.GetRequiredService<WhatsAppCloudService>();
-                message.Status = "Processing";
+                message.Status = MessageStateMachine.Processing;
+                tenantDb.MessageEvents.Add(MessageStateMachine.BuildEvent(tenant.Id, message.Id, message.ProviderMessageId, "outbound", "processing", MessageStateMachine.Processing));
                 await tenantDb.SaveChangesAsync(stoppingToken);
 
                 try
@@ -88,9 +89,12 @@ public class OutboundMessageWorker(
                     }
 
                     message.ProviderMessageId = providerId;
-                    message.Status = "Accepted";
+                    message.Status = MessageStateMachine.AcceptedByMeta;
                     message.LastError = string.Empty;
                     message.NextRetryAtUtc = null;
+                    var idem = await tenantDb.IdempotencyKeys.FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.MessageId == message.Id, stoppingToken);
+                    if (idem is not null) idem.Status = "accepted";
+                    tenantDb.MessageEvents.Add(MessageStateMachine.BuildEvent(tenant.Id, message.Id, message.ProviderMessageId, "outbound", "accepted", MessageStateMachine.AcceptedByMeta));
                     await tenantDb.SaveChangesAsync(stoppingToken);
                     await hub.Clients.Group($"tenant:{tenant.Slug}").SendAsync("message.sent", new
                     {
@@ -110,14 +114,18 @@ public class OutboundMessageWorker(
 
                     if (!retryable || message.RetryCount >= 5)
                     {
-                        message.Status = "Failed";
+                        message.Status = MessageStateMachine.Failed;
                         message.NextRetryAtUtc = null;
+                        var idem = await tenantDb.IdempotencyKeys.FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.MessageId == message.Id, stoppingToken);
+                        if (idem is not null) idem.Status = "failed";
+                        tenantDb.MessageEvents.Add(MessageStateMachine.BuildEvent(tenant.Id, message.Id, message.ProviderMessageId, "outbound", "failed", MessageStateMachine.Failed));
                     }
                     else
                     {
-                        message.Status = "RetryScheduled";
+                        message.Status = MessageStateMachine.RetryScheduled;
                         var delay = RetryDelay(message.RetryCount);
                         message.NextRetryAtUtc = DateTime.UtcNow.Add(delay);
+                        tenantDb.MessageEvents.Add(MessageStateMachine.BuildEvent(tenant.Id, message.Id, message.ProviderMessageId, "outbound", "retry_scheduled", MessageStateMachine.RetryScheduled));
                         _ = Task.Run(async () =>
                         {
                             try

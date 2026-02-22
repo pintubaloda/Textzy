@@ -137,3 +137,16 @@ Hotfix: 2026-02-21 (Railway log-rate reduction)
 Hotfix: 2026-02-21 (Billing seed DateTime UTC)
 - Fixed Billing invoice seed timestamps to explicit UTC kind to satisfy Npgsql timestamptz requirements.
 - Prevents startup crash: "Cannot write DateTime with Kind=Unspecified to PostgreSQL type 'timestamp with time zone'."
+
+Update: 2026-02-22 (Webhook map + state model + idempotency/events hardening)
+- Added immutable messaging event model/table (`MessageEvents`) with analytics-grade normalized fields:
+  - recipient_id, conversation.id, conversation.origin.type, conversation.expiration_timestamp
+  - pricing.billable, pricing.category
+  - media/button/interactive/list structured fields
+- Added dedicated idempotency model/table (`IdempotencyKeys`) and unique tenant+key index.
+- Extended tenant schema bootstrap in seed flow to auto-create `IdempotencyKeys` and `MessageEvents` for older DBs.
+- Extended webhook parser to capture additional WhatsApp payload fields and persist raw+normalized event rows.
+- Added explicit message state machine transition matrix and strict terminal-state behavior.
+- Added WABA error policy catalog seed for deterministic retryable/permanent classification:
+  - Includes core codes (2,4,80007,131016 retryable; 190,200,10,131026,132000,132001 permanent).
+- Outbound queue-first/idempotency work remains active with in-memory+Redis provider support and memory fallback for rabbitmq/sqs providers.

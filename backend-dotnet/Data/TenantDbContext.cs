@@ -28,4 +28,6 @@ public class TenantDbContext(DbContextOptions<TenantDbContext> options) : DbCont
     public DbSet<AutomationApproval> AutomationApprovals => Set<AutomationApproval>();
     public DbSet<AutomationUsageCounter> AutomationUsageCounters => Set<AutomationUsageCounter>();
     public DbSet<FaqKnowledgeItem> FaqKnowledgeItems => Set<FaqKnowledgeItem>();
+    public DbSet<IdempotencyKeyRecord> IdempotencyKeys => Set<IdempotencyKeyRecord>();
+    public DbSet<MessageEvent> MessageEvents => Set<MessageEvent>();
 }
