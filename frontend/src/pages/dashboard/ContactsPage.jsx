@@ -55,7 +55,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPut, buildIdempotencyKey } from "@/lib/api";
 import { toast } from "sonner";
 
 const ContactsPage = () => {
@@ -239,6 +239,7 @@ const ContactsPage = () => {
         channel: messageChannel === "sms" ? 1 : 2,
         recipient: sendContact.phone,
         body: messageBody.trim(),
+        idempotencyKey: buildIdempotencyKey("contact"),
       });
       toast.success("Message sent");
       setShowSendDialog(false);

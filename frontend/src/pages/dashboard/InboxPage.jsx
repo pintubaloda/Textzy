@@ -36,7 +36,7 @@ import {
   FileText,
   Mic,
 } from "lucide-react";
-import { apiGet, apiPost, wabaGetOnboardingStatus } from "@/lib/api";
+import { apiGet, apiPost, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -81,6 +81,10 @@ const InboxPage = () => {
     sender: String(x.status || "").toLowerCase() === "received" ? "customer" : "agent",
     text: x.body,
     time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
+    retryCount: Number(x.retryCount || 0),
+    nextRetryAtUtc: x.nextRetryAtUtc || null,
+    lastError: x.lastError || "",
+    queueProvider: x.queueProvider || "memory",
     status: String(x.status || "").toLowerCase() === "received" ? "received" : String(x.status || "").toLowerCase(),
   });
 
@@ -185,7 +189,12 @@ const InboxPage = () => {
       return;
     }
     if (message.trim()) {
-      apiPost("/api/messages/send", { recipient: selectedChat.phone || "+910000000000", body: message, channel: 2 }).catch(() => {});
+      apiPost("/api/messages/send", {
+        recipient: selectedChat.phone || "+910000000000",
+        body: message,
+        channel: 2,
+        idempotencyKey: buildIdempotencyKey("inbox"),
+      }).catch(() => {});
       setMessage("");
       loadThread(selectedChat.id);
       loadConversations();
@@ -212,6 +221,7 @@ const InboxPage = () => {
         templateName: tpl.name,
         templateLanguageCode: tpl.language || "en",
         templateParameters: params,
+        idempotencyKey: buildIdempotencyKey("tpl"),
       });
       toast.success(`Template sent: ${tpl.name}`);
       loadThread(selectedChat.id);
@@ -234,10 +244,12 @@ const InboxPage = () => {
       .withAutomaticReconnect()
       .build();
 
-    connection.on("message.sent", () => {
+    const refreshMessageViews = () => {
       loadConversations();
       if (selectedChat?.id) loadThread(selectedChat.id);
-    });
+    };
+    connection.on("message.queued", refreshMessageViews);
+    connection.on("message.sent", refreshMessageViews);
     connection.on("webhook.inbound", () => {
       loadConversations();
       if (selectedChat?.id) loadThread(selectedChat.id);
@@ -341,7 +353,14 @@ const InboxPage = () => {
       case "delivered":
         return <CheckCheck className="w-4 h-4 text-slate-400" />;
       case "sent":
+      case "acceptedbymeta":
         return <Check className="w-4 h-4 text-slate-400" />;
+      case "queued":
+      case "processing":
+      case "retryscheduled":
+        return <Clock className="w-4 h-4 text-amber-500" />;
+      case "failed":
+        return <Clock className="w-4 h-4 text-red-500" />;
       default:
         return <Clock className="w-4 h-4 text-slate-400" />;
     }
@@ -467,7 +486,7 @@ const InboxPage = () => {
           <div className="space-y-4 max-w-3xl mx-auto">
             <div className="flex items-center justify-center"><span className="px-3 py-1 bg-white text-xs text-slate-500 rounded-full border border-slate-200">Today</span></div>
             {messages.length === 0 ? <div className="h-[60vh] flex items-center justify-center"><div className="text-center max-w-sm"><div className="w-16 h-16 rounded-2xl mx-auto bg-orange-100 text-orange-600 flex items-center justify-center mb-4"><MessageCircle className="w-8 h-8" /></div><h3 className="text-xl font-semibold text-slate-900">No messages yet</h3><p className="text-slate-500 mt-1">Start conversation with a customer to see messages and actions here.</p></div></div> : null}
-            {messages.map((msg) => <div key={msg.id} className={`flex ${msg.sender === "agent" ? "justify-end" : "justify-start"}`}><div className={`max-w-[70%] ${msg.sender === "agent" ? "chat-bubble-sent text-slate-900" : "chat-bubble-received text-slate-900"} px-4 py-3`}><p className="text-sm">{msg.text}</p><div className={`flex items-center gap-1 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}><span className="text-xs text-slate-500">{msg.time}</span>{msg.sender === "agent" && getStatusIcon(msg.status)}</div></div></div>)}
+            {messages.map((msg) => <div key={msg.id} className={`flex ${msg.sender === "agent" ? "justify-end" : "justify-start"}`}><div className={`max-w-[70%] ${msg.sender === "agent" ? "chat-bubble-sent text-slate-900" : "chat-bubble-received text-slate-900"} px-4 py-3`}><p className="text-sm">{msg.text}</p><div className={`flex items-center gap-1 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}><span className="text-xs text-slate-500">{msg.time}</span>{msg.sender === "agent" && getStatusIcon(msg.status)}</div>{msg.sender === "agent" && msg.status === "failed" ? <p className="text-[11px] text-red-600 mt-1">{msg.lastError || "Send failed"}</p> : null}{msg.sender === "agent" && msg.status === "retryscheduled" && msg.nextRetryAtUtc ? <p className="text-[11px] text-amber-700 mt-1">Retry at {new Date(msg.nextRetryAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p> : null}</div></div>)}
           </div>
         </ScrollArea>
 
@@ -543,7 +562,7 @@ const InboxPage = () => {
                 <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Business</span><span className="text-slate-900 font-medium">{wabaDetails?.businessName || "-"}</span></div>
                 <div className="flex items-center justify-between text-sm"><span className="text-slate-500">WABA ID</span><span className="text-slate-900 font-medium">{wabaDetails?.wabaId || "-"}</span></div>
                 <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Phone Number ID</span><span className="text-slate-900 font-medium">{wabaDetails?.phoneNumberId || "-"}</span></div>
-                <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Display Number</span><span className="text-slate-900 font-medium">{wabaDetails?.displayPhoneNumber || "-"}</span></div>
+                <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Display Number</span><span className="text-slate-900 font-medium">{wabaDetails?.displayPhoneNumber || wabaDetails?.phone || "-"}</span></div>
                 <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Status</span><Badge className={wabaDetails?.readyToSend ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>{wabaDetails?.readyToSend ? "Ready" : (wabaDetails?.state || "Pending")}</Badge></div>
               </div>
             </div>

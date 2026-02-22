@@ -15,6 +15,7 @@ export default function WabaLiveChatPage() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [noteInput, setNoteInput] = useState('')
+  const buildIdempotencyKey = (prefix = 'waba-live') => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
   async function loadInbox() {
     const [conv, msg] = await Promise.all([apiGet('/api/inbox/conversations'), apiGet('/api/messages')])
@@ -43,6 +44,7 @@ export default function WabaLiveChatPage() {
       .then(() => connection.invoke('JoinTenantRoom', session.tenantSlug || 'demo-retail'))
       .catch(() => {})
 
+    connection.on('message.queued', () => loadInbox().catch(() => {}))
     connection.on('message.sent', () => loadInbox().catch(() => {}))
     connection.on('conversation.assigned', () => loadInbox().catch(() => {}))
     connection.on('conversation.note', (n) => {
@@ -60,7 +62,7 @@ export default function WabaLiveChatPage() {
     const body = input
     setInput('')
     try {
-      await apiPost('/api/messages/send', { recipient: '+910000000000', body, channel: 2 })
+      await apiPost('/api/messages/send', { recipient: '+910000000000', body, channel: 2, idempotencyKey: buildIdempotencyKey() })
       toast.success('Message sent')
     } catch {
       setInput(body)

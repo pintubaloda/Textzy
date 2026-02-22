@@ -285,6 +285,12 @@ const DashboardOverview = () => {
               <p className="text-3xl font-semibold leading-tight">{wabaStatus.businessName || "Project Business Name"}</p>
               <p className="text-slate-600 mt-2 text-xl">{wabaStatus.phone || "+91 72496 30121"}</p>
               <p className="text-sm text-slate-500 mt-2">{wabaStatus.readyToSend ? "Connected / Ready" : (wabaStatus.state || "requested")}</p>
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-left text-xs space-y-1">
+                <div className="flex justify-between gap-2"><span className="text-slate-500">WABA ID</span><span className="text-slate-900 font-medium break-all">{wabaStatus.wabaId || "Pending"}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Phone Number ID</span><span className="text-slate-900 font-medium break-all">{wabaStatus.phoneNumberId || "Pending"}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Business Manager ID</span><span className="text-slate-900 font-medium break-all">{wabaStatus.businessManagerId || "Pending"}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Token Source</span><span className="text-slate-900 font-medium">{wabaStatus.tokenSource || "exchanged_token"}</span></div>
+              </div>
             </div>
           </div>
 

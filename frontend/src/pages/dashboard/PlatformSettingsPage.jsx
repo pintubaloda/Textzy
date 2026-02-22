@@ -393,7 +393,10 @@ const PlatformSettingsPage = () => {
                 <thead className="bg-slate-50">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium text-slate-600">Time</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">Source</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">Provider</th>
                     <th className="text-left px-3 py-2 font-medium text-slate-600">Action</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">Status</th>
                     <th className="text-left px-3 py-2 font-medium text-slate-600">Details</th>
                   </tr>
                 </thead>
@@ -401,13 +404,16 @@ const PlatformSettingsPage = () => {
                   {logs.map((x) => (
                     <tr key={x.id} className="border-t border-slate-100">
                       <td className="px-3 py-2 text-slate-600">{x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleString() : "-"}</td>
-                      <td className="px-3 py-2 text-slate-900">{x.action}</td>
-                      <td className="px-3 py-2 text-slate-600">{x.details}</td>
+                      <td className="px-3 py-2 text-slate-900">{x.source || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700">{x.provider || "-"}</td>
+                      <td className="px-3 py-2 text-slate-900">{x.action || x.Action || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700">{x.status || "-"}</td>
+                      <td className="px-3 py-2 text-slate-600">{x.details || x.Details || "-"}</td>
                     </tr>
                   ))}
                   {logs.length === 0 && (
                     <tr>
-                      <td colSpan={3} className="px-3 py-6 text-center text-slate-500">No webhook logs found.</td>
+                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">No webhook logs found.</td>
                     </tr>
                   )}
                 </tbody>

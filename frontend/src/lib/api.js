@@ -107,6 +107,11 @@ export async function apiDelete(path) {
   return true
 }
 
+export function buildIdempotencyKey(prefix = "msg") {
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `${prefix}-${Date.now()}-${rand}`;
+}
+
 export async function authLogin({ email, password, tenantSlug }) {
   const headers = { 'Content-Type': 'application/json' }
   if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug

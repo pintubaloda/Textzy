@@ -31,8 +31,10 @@ function loadFacebookSdk(appId) {
 const stateMap = {
   requested: "Requested",
   code_received: "Code Received",
+  exchanged: "Exchanged",
   assets_linked: "Assets Linked",
   webhook_subscribed: "Webhook Subscribed",
+  verified: "Verified",
   ready: "Connected / Ready",
 };
 
@@ -47,6 +49,7 @@ export default function WhatsAppOnboardingPage() {
   const embeddedConfigId = process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "";
 
   const stateLabel = useMemo(() => stateMap[status.state] || status.state || "Requested", [status.state]);
+  const fmt = (v) => (v ? new Date(v).toLocaleString() : "—");
 
   async function loadStatus() {
     setLoading(true);
@@ -169,8 +172,24 @@ export default function WhatsAppOnboardingPage() {
             <div className="p-3 rounded-lg bg-slate-50"><b>Phone:</b> {status.phone || "Not linked"}</div>
             <div className="p-3 rounded-lg bg-slate-50"><b>WABA ID:</b> {status.wabaId || "Pending"}</div>
             <div className="p-3 rounded-lg bg-slate-50"><b>Phone Number ID:</b> {status.phoneNumberId || "Pending"}</div>
+            <div className="p-3 rounded-lg bg-slate-50"><b>Business Manager ID:</b> {status.businessManagerId || "Pending"}</div>
+            <div className="p-3 rounded-lg bg-slate-50"><b>System User:</b> {status.systemUserName || status.systemUserId || "Pending"}</div>
+            <div className="p-3 rounded-lg bg-slate-50"><b>Token Source:</b> {status.tokenSource || "exchanged_token"}</div>
+            <div className="p-3 rounded-lg bg-slate-50"><b>Permanent Token Issued:</b> {fmt(status.permanentTokenIssuedAtUtc)}</div>
             <div className="p-3 rounded-lg bg-slate-50"><b>Business Verification:</b> {status.businessVerificationStatus || "Unknown"}</div>
             <div className="p-3 rounded-lg bg-slate-50"><b>Quality / Name:</b> {status.phoneQualityRating || "Unknown"} / {status.phoneNameStatus || "Unknown"}</div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 p-3">
+            <p className="text-sm font-medium text-slate-900 mb-2">Onboarding Timeline</p>
+            <div className="grid md:grid-cols-2 gap-2 text-xs">
+              <div className="rounded border border-slate-100 bg-slate-50 p-2"><b>Requested:</b> {fmt(status.timeline?.requestedAtUtc)}</div>
+              <div className="rounded border border-slate-100 bg-slate-50 p-2"><b>Code received:</b> {fmt(status.timeline?.codeReceivedAtUtc)}</div>
+              <div className="rounded border border-slate-100 bg-slate-50 p-2"><b>Exchanged:</b> {fmt(status.timeline?.exchangedAtUtc)}</div>
+              <div className="rounded border border-slate-100 bg-slate-50 p-2"><b>Assets linked:</b> {fmt(status.timeline?.assetsLinkedAtUtc)}</div>
+              <div className="rounded border border-slate-100 bg-slate-50 p-2"><b>Webhook subscribed:</b> {fmt(status.timeline?.webhookSubscribedAtUtc)}</div>
+              <div className="rounded border border-slate-100 bg-slate-50 p-2"><b>Verified:</b> {fmt(status.timeline?.verifiedAtUtc)}</div>
+            </div>
           </div>
 
           <div className="flex items-center gap-2 text-sm">

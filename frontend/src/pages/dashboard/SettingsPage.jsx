@@ -32,6 +32,7 @@ const SettingsPage = () => {
 
   const facebookAppId = process.env.REACT_APP_FACEBOOK_APP_ID || "";
   const embeddedConfigId = process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "";
+  const fmt = (v) => (v ? new Date(v).toLocaleString() : "—");
 
   const handleSave = () => {
     setSaving(true);
@@ -551,6 +552,24 @@ const SettingsPage = () => {
                     Current status: <span className="font-semibold text-slate-900">{whatsappStatus.state || "requested"}</span>
                     {whatsappStatus.lastError ? <div className="text-amber-700 mt-1">Last error: {whatsappStatus.lastError}</div> : null}
                   </div>
+                  <div className="grid md:grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="text-slate-500">Business Manager ID</div>
+                      <div className="text-slate-900 font-medium break-all">{whatsappStatus.businessManagerId || "Pending"}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="text-slate-500">System User ID</div>
+                      <div className="text-slate-900 font-medium break-all">{whatsappStatus.systemUserId || "Pending"}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="text-slate-500">Token Source</div>
+                      <div className="text-slate-900 font-medium">{whatsappStatus.tokenSource || "exchanged_token"}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="text-slate-500">Permanent Token Issued</div>
+                      <div className="text-slate-900 font-medium">{fmt(whatsappStatus.permanentTokenIssuedAtUtc)}</div>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             ) : null}
@@ -580,6 +599,26 @@ const SettingsPage = () => {
                         <p className="text-xs text-slate-500">WABA ID</p>
                         <p className="font-semibold text-slate-900 break-all">{whatsappStatus.wabaId || "Not available"}</p>
                       </div>
+                      <div className="rounded-lg border border-slate-200 p-3">
+                        <p className="text-xs text-slate-500">Business Manager ID</p>
+                        <p className="font-semibold text-slate-900 break-all">{whatsappStatus.businessManagerId || "Not available"}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 p-3">
+                        <p className="text-xs text-slate-500">System User</p>
+                        <p className="font-semibold text-slate-900 break-all">{whatsappStatus.systemUserName || whatsappStatus.systemUserId || "Not available"}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 p-3">
+                        <p className="text-xs text-slate-500">Token Source</p>
+                        <p className="font-semibold text-slate-900">{whatsappStatus.tokenSource || "exchanged_token"}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 p-3">
+                        <p className="text-xs text-slate-500">Permanent Token Issued</p>
+                        <p className="font-semibold text-slate-900">{fmt(whatsappStatus.permanentTokenIssuedAtUtc)}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 p-3">
+                        <p className="text-xs text-slate-500">Permanent Token Expiry</p>
+                        <p className="font-semibold text-slate-900">{fmt(whatsappStatus.permanentTokenExpiresAtUtc)}</p>
+                      </div>
                     </div>
 
                     <div className="rounded-lg border border-slate-200 p-3">
@@ -599,6 +638,18 @@ const SettingsPage = () => {
                       {whatsappStatus.lastError ? (
                         <p className="text-xs text-amber-700 mt-2">{whatsappStatus.lastError}</p>
                       ) : null}
+                    </div>
+
+                    <div className="rounded-lg border border-slate-200 p-3">
+                      <p className="text-xs text-slate-500 mb-2">Lifecycle Timeline</p>
+                      <div className="grid md:grid-cols-2 gap-2 text-xs">
+                        <div className="rounded border border-slate-100 bg-slate-50 p-2"><span className="text-slate-500">Requested:</span> <span className="text-slate-900">{fmt(whatsappStatus.timeline?.requestedAtUtc)}</span></div>
+                        <div className="rounded border border-slate-100 bg-slate-50 p-2"><span className="text-slate-500">Code received:</span> <span className="text-slate-900">{fmt(whatsappStatus.timeline?.codeReceivedAtUtc)}</span></div>
+                        <div className="rounded border border-slate-100 bg-slate-50 p-2"><span className="text-slate-500">Exchanged:</span> <span className="text-slate-900">{fmt(whatsappStatus.timeline?.exchangedAtUtc)}</span></div>
+                        <div className="rounded border border-slate-100 bg-slate-50 p-2"><span className="text-slate-500">Assets linked:</span> <span className="text-slate-900">{fmt(whatsappStatus.timeline?.assetsLinkedAtUtc)}</span></div>
+                        <div className="rounded border border-slate-100 bg-slate-50 p-2"><span className="text-slate-500">Webhook subscribed:</span> <span className="text-slate-900">{fmt(whatsappStatus.timeline?.webhookSubscribedAtUtc)}</span></div>
+                        <div className="rounded border border-slate-100 bg-slate-50 p-2"><span className="text-slate-500">Verified:</span> <span className="text-slate-900">{fmt(whatsappStatus.timeline?.verifiedAtUtc)}</span></div>
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap gap-2">
