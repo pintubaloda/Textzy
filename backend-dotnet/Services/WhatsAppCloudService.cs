@@ -14,16 +14,32 @@ public class WhatsAppCloudService(
     TenancyContext tenancy,
     IHttpClientFactory httpClientFactory,
     IConfiguration configuration,
+    SecretCryptoService crypto,
+    WabaTenantResolver tenantResolver,
     ILogger<WhatsAppCloudService> logger)
 {
     private readonly WhatsAppOptions _options = configuration.GetSection("WhatsApp").Get<WhatsAppOptions>() ?? new WhatsAppOptions();
 
     private sealed class DiscoveredWabaAsset
     {
+        public string BusinessId { get; init; } = string.Empty;
         public string WabaId { get; init; } = string.Empty;
         public string WabaName { get; init; } = string.Empty;
         public string PhoneNumberId { get; init; } = string.Empty;
         public string DisplayPhoneNumber { get; init; } = string.Empty;
+    }
+
+    private sealed class SystemUserLifecycleResult
+    {
+        public string BusinessId { get; init; } = string.Empty;
+        public string SystemUserId { get; init; } = string.Empty;
+        public string SystemUserName { get; init; } = string.Empty;
+        public DateTime? SystemUserCreatedAtUtc { get; init; }
+        public DateTime? AssetsAssignedAtUtc { get; init; }
+        public string AccessToken { get; init; } = string.Empty;
+        public DateTime? TokenExpiresAtUtc { get; init; }
+        public string TokenSource { get; init; } = "embedded_exchange";
+        public List<string> Warnings { get; init; } = [];
     }
 
     private sealed class OnboardingAudit
@@ -59,7 +75,7 @@ public class WhatsAppCloudService(
             return new { connected = false, reason = "No active tenant WABA config/token found." };
         }
 
-        var probe = await DebugProbeAsync(cfg.AccessToken, ct);
+        var probe = await DebugProbeAsync(UnprotectToken(cfg.AccessToken), ct);
         return new
         {
             connected = cfg.IsActive,
@@ -165,7 +181,22 @@ public class WhatsAppCloudService(
             throw new InvalidOperationException($"This WhatsApp account/number is already linked to another project ({conflict.Value.TenantName} / {conflict.Value.TenantSlug}). Use a different number or disconnect there first.");
         }
 
-        config.AccessToken = accessToken;
+        var lifecycle = await ProvisionSystemUserAndPermanentTokenAsync(accessToken, discovered, ct);
+        if (lifecycle.Warnings.Count > 0)
+        {
+            config.LastError = string.Join(" | ", lifecycle.Warnings);
+        }
+
+        var effectiveToken = string.IsNullOrWhiteSpace(lifecycle.AccessToken) ? accessToken : lifecycle.AccessToken;
+        config.AccessToken = ProtectToken(effectiveToken);
+        config.TokenSource = string.IsNullOrWhiteSpace(lifecycle.AccessToken) ? "embedded_exchange" : lifecycle.TokenSource;
+        config.BusinessManagerId = lifecycle.BusinessId;
+        config.SystemUserId = lifecycle.SystemUserId;
+        config.SystemUserName = lifecycle.SystemUserName;
+        config.SystemUserCreatedAtUtc = lifecycle.SystemUserCreatedAtUtc;
+        config.AssetsAssignedAtUtc = lifecycle.AssetsAssignedAtUtc;
+        config.PermanentTokenIssuedAtUtc = string.IsNullOrWhiteSpace(lifecycle.AccessToken) ? null : DateTime.UtcNow;
+        config.PermanentTokenExpiresAtUtc = lifecycle.TokenExpiresAtUtc;
         config.IsActive = true;
         config.BusinessAccountName = discovered.WabaName;
         config.WabaId = discovered.WabaId;
@@ -176,17 +207,18 @@ public class WhatsAppCloudService(
         config.AssetsLinkedAtUtc = DateTime.UtcNow;
         config.OnboardingState = "assets_linked";
 
-        var webhookOk = await EnsureWebhookSubscriptionAsync(config, ct);
+        var webhookOk = await EnsureWebhookSubscriptionAsync(config, effectiveToken, ct);
         config.WebhookSubscribedAtUtc = webhookOk ? DateTime.UtcNow : null;
         config.OnboardingState = webhookOk ? "webhook_subscribed" : "assets_linked";
 
-        var audit = await RunPostOnboardingChecksAsync(config, ct);
+        var audit = await RunPostOnboardingChecksAsync(config, effectiveToken, ct);
         config.PermissionAuditPassed = audit.PermissionAuditPassed;
         config.BusinessVerificationStatus = audit.BusinessVerificationStatus;
         config.PhoneQualityRating = audit.PhoneQualityRating;
         config.PhoneNameStatus = audit.PhoneNameStatus;
         if (audit.Warnings.Count > 0) config.LastError = string.Join(" | ", audit.Warnings);
         config.OnboardingState = webhookOk && audit.PermissionAuditPassed ? "ready" : config.OnboardingState;
+        await tenantResolver.InvalidateAsync(config.PhoneNumberId, ct);
 
         await tenantDb.SaveChangesAsync(ct);
         return config;
@@ -209,7 +241,8 @@ public class WhatsAppCloudService(
 
         if (!string.IsNullOrWhiteSpace(config.AccessToken) && !string.IsNullOrWhiteSpace(config.WabaId))
         {
-            var audit = await RunPostOnboardingChecksAsync(config, ct);
+            var token = UnprotectToken(config.AccessToken);
+            var audit = await RunPostOnboardingChecksAsync(config, token, ct);
             config.PermissionAuditPassed = audit.PermissionAuditPassed;
             config.BusinessVerificationStatus = audit.BusinessVerificationStatus;
             config.PhoneQualityRating = audit.PhoneQualityRating;
@@ -243,6 +276,12 @@ public class WhatsAppCloudService(
             phone = config.DisplayPhoneNumber,
             wabaId = config.WabaId,
             phoneNumberId = config.PhoneNumberId,
+            businessManagerId = config.BusinessManagerId,
+            systemUserId = config.SystemUserId,
+            systemUserName = config.SystemUserName,
+            tokenSource = config.TokenSource,
+            permanentTokenIssuedAtUtc = config.PermanentTokenIssuedAtUtc,
+            permanentTokenExpiresAtUtc = config.PermanentTokenExpiresAtUtc,
             businessVerificationStatus = config.BusinessVerificationStatus,
             phoneQualityRating = config.PhoneQualityRating,
             phoneNameStatus = config.PhoneNameStatus,
@@ -297,11 +336,11 @@ public class WhatsAppCloudService(
         await tenantDb.SaveChangesAsync(ct);
     }
 
-    private async Task<bool> EnsureWebhookSubscriptionAsync(TenantWabaConfig config, CancellationToken ct)
+    private async Task<bool> EnsureWebhookSubscriptionAsync(TenantWabaConfig config, string accessToken, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(config.WabaId) || string.IsNullOrWhiteSpace(config.AccessToken)) return false;
+        if (string.IsNullOrWhiteSpace(config.WabaId) || string.IsNullOrWhiteSpace(accessToken)) return false;
         var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.WabaId}/subscribed_apps";
-        var post = await GraphPostRawAsync(url, config.AccessToken, null, ct);
+        var post = await GraphPostRawAsync(url, accessToken, null, ct);
         if (!post.Ok)
         {
             config.LastGraphError = post.Body;
@@ -311,7 +350,7 @@ public class WhatsAppCloudService(
         return true;
     }
 
-    private async Task<OnboardingAudit> RunPostOnboardingChecksAsync(TenantWabaConfig config, CancellationToken ct)
+    private async Task<OnboardingAudit> RunPostOnboardingChecksAsync(TenantWabaConfig config, string accessToken, CancellationToken ct)
     {
         var warnings = new List<string>();
         var businessVerificationStatus = string.Empty;
@@ -320,13 +359,13 @@ public class WhatsAppCloudService(
         var permissionAuditPassed = false;
         var webhookSubscribed = false;
 
-        if (string.IsNullOrWhiteSpace(config.AccessToken))
+        if (string.IsNullOrWhiteSpace(accessToken))
             return new OnboardingAudit { Warnings = ["Missing access token."] };
 
         if (!string.IsNullOrWhiteSpace(config.WabaId))
         {
             var wabaUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.WabaId}?fields=id,name,account_review_status,business_verification_status";
-            var waba = await GraphGetRawAsync(wabaUrl, config.AccessToken, ct);
+            var waba = await GraphGetRawAsync(wabaUrl, accessToken, ct);
             if (waba.Ok && !string.IsNullOrWhiteSpace(waba.Body))
             {
                 try
@@ -346,7 +385,7 @@ public class WhatsAppCloudService(
             }
 
             var subscribedUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.WabaId}/subscribed_apps";
-            var subscribed = await GraphGetRawAsync(subscribedUrl, config.AccessToken, ct);
+            var subscribed = await GraphGetRawAsync(subscribedUrl, accessToken, ct);
             webhookSubscribed = subscribed.Ok;
             if (!subscribed.Ok) warnings.Add("Webhook subscription check failed.");
         }
@@ -354,7 +393,7 @@ public class WhatsAppCloudService(
         if (!string.IsNullOrWhiteSpace(config.PhoneNumberId))
         {
             var phoneUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.PhoneNumberId}?fields=id,verified_name,quality_rating,name_status";
-            var phone = await GraphGetRawAsync(phoneUrl, config.AccessToken, ct);
+            var phone = await GraphGetRawAsync(phoneUrl, accessToken, ct);
             if (phone.Ok && !string.IsNullOrWhiteSpace(phone.Body))
             {
                 try
@@ -375,7 +414,7 @@ public class WhatsAppCloudService(
         }
 
         var permsUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/me/permissions";
-        var permsRaw = await GraphGetRawAsync(permsUrl, config.AccessToken, ct);
+        var permsRaw = await GraphGetRawAsync(permsUrl, accessToken, ct);
         if (permsRaw.Ok && !string.IsNullOrWhiteSpace(permsRaw.Body))
         {
             permissionAuditPassed = permsRaw.Body.Contains("whatsapp_business_management", StringComparison.OrdinalIgnoreCase)
@@ -404,7 +443,26 @@ public class WhatsAppCloudService(
         var meUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/me?fields=id,name,whatsapp_business_accounts{{id,name,phone_numbers{{id,display_phone_number,verified_name}}}}";
         var direct = await GraphGetAsync(meUrl, accessToken, ct);
         var fromDirect = ParseWabaAssetFromMe(direct);
-        if (fromDirect is not null) return fromDirect;
+        if (fromDirect is not null)
+        {
+            if (string.IsNullOrWhiteSpace(fromDirect.BusinessId))
+            {
+                var businessId = await FindBusinessForWabaAsync(accessToken, fromDirect.WabaId, ct);
+                if (!string.IsNullOrWhiteSpace(businessId))
+                {
+                    fromDirect = new DiscoveredWabaAsset
+                    {
+                        BusinessId = businessId,
+                        WabaId = fromDirect.WabaId,
+                        WabaName = fromDirect.WabaName,
+                        PhoneNumberId = fromDirect.PhoneNumberId,
+                        DisplayPhoneNumber = fromDirect.DisplayPhoneNumber
+                    };
+                }
+            }
+
+            return fromDirect;
+        }
 
         var businessesUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/me/businesses?fields=id,name";
         var businessesDoc = await GraphGetAsync(businessesUrl, accessToken, ct);
@@ -436,6 +494,7 @@ public class WhatsAppCloudService(
 
                 return new DiscoveredWabaAsset
                 {
+                    BusinessId = businessId,
                     WabaId = wabaId,
                     WabaName = string.IsNullOrWhiteSpace(wabaName) ? "WhatsApp Business Account" : wabaName,
                     PhoneNumberId = phoneId,
@@ -504,6 +563,214 @@ public class WhatsAppCloudService(
         if (!resp.IsSuccessStatusCode)
             logger.LogWarning("Graph POST failed: {Url} status={Status} body={Body}", url, (int)resp.StatusCode, body);
         return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
+    }
+
+    private async Task<string> FindBusinessForWabaAsync(string accessToken, string wabaId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(wabaId)) return string.Empty;
+        var businessesUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/me/businesses?fields=id,name";
+        var businessesDoc = await GraphGetAsync(businessesUrl, accessToken, ct);
+        var businessIds = ReadIdsFromDataArray(businessesDoc);
+        foreach (var businessId in businessIds)
+        {
+            var ownedWabaUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{businessId}/owned_whatsapp_business_accounts?fields=id";
+            var ownedWabas = await GraphGetAsync(ownedWabaUrl, accessToken, ct);
+            var wabas = ReadObjectsFromDataArray(ownedWabas);
+            if (wabas.Any(x => string.Equals(TryGetString(x, "id"), wabaId, StringComparison.OrdinalIgnoreCase)))
+                return businessId;
+        }
+
+        return string.Empty;
+    }
+
+    private async Task<SystemUserLifecycleResult> ProvisionSystemUserAndPermanentTokenAsync(string bootstrapToken, DiscoveredWabaAsset discovered, CancellationToken ct)
+    {
+        var warnings = new List<string>();
+        var businessId = discovered.BusinessId;
+        var systemUserId = string.Empty;
+        var systemUserName = string.Empty;
+        DateTime? systemUserCreatedAt = null;
+        DateTime? assetsAssignedAt = null;
+        string permanentToken = string.Empty;
+        DateTime? tokenExpiresAt = null;
+
+        if (string.IsNullOrWhiteSpace(businessId))
+        {
+            businessId = await FindBusinessForWabaAsync(bootstrapToken, discovered.WabaId, ct);
+        }
+
+        if (string.IsNullOrWhiteSpace(businessId))
+        {
+            warnings.Add("Business Manager ID could not be discovered; continuing with exchanged token.");
+            return new SystemUserLifecycleResult
+            {
+                BusinessId = string.Empty,
+                AccessToken = string.Empty,
+                TokenSource = "embedded_exchange",
+                Warnings = warnings
+            };
+        }
+
+        var systemUserCreate = await CreateSystemUserAsync(bootstrapToken, businessId, ct);
+        if (!string.IsNullOrWhiteSpace(systemUserCreate.SystemUserId))
+        {
+            systemUserId = systemUserCreate.SystemUserId;
+            systemUserName = systemUserCreate.SystemUserName;
+            systemUserCreatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            warnings.Add("System user creation failed; continuing with exchanged token.");
+            if (!string.IsNullOrWhiteSpace(systemUserCreate.Error))
+                warnings.Add($"system_user_error={systemUserCreate.Error}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(systemUserId))
+        {
+            var assigned = await AssignSystemUserAssetsAsync(bootstrapToken, systemUserId, discovered.WabaId, discovered.PhoneNumberId, ct);
+            if (assigned)
+            {
+                assetsAssignedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                warnings.Add("System user asset assignment failed.");
+            }
+
+            var token = await GenerateSystemUserTokenAsync(bootstrapToken, systemUserId, ct);
+            if (!string.IsNullOrWhiteSpace(token.AccessToken))
+            {
+                permanentToken = token.AccessToken;
+                tokenExpiresAt = token.ExpiresAtUtc;
+            }
+            else
+            {
+                warnings.Add("Permanent system user token generation failed; continuing with exchanged token.");
+                if (!string.IsNullOrWhiteSpace(token.Error))
+                    warnings.Add($"system_token_error={token.Error}");
+            }
+        }
+
+        return new SystemUserLifecycleResult
+        {
+            BusinessId = businessId,
+            SystemUserId = systemUserId,
+            SystemUserName = systemUserName,
+            SystemUserCreatedAtUtc = systemUserCreatedAt,
+            AssetsAssignedAtUtc = assetsAssignedAt,
+            AccessToken = permanentToken,
+            TokenExpiresAtUtc = tokenExpiresAt,
+            TokenSource = string.IsNullOrWhiteSpace(permanentToken) ? "embedded_exchange" : "system_user_permanent",
+            Warnings = warnings
+        };
+    }
+
+    private async Task<(string SystemUserId, string SystemUserName, string Error)> CreateSystemUserAsync(string accessToken, string businessId, CancellationToken ct)
+    {
+        var slugPart = string.IsNullOrWhiteSpace(tenancy.TenantSlug) ? tenancy.TenantId.ToString("N")[..8] : tenancy.TenantSlug;
+        var name = $"textzy-{slugPart}-{DateTime.UtcNow:yyyyMMddHHmmss}";
+        var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{businessId}/system_users";
+        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["name"] = name,
+            ["role"] = "EMPLOYEE"
+        });
+
+        var client = httpClientFactory.CreateClient();
+        using var req = new HttpRequestMessage(HttpMethod.Post, url);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        req.Content = content;
+        var resp = await client.SendAsync(req, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            logger.LogWarning("System user create failed: tenant={TenantId} business={BusinessId} status={Status} body={Body}", tenancy.TenantId, businessId, (int)resp.StatusCode, body);
+            return (string.Empty, string.Empty, body);
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var id = doc.RootElement.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? string.Empty : string.Empty;
+            return (id, name, string.Empty);
+        }
+        catch
+        {
+            return (string.Empty, string.Empty, body);
+        }
+    }
+
+    private async Task<bool> AssignSystemUserAssetsAsync(string accessToken, string systemUserId, string wabaId, string phoneNumberId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(systemUserId)) return false;
+        var client = httpClientFactory.CreateClient();
+        async Task<bool> AssignOneAsync(string assetId)
+        {
+            if (string.IsNullOrWhiteSpace(assetId)) return true;
+            var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{systemUserId}/assigned_assets";
+            var content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["asset"] = assetId,
+                ["tasks"] = "[\"MANAGE\"]"
+            });
+            using var req = new HttpRequestMessage(HttpMethod.Post, url);
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+            req.Content = content;
+            var resp = await client.SendAsync(req, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                logger.LogWarning("System user asset assignment failed: tenant={TenantId} su={SystemUserId} asset={AssetId} status={Status} body={Body}", tenancy.TenantId, systemUserId, assetId, (int)resp.StatusCode, body);
+            }
+
+            return resp.IsSuccessStatusCode;
+        }
+
+        var okWaba = await AssignOneAsync(wabaId);
+        var okPhone = await AssignOneAsync(phoneNumberId);
+        return okWaba && okPhone;
+    }
+
+    private async Task<(string AccessToken, DateTime? ExpiresAtUtc, string Error)> GenerateSystemUserTokenAsync(string accessToken, string systemUserId, CancellationToken ct)
+    {
+        var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{systemUserId}/access_tokens";
+        var scope = "[\"whatsapp_business_management\",\"whatsapp_business_messaging\",\"business_management\"]";
+        var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["app_id"] = _options.AppId,
+            ["scope"] = scope
+        });
+
+        var client = httpClientFactory.CreateClient();
+        using var req = new HttpRequestMessage(HttpMethod.Post, url);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        req.Content = content;
+        var resp = await client.SendAsync(req, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            logger.LogWarning("System user token generation failed: tenant={TenantId} su={SystemUserId} status={Status} body={Body}", tenancy.TenantId, systemUserId, (int)resp.StatusCode, body);
+            return (string.Empty, null, body);
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var token = doc.RootElement.TryGetProperty("access_token", out var tokenProp) ? tokenProp.GetString() ?? string.Empty : string.Empty;
+            DateTime? expires = null;
+            if (doc.RootElement.TryGetProperty("expires_at", out var expProp))
+            {
+                if (expProp.ValueKind == JsonValueKind.Number && expProp.TryGetInt64(out var expUnix))
+                    expires = DateTimeOffset.FromUnixTimeSeconds(expUnix).UtcDateTime;
+                else if (expProp.ValueKind == JsonValueKind.String && long.TryParse(expProp.GetString(), out var expUnixStr))
+                    expires = DateTimeOffset.FromUnixTimeSeconds(expUnixStr).UtcDateTime;
+            }
+            return (token, expires, string.Empty);
+        }
+        catch
+        {
+            return (string.Empty, null, body);
+        }
     }
 
     private async Task<JsonDocument?> GraphGetAsync(string url, string accessToken, CancellationToken ct)
@@ -599,13 +866,14 @@ public class WhatsAppCloudService(
     {
         var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
         if (string.IsNullOrWhiteSpace(cfg.PhoneNumberId)) throw new InvalidOperationException("Phone number ID missing.");
+        var token = UnprotectToken(cfg.AccessToken);
 
         var client = httpClientFactory.CreateClient();
         var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{cfg.PhoneNumberId}/messages";
         var payload = JsonSerializer.Serialize(new { messaging_product = "whatsapp", to = recipient, type = "text", text = new { body } });
 
         using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = new StringContent(payload, Encoding.UTF8, "application/json") };
-        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", cfg.AccessToken);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
         var resp = await client.SendAsync(req, ct);
         var responseBody = await resp.Content.ReadAsStringAsync(ct);
@@ -622,6 +890,7 @@ public class WhatsAppCloudService(
     public async Task<string> SendTemplateMessageAsync(WabaSendTemplateRequest request, CancellationToken ct = default)
     {
         var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
+        var token = UnprotectToken(cfg.AccessToken);
         var client = httpClientFactory.CreateClient();
         var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{cfg.PhoneNumberId}/messages";
 
@@ -629,7 +898,7 @@ public class WhatsAppCloudService(
         var payload = JsonSerializer.Serialize(new { messaging_product = "whatsapp", to = request.Recipient, type = "template", template = new { name = request.TemplateName, language = new { code = request.LanguageCode }, components } });
 
         using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = new StringContent(payload, Encoding.UTF8, "application/json") };
-        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", cfg.AccessToken);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
         var resp = await client.SendAsync(req, ct);
         var responseBody = await resp.Content.ReadAsStringAsync(ct);
@@ -648,5 +917,27 @@ public class WhatsAppCloudService(
         var window = await tenantDb.Set<ConversationWindow>().FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Recipient == recipient, ct);
         if (window is null) return false;
         return window.LastInboundAtUtc >= DateTime.UtcNow.AddHours(-24);
+    }
+
+    private string ProtectToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return string.Empty;
+        if (token.StartsWith("enc:", StringComparison.Ordinal)) return token;
+        return $"enc:{crypto.Encrypt(token)}";
+    }
+
+    private string UnprotectToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return string.Empty;
+        if (!token.StartsWith("enc:", StringComparison.Ordinal)) return token;
+        var payload = token[4..];
+        try
+        {
+            return crypto.Decrypt(payload);
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 }

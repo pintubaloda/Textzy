@@ -9,6 +9,14 @@ public class TenantWabaConfig
     public string BusinessAccountName { get; set; } = string.Empty;
     public string DisplayPhoneNumber { get; set; } = string.Empty;
     public string AccessToken { get; set; } = string.Empty;
+    public string BusinessManagerId { get; set; } = string.Empty;
+    public string SystemUserId { get; set; } = string.Empty;
+    public string SystemUserName { get; set; } = string.Empty;
+    public DateTime? SystemUserCreatedAtUtc { get; set; }
+    public DateTime? AssetsAssignedAtUtc { get; set; }
+    public DateTime? PermanentTokenIssuedAtUtc { get; set; }
+    public DateTime? PermanentTokenExpiresAtUtc { get; set; }
+    public string TokenSource { get; set; } = "embedded_exchange";
     public bool IsActive { get; set; }
     public DateTime ConnectedAtUtc { get; set; } = DateTime.UtcNow;
     public string OnboardingState { get; set; } = "requested";
