@@ -14,6 +14,7 @@ public sealed class OutboundMessageQueueItem
 public class OutboundMessageQueueService(IConfiguration config, ILogger<OutboundMessageQueueService> logger)
 {
     private readonly Channel<OutboundMessageQueueItem> _memory = Channel.CreateUnbounded<OutboundMessageQueueItem>();
+    private int _memoryDepth = 0;
     private readonly string _provider = (config["OutboundQueue:Provider"] ?? "memory").Trim().ToLowerInvariant();
     private readonly string _redisConn = config["OutboundQueue:RedisConnection"] ?? config["REDIS_URL"] ?? string.Empty;
     private readonly string _redisKey = config["OutboundQueue:RedisListKey"] ?? "textzy:outbound:queue";
@@ -54,7 +55,18 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
             return;
         }
 
+        Interlocked.Increment(ref _memoryDepth);
         await _memory.Writer.WriteAsync(item, ct);
+    }
+
+    public async Task<long> GetDepthAsync(CancellationToken ct = default)
+    {
+        if (ActiveProvider == "redis")
+        {
+            var db = _redis.Value!.GetDatabase();
+            return await db.ListLengthAsync(_redisKey);
+        }
+        return Math.Max(0, Interlocked.CompareExchange(ref _memoryDepth, 0, 0));
     }
 
     public async ValueTask<OutboundMessageQueueItem?> DequeueAsync(CancellationToken ct = default)
@@ -76,10 +88,13 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
 
         while (await _memory.Reader.WaitToReadAsync(ct))
         {
-            if (_memory.Reader.TryRead(out var item)) return item;
+            if (_memory.Reader.TryRead(out var item))
+            {
+                Interlocked.Decrement(ref _memoryDepth);
+                return item;
+            }
         }
 
         return null;
     }
 }
-

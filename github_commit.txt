@@ -151,3 +151,18 @@ Pending commit:
 
 Summary:
 - Added hard plan-limit enforcement and usage synchronization for contacts/team/automation, and wired frontend create/publish CTA gating against billing limits.
+
+Pending commit:
+- backend-dotnet/Services/WabaWebhookQueueService.cs
+- backend-dotnet/Services/OutboundMessageQueueService.cs
+- backend-dotnet/Controllers/PlatformQueueHealthController.cs
+- backend-dotnet/Controllers/PlatformWabaErrorPoliciesController.cs
+- backend-dotnet/Controllers/PlatformWebhookAnalyticsController.cs
+- frontend/src/lib/api.js
+- frontend/src/pages/dashboard/PlatformSettingsPage.jsx
+- Requirestatus.txt
+- github_commit.txt
+- masterrequirement.docx
+
+Summary:
+- Added platform operational APIs (queue health, WABA error taxonomy, webhook analytics) and wired them into Platform Settings UI tabs/cards.

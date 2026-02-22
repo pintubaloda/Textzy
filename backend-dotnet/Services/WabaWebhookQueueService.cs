@@ -18,6 +18,7 @@ public sealed class WabaWebhookQueueItem
 public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQueueService> logger)
 {
     private readonly Channel<WabaWebhookQueueItem> _channel = Channel.CreateUnbounded<WabaWebhookQueueItem>();
+    private int _memoryDepth = 0;
     private readonly string _provider = (config["WebhookQueue:Provider"] ?? "memory").Trim().ToLowerInvariant();
     private readonly string _redisConn = config["WebhookQueue:RedisConnection"] ?? config["REDIS_URL"] ?? string.Empty;
     private readonly string _redisKey = config["WebhookQueue:RedisListKey"] ?? "textzy:webhook:queue";
@@ -57,6 +58,7 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
             await db.ListRightPushAsync(_redisKey, payload);
             return;
         }
+        Interlocked.Increment(ref _memoryDepth);
         await _channel.Writer.WriteAsync(item, ct);
     }
 
@@ -64,7 +66,26 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
     {
         if (ActiveProvider == "redis")
             return ReadRedisAsync(ct);
-        return _channel.Reader.ReadAllAsync(ct);
+        return ReadMemoryAsync(ct);
+    }
+
+    public async Task<long> GetDepthAsync(CancellationToken ct = default)
+    {
+        if (ActiveProvider == "redis")
+        {
+            var db = _redis.Value!.GetDatabase();
+            return await db.ListLengthAsync(_redisKey);
+        }
+        return Math.Max(0, Interlocked.CompareExchange(ref _memoryDepth, 0, 0));
+    }
+
+    private async IAsyncEnumerable<WabaWebhookQueueItem> ReadMemoryAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        await foreach (var item in _channel.Reader.ReadAllAsync(ct))
+        {
+            Interlocked.Decrement(ref _memoryDepth);
+            yield return item;
+        }
     }
 
     private async IAsyncEnumerable<WabaWebhookQueueItem> ReadRedisAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)

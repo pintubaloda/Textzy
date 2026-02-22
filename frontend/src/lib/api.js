@@ -240,6 +240,29 @@ export async function getPlatformWebhookLogs({ provider = "", limit = 100 } = {}
   return apiGet(`/api/platform/webhook-logs?${q.toString()}`)
 }
 
+export async function getPlatformQueueHealth() {
+  return apiGet('/api/platform/queue-health')
+}
+
+export async function listWabaErrorPolicies() {
+  return apiGet('/api/platform/waba-error-policies')
+}
+
+export async function upsertWabaErrorPolicy(payload) {
+  return apiPost('/api/platform/waba-error-policies', payload)
+}
+
+export async function deactivateWabaErrorPolicy(code) {
+  return apiDelete(`/api/platform/waba-error-policies/${encodeURIComponent(code)}`)
+}
+
+export async function getPlatformWebhookAnalytics(tenantId = '', days = 7) {
+  const q = new URLSearchParams()
+  if (tenantId) q.set('tenantId', tenantId)
+  q.set('days', String(days))
+  return apiGet(`/api/platform/webhook-analytics?${q.toString()}`)
+}
+
 export async function listPaymentWebhooks() {
   return apiGet('/api/platform/payment-webhooks')
 }

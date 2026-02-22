@@ -6,7 +6,24 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { getPlatformSettings, savePlatformSettings, getPlatformWebhookLogs, listPaymentWebhooks, autoCreatePaymentWebhook, upsertPaymentWebhook, listPlatformBillingPlans, createPlatformBillingPlan, updatePlatformBillingPlan, archivePlatformBillingPlan } from "@/lib/api";
+import {
+  getPlatformSettings,
+  savePlatformSettings,
+  getPlatformWebhookLogs,
+  listPaymentWebhooks,
+  autoCreatePaymentWebhook,
+  upsertPaymentWebhook,
+  listPlatformBillingPlans,
+  createPlatformBillingPlan,
+  updatePlatformBillingPlan,
+  archivePlatformBillingPlan,
+  getPlatformQueueHealth,
+  listWabaErrorPolicies,
+  upsertWabaErrorPolicy,
+  deactivateWabaErrorPolicy,
+  getPlatformWebhookAnalytics,
+  getPlatformCustomers
+} from "@/lib/api";
 
 const FEATURE_CATALOG = [
   "WhatsApp Business API",
@@ -60,9 +77,26 @@ const PlatformSettingsPage = () => {
     limits: { ...DEFAULT_LIMITS }
   });
   const [loading, setLoading] = useState(false);
+  const [queueHealth, setQueueHealth] = useState(null);
+  const [wabaPolicies, setWabaPolicies] = useState([]);
+  const [policyForm, setPolicyForm] = useState({ code: "", classification: "permanent", description: "", isActive: true });
+  const [analytics, setAnalytics] = useState(null);
+  const [analyticsTenantId, setAnalyticsTenantId] = useState("");
+  const [analyticsDays, setAnalyticsDays] = useState("7");
+  const [tenants, setTenants] = useState([]);
 
   const title = useMemo(
-    () => (tab === "payment-gateway" ? "Payment Gateway Setup" : tab === "webhook-logs" ? "Webhook Logs" : tab === "billing-plans" ? "Billing Plans" : "Waba Master Config"),
+    () => (
+      tab === "payment-gateway"
+        ? "Payment Gateway Setup"
+        : tab === "webhook-logs"
+        ? "Webhook Logs"
+        : tab === "billing-plans"
+        ? "Billing Plans"
+        : tab === "waba-policies"
+        ? "WABA Error Policies"
+        : "Waba Master Config"
+    ),
     [tab],
   );
 
@@ -111,10 +145,24 @@ const PlatformSettingsPage = () => {
             const rows = await listPlatformBillingPlans();
             if (!active) return;
             setPlans(rows || []);
+          } else if (tab === "waba-policies") {
+            const rows = await listWabaErrorPolicies();
+            if (!active) return;
+            setWabaPolicies(rows || []);
           } else {
-            const res = await getPlatformWebhookLogs({ provider: logProvider, limit: 100 });
+            const [res, qh, customers, an] = await Promise.all([
+              getPlatformWebhookLogs({ provider: logProvider, limit: 100 }),
+              getPlatformQueueHealth().catch(() => null),
+              getPlatformCustomers("").catch(() => []),
+              getPlatformWebhookAnalytics(analyticsTenantId, Number(analyticsDays || 7)).catch(() => null),
+            ]);
             if (!active) return;
             setLogs(res || []);
+            setQueueHealth(qh);
+            const list = customers || [];
+            setTenants(list);
+            if (!analyticsTenantId && list.length) setAnalyticsTenantId(list[0].tenantId);
+            setAnalytics(an);
           }
         }
       } catch {
@@ -164,6 +212,13 @@ const PlatformSettingsPage = () => {
             onClick={() => setTab("billing-plans")}
           >
             Billing Plans
+          </Button>
+          <Button
+            variant={tab === "waba-policies" ? "default" : "outline"}
+            className={tab === "waba-policies" ? "bg-orange-500 hover:bg-orange-600" : ""}
+            onClick={() => setTab("waba-policies")}
+          >
+            WABA Error Policies
           </Button>
         </div>
       </div>
@@ -375,6 +430,23 @@ const PlatformSettingsPage = () => {
             <CardDescription>WABA + Payment webhook events in one stream.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-xs text-slate-500">Webhook Queue</div>
+                <div className="text-lg font-semibold">{queueHealth?.webhook?.depth ?? 0}</div>
+                <div className="text-xs text-slate-500">provider: {queueHealth?.webhook?.provider || "-"}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-xs text-slate-500">Outbound Queue</div>
+                <div className="text-lg font-semibold">{queueHealth?.outbound?.depth ?? 0}</div>
+                <div className="text-xs text-slate-500">provider: {queueHealth?.outbound?.provider || "-"}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-xs text-slate-500">Dead Letter (24h)</div>
+                <div className="text-lg font-semibold">{queueHealth?.webhook?.deadLetter24h ?? 0}</div>
+                <div className="text-xs text-slate-500">retrying: {queueHealth?.webhook?.retrying ?? 0}</div>
+              </div>
+            </div>
             <div className="flex gap-2">
               <Select value={logProvider || "all"} onValueChange={(v) => setLogProvider(v === "all" ? "" : v)}>
                 <SelectTrigger className="w-[220px]"><SelectValue /></SelectTrigger>
@@ -387,6 +459,42 @@ const PlatformSettingsPage = () => {
                 </SelectContent>
               </Select>
               <Button variant="outline" onClick={async () => setLogs(await getPlatformWebhookLogs({ provider: logProvider, limit: 100 }))}>Refresh</Button>
+            </div>
+            <div className="rounded-lg border border-slate-200 p-3 space-y-2">
+              <p className="text-sm font-medium text-slate-900">Webhook Analytics</p>
+              <div className="flex flex-wrap gap-2">
+                <Select value={analyticsTenantId || "all"} onValueChange={(v) => setAnalyticsTenantId(v === "all" ? "" : v)}>
+                  <SelectTrigger className="w-[260px]"><SelectValue placeholder="Select tenant" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All (control only)</SelectItem>
+                    {(tenants || []).map((t) => <SelectItem key={t.tenantId} value={t.tenantId}>{t.tenantName}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={analyticsDays} onValueChange={setAnalyticsDays}>
+                  <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="7">7 days</SelectItem>
+                    <SelectItem value="15">15 days</SelectItem>
+                    <SelectItem value="30">30 days</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  onClick={async () => setAnalytics(await getPlatformWebhookAnalytics(analyticsTenantId, Number(analyticsDays || 7)))}
+                >
+                  Refresh Analytics
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div className="rounded border border-slate-100 p-2">
+                  <div className="font-medium mb-1">Status Summary</div>
+                  {Object.entries(analytics?.statusSummary || {}).map(([k, v]) => <div key={k} className="flex justify-between"><span>{k}</span><span>{v}</span></div>)}
+                </div>
+                <div className="rounded border border-slate-100 p-2">
+                  <div className="font-medium mb-1">Failure Codes</div>
+                  {Object.entries(analytics?.failureCodes || {}).map(([k, v]) => <div key={k} className="flex justify-between"><span>{k}</span><span>{v}</span></div>)}
+                </div>
+              </div>
             </div>
             <div className="rounded-lg border border-slate-200 overflow-hidden">
               <table className="w-full text-sm">
@@ -416,6 +524,73 @@ const PlatformSettingsPage = () => {
                       <td colSpan={6} className="px-3 py-6 text-center text-slate-500">No webhook logs found.</td>
                     </tr>
                   )}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "waba-policies" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>WABA Error Classification Policies</CardTitle>
+            <CardDescription>Control retryable/permanent behavior by Meta error code.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="space-y-1"><Label>Error Code</Label><Input value={policyForm.code} onChange={(e) => setPolicyForm((p) => ({ ...p, code: e.target.value }))} /></div>
+              <div className="space-y-1">
+                <Label>Classification</Label>
+                <Select value={policyForm.classification} onValueChange={(v) => setPolicyForm((p) => ({ ...p, classification: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="retryable">retryable</SelectItem>
+                    <SelectItem value="permanent">permanent</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1 md:col-span-2"><Label>Description</Label><Input value={policyForm.description} onChange={(e) => setPolicyForm((p) => ({ ...p, description: e.target.value }))} /></div>
+            </div>
+            <div className="flex gap-2">
+              <Button className="bg-orange-500 hover:bg-orange-600" onClick={async () => {
+                try {
+                  await upsertWabaErrorPolicy(policyForm);
+                  setPolicyForm({ code: "", classification: "permanent", description: "", isActive: true });
+                  setWabaPolicies(await listWabaErrorPolicies());
+                  toast.success("Policy saved");
+                } catch {
+                  toast.error("Failed to save policy");
+                }
+              }}>Save Policy</Button>
+            </div>
+            <div className="rounded-lg border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left px-3 py-2">Code</th>
+                    <th className="text-left px-3 py-2">Classification</th>
+                    <th className="text-left px-3 py-2">Description</th>
+                    <th className="text-left px-3 py-2">Status</th>
+                    <th className="text-right px-3 py-2">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {wabaPolicies.map((p) => (
+                    <tr key={p.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{p.code}</td>
+                      <td className="px-3 py-2">{p.classification}</td>
+                      <td className="px-3 py-2">{p.description || "-"}</td>
+                      <td className="px-3 py-2">{p.isActive ? "Active" : "Inactive"}</td>
+                      <td className="px-3 py-2 text-right">
+                        <Button size="sm" variant="outline" className="mr-2" onClick={() => setPolicyForm({ code: p.code, classification: p.classification, description: p.description || "", isActive: !!p.isActive })}>Edit</Button>
+                        <Button size="sm" variant="outline" onClick={async () => {
+                          try { await deactivateWabaErrorPolicy(p.code); setWabaPolicies(await listWabaErrorPolicies()); toast.success("Policy deactivated"); } catch { toast.error("Deactivate failed"); }
+                        }}>Deactivate</Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {wabaPolicies.length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No policies found.</td></tr>}
                 </tbody>
               </table>
             </div>

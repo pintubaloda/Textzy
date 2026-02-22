@@ -165,3 +165,16 @@ Update: 2026-02-22 (Plan-limit enforcement + frontend wiring)
   - Contacts page loads billing usage+limits and disables Add Contact when plan limit is reached.
   - Automations page loads billing usage+limits and disables Create Bot / Publish when flow or active-bot limits are reached.
   - Added inline plan usage hints on contacts and automation KPI cards.
+
+Update: 2026-02-22 (Platform ops wiring: queue health + WABA policy + analytics)
+- Added platform backend APIs:
+  - `GET /api/platform/queue-health` (outbound/webhook queue depth + retry/dead-letter counters)
+  - `GET/POST/DELETE /api/platform/waba-error-policies` (retryable/permanent policy management)
+  - `GET /api/platform/webhook-analytics` (status/pricing/origin/failure/trend analytics; tenant-aware)
+- Queue services upgraded with depth introspection:
+  - webhook queue depth for memory + redis providers
+  - outbound queue depth for memory + redis providers
+- Frontend Platform Settings wiring completed:
+  - New tab: WABA Error Policies (list/upsert/deactivate)
+  - Webhook Logs tab now includes queue health KPI cards
+  - Webhook analytics panel (tenant selector, days filter, status/failure summaries)
