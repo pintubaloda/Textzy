@@ -54,6 +54,7 @@ const DashboardLayout = () => {
   const session = getSession();
   const role = (session.role || "").toLowerCase();
   const canAccessPlatformSettings = role === "super_admin";
+  const isPlatformOwner = role === "super_admin";
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
   const isTemplatesPage = location.pathname.startsWith("/dashboard/templates");
   const isSmsSetupPage = location.pathname.startsWith("/dashboard/sms-setup");
@@ -84,7 +85,7 @@ const DashboardLayout = () => {
     }
   };
 
-  const navigation = [
+  const tenantNavigation = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Inbox", href: "/dashboard/inbox", icon: Inbox, badge: "12" },
     { name: "Contacts", href: "/dashboard/contacts", icon: Users },
@@ -95,8 +96,15 @@ const DashboardLayout = () => {
     { name: "Team", href: "/dashboard/team", icon: UsersRound },
     { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
     { name: "Settings", href: "/dashboard/settings", icon: Settings },
-    ...(canAccessPlatformSettings ? [{ name: "Admin", href: "/dashboard/admin", icon: Shield }] : []),
   ];
+
+  const platformNavigation = [
+    { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+    { name: "Admin", href: "/dashboard/admin", icon: Shield },
+    { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
+  ];
+
+  const navigation = isPlatformOwner ? platformNavigation : tenantNavigation;
 
   const isActive = (href) => {
     if (href === "/dashboard") {

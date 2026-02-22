@@ -31,7 +31,9 @@ import PlatformSettingsPage from "@/pages/dashboard/PlatformSettingsPage";
 import SmsSetupPage from "@/pages/dashboard/SmsSetupPage";
 
 function App() {
-  const authed = !!getSession().token;
+  const session = getSession();
+  const authed = !!session.token;
+  const isPlatformOwner = (session.role || "").toLowerCase() === "super_admin";
   return (
     <div className="App">
       <BrowserRouter>
@@ -61,8 +63,8 @@ function App() {
             <Route path="billing" element={<BillingPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="team" element={<TeamPage />} />
-            <Route path="admin" element={<AdminPage />} />
-            <Route path="platform-settings" element={<PlatformSettingsPage />} />
+            <Route path="admin" element={isPlatformOwner ? <AdminPage /> : <Navigate to="/dashboard" replace />} />
+            <Route path="platform-settings" element={isPlatformOwner ? <PlatformSettingsPage /> : <Navigate to="/dashboard" replace />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
