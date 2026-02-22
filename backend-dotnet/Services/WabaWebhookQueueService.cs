@@ -5,6 +5,8 @@ namespace Textzy.Api.Services;
 public sealed class WabaWebhookQueueItem
 {
     public Guid Id { get; init; } = Guid.NewGuid();
+    public string Provider { get; init; } = "meta";
+    public string EventKey { get; init; } = string.Empty;
     public string RawBody { get; init; } = string.Empty;
     public DateTime ReceivedAtUtc { get; init; } = DateTime.UtcNow;
     public int Attempt { get; init; } = 1;

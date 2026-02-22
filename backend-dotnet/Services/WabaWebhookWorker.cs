@@ -20,6 +20,16 @@ public class WabaWebhookWorker(
         public string Body { get; init; } = string.Empty;
     }
 
+    private sealed class StatusItem
+    {
+        public string MessageId { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public DateTime? AtUtc { get; init; }
+        public string ErrorCode { get; init; } = string.Empty;
+        public string ErrorTitle { get; init; } = string.Empty;
+        public string ErrorDetail { get; init; } = string.Empty;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await foreach (var item in queue.ReadAllAsync(stoppingToken))
@@ -27,12 +37,49 @@ public class WabaWebhookWorker(
             using var scope = scopeFactory.CreateScope();
             var controlDb = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
             var tenantResolver = scope.ServiceProvider.GetRequiredService<WabaTenantResolver>();
+            var eventRow = await controlDb.WebhookEvents
+                .FirstOrDefaultAsync(x => x.Provider == item.Provider && x.EventKey == item.EventKey, stoppingToken);
+
+            if (eventRow is not null && eventRow.Status == "Processed")
+            {
+                continue;
+            }
+
+            if (eventRow is null)
+            {
+                eventRow = new WebhookEvent
+                {
+                    Id = item.Id,
+                    Provider = item.Provider,
+                    EventKey = item.EventKey,
+                    PayloadJson = item.RawBody,
+                    Status = "Queued",
+                    RetryCount = Math.Max(item.Attempt - 1, 0),
+                    MaxRetries = item.MaxAttempts,
+                    ReceivedAtUtc = item.ReceivedAtUtc
+                };
+                controlDb.WebhookEvents.Add(eventRow);
+                await controlDb.SaveChangesAsync(stoppingToken);
+            }
+            else
+            {
+                eventRow.PayloadJson = item.RawBody;
+                eventRow.RetryCount = Math.Max(item.Attempt - 1, eventRow.RetryCount);
+                eventRow.MaxRetries = item.MaxAttempts;
+                eventRow.Status = "Processing";
+                eventRow.LastError = string.Empty;
+                await controlDb.SaveChangesAsync(stoppingToken);
+            }
 
             try
             {
                 var parse = ParsePayload(item.RawBody);
                 if (!parse.Ok)
                 {
+                    eventRow.Status = "DeadLetter";
+                    eventRow.LastError = $"parse_failed:{parse.Error}";
+                    eventRow.DeadLetteredAtUtc = DateTime.UtcNow;
+                    await controlDb.SaveChangesAsync(stoppingToken);
                     controlDb.AuditLogs.Add(new AuditLog
                     {
                         Id = Guid.NewGuid(),
@@ -48,6 +95,10 @@ public class WabaWebhookWorker(
 
                 if (string.IsNullOrWhiteSpace(parse.PhoneNumberId) || (parse.Inbound.Count == 0 && parse.Statuses.Count == 0))
                 {
+                    eventRow.Status = "Ignored";
+                    eventRow.LastError = "missing_phone_or_events";
+                    eventRow.ProcessedAtUtc = DateTime.UtcNow;
+                    await controlDb.SaveChangesAsync(stoppingToken);
                     controlDb.AuditLogs.Add(new AuditLog
                     {
                         Id = Guid.NewGuid(),
@@ -64,6 +115,11 @@ public class WabaWebhookWorker(
                 var resolved = await tenantResolver.ResolveByPhoneNumberIdAsync(parse.PhoneNumberId, stoppingToken);
                 if (resolved is null)
                 {
+                    eventRow.Status = "Unmapped";
+                    eventRow.PhoneNumberId = parse.PhoneNumberId;
+                    eventRow.LastError = "tenant_not_mapped";
+                    eventRow.ProcessedAtUtc = DateTime.UtcNow;
+                    await controlDb.SaveChangesAsync(stoppingToken);
                     controlDb.AuditLogs.Add(new AuditLog
                     {
                         Id = Guid.NewGuid(),
@@ -89,23 +145,15 @@ public class WabaWebhookWorker(
                 cfg.WebhookVerifiedAtUtc = DateTime.UtcNow;
                 if (cfg.WebhookSubscribedAtUtc.HasValue && cfg.PermissionAuditPassed)
                     cfg.OnboardingState = "ready";
+                eventRow.TenantId = resolved.TenantId;
+                eventRow.PhoneNumberId = parse.PhoneNumberId;
 
                 foreach (var status in parse.Statuses)
                 {
                     var msg = await tenantDb.Set<Message>()
                         .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.ProviderMessageId == status.MessageId, stoppingToken);
                     if (msg is null) continue;
-                    var normalized = status.Status.Trim().ToLowerInvariant();
-                    msg.Status = normalized switch
-                    {
-                        "sent" => "Sent",
-                        "delivered" => "Delivered",
-                        "read" => "Read",
-                        "failed" => "Failed",
-                        _ => msg.Status
-                    };
-                    if (normalized == "delivered" && status.AtUtc.HasValue) msg.DeliveredAtUtc = status.AtUtc.Value;
-                    if (normalized == "read" && status.AtUtc.HasValue) msg.ReadAtUtc = status.AtUtc.Value;
+                    ApplyStatusTransition(msg, status);
                 }
 
                 foreach (var inbound in parse.Inbound)
@@ -210,6 +258,10 @@ public class WabaWebhookWorker(
                 }
 
                 await tenantDb.SaveChangesAsync(stoppingToken);
+                eventRow.Status = "Processed";
+                eventRow.ProcessedAtUtc = DateTime.UtcNow;
+                eventRow.LastError = string.Empty;
+                await controlDb.SaveChangesAsync(stoppingToken);
                 controlDb.AuditLogs.Add(new AuditLog
                 {
                     Id = Guid.NewGuid(),
@@ -229,6 +281,10 @@ public class WabaWebhookWorker(
                 logger.LogError(ex, "WABA webhook worker failed for queue item {QueueId} attempt={Attempt}", item.Id, item.Attempt);
                 if (item.Attempt < item.MaxAttempts)
                 {
+                    eventRow.Status = "RetryScheduled";
+                    eventRow.RetryCount = item.Attempt;
+                    eventRow.LastError = ex.GetType().Name;
+                    await controlDb.SaveChangesAsync(stoppingToken);
                     controlDb.AuditLogs.Add(new AuditLog
                     {
                         Id = Guid.NewGuid(),
@@ -242,6 +298,8 @@ public class WabaWebhookWorker(
                     await queue.EnqueueAsync(new WabaWebhookQueueItem
                     {
                         Id = item.Id,
+                        Provider = item.Provider,
+                        EventKey = item.EventKey,
                         RawBody = item.RawBody,
                         ReceivedAtUtc = item.ReceivedAtUtc,
                         Attempt = item.Attempt + 1,
@@ -250,6 +308,11 @@ public class WabaWebhookWorker(
                 }
                 else
                 {
+                    eventRow.Status = "DeadLetter";
+                    eventRow.RetryCount = item.Attempt;
+                    eventRow.LastError = $"{ex.GetType().Name}: {ex.Message}";
+                    eventRow.DeadLetteredAtUtc = DateTime.UtcNow;
+                    await controlDb.SaveChangesAsync(stoppingToken);
                     controlDb.AuditLogs.Add(new AuditLog
                     {
                         Id = Guid.NewGuid(),
@@ -265,11 +328,11 @@ public class WabaWebhookWorker(
         }
     }
 
-    private static (bool Ok, string Error, string PhoneNumberId, List<InboundItem> Inbound, List<(string MessageId, string Status, DateTime? AtUtc)> Statuses) ParsePayload(string rawBody)
+    private static (bool Ok, string Error, string PhoneNumberId, List<InboundItem> Inbound, List<StatusItem> Statuses) ParsePayload(string rawBody)
     {
         var phoneNumberId = string.Empty;
         var inbound = new List<InboundItem>();
-        var statuses = new List<(string MessageId, string Status, DateTime? AtUtc)>();
+        var statuses = new List<StatusItem>();
         try
         {
             using var doc = JsonDocument.Parse(rawBody);
@@ -294,8 +357,26 @@ public class WabaWebhookWorker(
                             DateTime? atUtc = null;
                             if (s.TryGetProperty("timestamp", out var tsNode) && long.TryParse(tsNode.GetString(), out var unixTs))
                                 atUtc = DateTimeOffset.FromUnixTimeSeconds(unixTs).UtcDateTime;
+                            var errorCode = string.Empty;
+                            var errorTitle = string.Empty;
+                            var errorDetail = string.Empty;
+                            if (s.TryGetProperty("errors", out var errorsNode) && errorsNode.ValueKind == JsonValueKind.Array && errorsNode.GetArrayLength() > 0)
+                            {
+                                var err = errorsNode[0];
+                                errorCode = err.TryGetProperty("code", out var cNode) ? cNode.ToString() : string.Empty;
+                                errorTitle = err.TryGetProperty("title", out var tNode) ? tNode.GetString() ?? string.Empty : string.Empty;
+                                errorDetail = err.TryGetProperty("details", out var dNode) ? dNode.GetString() ?? string.Empty : string.Empty;
+                            }
                             if (!string.IsNullOrWhiteSpace(messageId) && !string.IsNullOrWhiteSpace(status))
-                                statuses.Add((messageId, status, atUtc));
+                                statuses.Add(new StatusItem
+                                {
+                                    MessageId = messageId,
+                                    Status = status,
+                                    AtUtc = atUtc,
+                                    ErrorCode = errorCode,
+                                    ErrorTitle = errorTitle,
+                                    ErrorDetail = errorDetail
+                                });
                         }
                     }
 
@@ -333,5 +414,66 @@ public class WabaWebhookWorker(
         {
             return (false, ex.GetType().Name, string.Empty, inbound, statuses);
         }
+    }
+
+    private static void ApplyStatusTransition(Message msg, StatusItem incoming)
+    {
+        var next = NormalizeStatus(incoming.Status);
+        if (string.IsNullOrWhiteSpace(next)) return;
+        var currentPriority = StatusPriority(msg.Status);
+        var nextPriority = StatusPriority(next);
+        if (IsTerminal(msg.Status)) return;
+        if (nextPriority <= currentPriority) return;
+
+        msg.Status = next;
+        if (next == "Delivered" && incoming.AtUtc.HasValue) msg.DeliveredAtUtc = incoming.AtUtc.Value;
+        if (next == "Read" && incoming.AtUtc.HasValue) msg.ReadAtUtc = incoming.AtUtc.Value;
+        if (next.StartsWith("Failed", StringComparison.Ordinal))
+        {
+            var reasonType = IsRetryableError(incoming.ErrorCode, incoming.ErrorTitle, incoming.ErrorDetail) ? "retryable" : "permanent";
+            msg.LastError = $"{reasonType}; code={incoming.ErrorCode}; title={incoming.ErrorTitle}; details={incoming.ErrorDetail}".Trim();
+        }
+    }
+
+    private static bool IsTerminal(string status)
+        => string.Equals(status, "Read", StringComparison.OrdinalIgnoreCase)
+           || status.StartsWith("Failed", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeStatus(string raw)
+    {
+        return (raw ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "accepted" => "AcceptedByMeta",
+            "sent" => "Sent",
+            "delivered" => "Delivered",
+            "read" => "Read",
+            "failed" => "Failed",
+            _ => string.Empty
+        };
+    }
+
+    private static int StatusPriority(string status)
+    {
+        var s = (status ?? string.Empty).Trim();
+        if (s.StartsWith("Failed", StringComparison.OrdinalIgnoreCase)) return 99;
+        return s switch
+        {
+            "Queued" => 10,
+            "Accepted" => 15,
+            "AcceptedByMeta" => 20,
+            "Sent" => 30,
+            "Delivered" => 40,
+            "Read" => 50,
+            "Received" => 60,
+            _ => 0
+        };
+    }
+
+    private static bool IsRetryableError(string code, string title, string details)
+    {
+        var raw = $"{code} {title} {details}".ToLowerInvariant();
+        if (raw.Contains("rate limit") || raw.Contains("temporar") || raw.Contains("timeout") || raw.Contains("server") || raw.Contains("5xx")) return true;
+        if (raw.Contains("invalid") || raw.Contains("permission") || raw.Contains("policy") || raw.Contains("rejected") || raw.Contains("not registered") || raw.Contains("token")) return false;
+        return false;
     }
 }

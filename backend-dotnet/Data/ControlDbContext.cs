@@ -17,4 +17,5 @@ public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbCo
     public DbSet<TenantSubscription> TenantSubscriptions => Set<TenantSubscription>();
     public DbSet<TenantUsage> TenantUsages => Set<TenantUsage>();
     public DbSet<BillingInvoice> BillingInvoices => Set<BillingInvoice>();
+    public DbSet<WebhookEvent> WebhookEvents => Set<WebhookEvent>();
 }

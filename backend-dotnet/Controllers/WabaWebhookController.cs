@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Mvc;
 using Textzy.Api.Data;
 using Textzy.Api.Models;
 using Textzy.Api.Services;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Textzy.Api.Controllers;
 
@@ -53,6 +55,8 @@ public class WabaWebhookController(
         {
             await queue.EnqueueAsync(new WabaWebhookQueueItem
             {
+                Provider = "meta",
+                EventKey = ComputeEventKey(rawBody),
                 RawBody = rawBody,
                 ReceivedAtUtc = DateTime.UtcNow
             }, ct);
@@ -74,5 +78,11 @@ public class WabaWebhookController(
         }
 
         return Ok(new { ok = true, queued = true });
+    }
+
+    private static string ComputeEventKey(string rawBody)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(rawBody ?? string.Empty));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 }

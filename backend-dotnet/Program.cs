@@ -255,6 +255,25 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AuditLogs_CreatedAtUtc" ON "AuditLogs" ("CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "WebhookEvents" (
+            "Id" uuid PRIMARY KEY,
+            "Provider" text NOT NULL,
+            "EventKey" text NOT NULL,
+            "TenantId" uuid NULL,
+            "PhoneNumberId" text NOT NULL,
+            "PayloadJson" text NOT NULL,
+            "Status" text NOT NULL,
+            "RetryCount" integer NOT NULL DEFAULT 0,
+            "MaxRetries" integer NOT NULL DEFAULT 3,
+            "LastError" text NOT NULL DEFAULT '',
+            "ReceivedAtUtc" timestamp with time zone NOT NULL,
+            "ProcessedAtUtc" timestamp with time zone NULL,
+            "DeadLetteredAtUtc" timestamp with time zone NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_WebhookEvents_Provider_EventKey" ON "WebhookEvents" ("Provider","EventKey");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_WebhookEvents_Status_ReceivedAtUtc" ON "WebhookEvents" ("Status","ReceivedAtUtc");""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "TeamInvitations" (
