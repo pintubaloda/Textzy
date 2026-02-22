@@ -1,45 +1,30 @@
 using Textzy.Api.Data;
 using Textzy.Api.DTOs;
 using Textzy.Api.Models;
-using Textzy.Api.Providers;
+using Microsoft.EntityFrameworkCore;
 
 namespace Textzy.Api.Services;
 
 public class MessagingService(
     TenantDbContext db,
     TenancyContext tenancy,
-    IMessageProvider provider,
-    WhatsAppCloudService whatsapp)
+    OutboundMessageQueueService queue)
 {
-    public async Task<Message> SendAsync(SendMessageRequest request, CancellationToken ct = default)
+    public async Task<Message> EnqueueAsync(SendMessageRequest request, CancellationToken ct = default)
     {
-        string providerMessageId;
-
-        if (request.Channel == ChannelType.WhatsApp)
+        var idempotencyKey = (request.IdempotencyKey ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
         {
-            if (request.UseTemplate)
-            {
-                providerMessageId = await whatsapp.SendTemplateMessageAsync(new WabaSendTemplateRequest
-                {
-                    Recipient = request.Recipient,
-                    TemplateName = request.TemplateName,
-                    LanguageCode = request.TemplateLanguageCode,
-                    BodyParameters = request.TemplateParameters
-                }, ct);
-            }
-            else
-            {
-                var isOpen = await whatsapp.IsSessionWindowOpenAsync(request.Recipient, ct);
-                if (!isOpen)
-                    throw new InvalidOperationException("24-hour WhatsApp session closed. Use template message.");
+            idempotencyKey = $"msg-{tenancy.TenantId:N}-{request.Channel}-{request.Recipient}-{StableHash($"{request.UseTemplate}|{request.TemplateName}|{request.TemplateLanguageCode}|{string.Join(",", request.TemplateParameters)}|{request.Body}")}";
+        }
 
-                providerMessageId = await whatsapp.SendSessionMessageAsync(request.Recipient, request.Body, ct);
-            }
-        }
-        else
-        {
-            providerMessageId = await provider.SendAsync(request.Channel, request.Recipient, request.Body, ct);
-        }
+        var existing = await db.Messages
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.IdempotencyKey == idempotencyKey, ct);
+        if (existing is not null) return existing;
+
+        var messageBody = request.UseTemplate
+            ? $"{request.TemplateName}|{string.Join(",", request.TemplateParameters)}|{request.TemplateLanguageCode}"
+            : request.Body;
 
         var message = new Message
         {
@@ -48,9 +33,13 @@ public class MessagingService(
             CampaignId = request.CampaignId,
             Channel = request.Channel,
             Recipient = request.Recipient,
-            Body = request.Body,
-            ProviderMessageId = providerMessageId,
-            Status = "Accepted"
+            Body = messageBody,
+            MessageType = request.UseTemplate ? "template" : "session",
+            IdempotencyKey = idempotencyKey,
+            RetryCount = 0,
+            LastError = string.Empty,
+            QueueProvider = queue.ActiveProvider,
+            Status = "Queued"
         };
 
         db.Messages.Add(message);
@@ -92,6 +81,18 @@ public class MessagingService(
         }
 
         await db.SaveChangesAsync(ct);
+        await queue.EnqueueAsync(new OutboundMessageQueueItem
+        {
+            MessageId = message.Id,
+            TenantId = tenancy.TenantId,
+            TenantSlug = tenancy.TenantSlug
+        }, ct);
         return message;
+    }
+
+    private static string StableHash(string raw)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw ?? string.Empty));
+        return Convert.ToHexString(bytes)[..16].ToLowerInvariant();
     }
 }

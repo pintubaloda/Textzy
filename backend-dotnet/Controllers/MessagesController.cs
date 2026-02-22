@@ -23,8 +23,8 @@ public class MessagesController(
 
         try
         {
-            var message = await messaging.SendAsync(request, ct);
-            await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("message.sent", new
+            var message = await messaging.EnqueueAsync(request, ct);
+            await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("message.queued", new
             {
                 message.Id,
                 message.Recipient,
@@ -36,6 +36,7 @@ public class MessagesController(
             return Ok(new
             {
                 message.Id,
+                message.IdempotencyKey,
                 message.ProviderMessageId,
                 message.Status,
                 message.CreatedAtUtc

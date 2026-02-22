@@ -4,6 +4,7 @@ namespace Textzy.Api.DTOs;
 
 public class SendMessageRequest
 {
+    public string IdempotencyKey { get; set; } = string.Empty;
     public string Recipient { get; set; } = string.Empty;
     public string Body { get; set; } = string.Empty;
     public ChannelType Channel { get; set; }

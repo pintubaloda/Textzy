@@ -712,7 +712,7 @@ public class AutomationController(
                 var body = ResolveValue(config, payload, "body", "message");
                 if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(body))
                 {
-                    await messaging.SendAsync(new SendMessageRequest
+                    await messaging.EnqueueAsync(new SendMessageRequest
                     {
                         Recipient = recipient,
                         Body = Interpolate(body, payload),
@@ -737,7 +737,7 @@ public class AutomationController(
                     {
                         foreach (var item in pElem.EnumerateArray()) paramValues.Add(Interpolate(item.ToString(), payload));
                     }
-                    await messaging.SendAsync(new SendMessageRequest
+                    await messaging.EnqueueAsync(new SendMessageRequest
                     {
                         Recipient = recipient,
                         Body = ResolveValue(config, payload, "body", "message"),
