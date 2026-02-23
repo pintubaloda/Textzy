@@ -347,6 +347,7 @@ function CanvasNode({ node, isSelected, onSelect, onStartConnect, onConnectTo, o
         transition: isDragging ? "none" : "transform 0.1s ease, box-shadow 0.1s ease",
       }}
       onMouseDown={(e) => {
+        e.stopPropagation();
         if (e.target.closest("[data-connect-handle]") || e.target.closest("[data-delete-btn]")) return;
         onDragStart(e, node.id);
         onSelect(node.id);
@@ -1007,6 +1008,13 @@ function JsonField({ value, onChange, rows = 4, placeholder = "" }) {
 
 function ButtonListEditor({ buttons, onChange, max = 3 }) {
   const list = Array.isArray(buttons) ? buttons : [];
+  const move = (from, to) => {
+    if (to < 0 || to >= list.length) return;
+    const next = [...list];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    onChange(next);
+  };
   return (
     <div className="space-y-1.5">
       {list.map((btn, i) => (
@@ -1017,6 +1025,14 @@ function ButtonListEditor({ buttons, onChange, max = 3 }) {
           <button className="w-7 h-7 rounded border border-slate-200 flex items-center justify-center text-slate-400 hover:text-red-500 hover:border-red-300"
             onClick={() => onChange(list.filter((_, j) => j !== i))}>
             <X size={12} />
+          </button>
+          <button className="w-7 h-7 rounded border border-slate-200 flex items-center justify-center text-slate-400 hover:text-slate-600"
+            onClick={() => move(i, i - 1)} title="Move up">
+            ↑
+          </button>
+          <button className="w-7 h-7 rounded border border-slate-200 flex items-center justify-center text-slate-400 hover:text-slate-600"
+            onClick={() => move(i, i + 1)} title="Move down">
+            ↓
           </button>
         </div>
       ))}
@@ -1032,6 +1048,13 @@ function ButtonListEditor({ buttons, onChange, max = 3 }) {
 
 function CtaButtonEditor({ buttons, onChange, max = 2 }) {
   const list = Array.isArray(buttons) ? buttons : [];
+  const move = (from, to) => {
+    if (to < 0 || to >= list.length) return;
+    const next = [...list];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    onChange(next);
+  };
   return (
     <div className="space-y-2">
       {list.map((btn, i) => (
@@ -1042,6 +1065,14 @@ function CtaButtonEditor({ buttons, onChange, max = 2 }) {
             <button className="w-7 h-7 rounded border border-slate-200 flex items-center justify-center text-slate-400 hover:text-red-500"
               onClick={() => onChange(list.filter((_, j) => j !== i))}>
               <X size={12} />
+            </button>
+            <button className="w-7 h-7 rounded border border-slate-200 flex items-center justify-center text-slate-400 hover:text-slate-600"
+              onClick={() => move(i, i - 1)} title="Move up">
+              ↑
+            </button>
+            <button className="w-7 h-7 rounded border border-slate-200 flex items-center justify-center text-slate-400 hover:text-slate-600"
+              onClick={() => move(i, i + 1)} title="Move down">
+              ↓
             </button>
           </div>
           <Input className="h-7 text-xs" value={btn.url || ""} placeholder="https://..." 
@@ -1437,6 +1468,8 @@ export default function AutomationsPage() {
   });
 
   const onCanvasMouseDown = (e) => {
+    const clickedNode = !!e.target.closest("[data-node-id]");
+    if (clickedNode) return;
     if (e.target === canvasRef.current || e.target.closest("[data-canvas-bg]")) {
       setIsPanning(true);
       panStart.current = { mx: e.clientX, my: e.clientY, px: pan.x, py: pan.y };
@@ -1445,6 +1478,7 @@ export default function AutomationsPage() {
   };
 
   const onNodeDragStart = (e, nodeId) => {
+    e.preventDefault();
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) return;
     const rect = canvasRef.current.getBoundingClientRect();
@@ -1482,6 +1516,7 @@ export default function AutomationsPage() {
       setPan({ x: panStart.current.px + dx, y: panStart.current.py + dy });
     }
     if (draggingNodeId) {
+      e.preventDefault();
       const rect = canvasRef.current.getBoundingClientRect();
       const wx = (e.clientX - rect.left - pan.x) / zoom;
       const wy = (e.clientY - rect.top - pan.y) / zoom;
@@ -1499,6 +1534,16 @@ export default function AutomationsPage() {
     if (dragConnect) setDragConnect(null);
     panStart.current = null;
   };
+
+  useEffect(() => {
+    const stopInteractions = () => {
+      setIsPanning(false);
+      setDraggingNodeId(null);
+      panStart.current = null;
+    };
+    window.addEventListener("mouseup", stopInteractions);
+    return () => window.removeEventListener("mouseup", stopInteractions);
+  }, []);
 
   const onWheel = (e) => {
     e.preventDefault();
