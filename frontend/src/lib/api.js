@@ -15,7 +15,7 @@ export function getSession() {
     const p = JSON.parse(raw)
     return {
       token: p.token || '',
-      tenantSlug: p.tenantSlug || '',
+      tenantSlug: p.tenantSlug || p.slug || '',
       projectName: p.projectName || '',
       role: p.role || '',
       email: p.email || ''
@@ -41,7 +41,20 @@ async function baseFetch(path, options = {}, useAuth = true) {
   const headers = {
     ...(options.headers || {})
   }
+  const tenantOptionalPrefixes = [
+    '/api/auth/',
+    '/api/public/',
+    '/api/platform/',
+    '/api/payment/webhooks'
+  ]
+  const requiresTenant = useAuth && !tenantOptionalPrefixes.some((p) => path.startsWith(p))
   if (s.tenantSlug) headers['X-Tenant-Slug'] = s.tenantSlug
+  if (requiresTenant && !headers['X-Tenant-Slug']) {
+    if (typeof window !== 'undefined' && window.location.pathname !== '/projects') {
+      window.location.assign('/projects')
+    }
+    throw new Error('Missing tenant context. Please select project.')
+  }
 
   if (useAuth && s.token) headers.Authorization = `Bearer ${s.token}`
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
