@@ -1661,7 +1661,11 @@ function OverviewPage({ flows, limits, flowUsed, flowLimit, activeBots, chatbotL
         ) : (
           <div className="divide-y divide-slate-100">
             {flows.map((f) => (
-              <div key={f.id} className="flex items-center gap-4 px-6 py-4 hover:bg-slate-50 transition-colors">
+              <div
+                key={f.id}
+                className="flex items-center gap-4 px-6 py-4 hover:bg-slate-50 transition-colors cursor-pointer"
+                onClick={() => { setSelectedFlowId(String(f.id)); navigate("/dashboard/automations/workflow"); }}
+              >
                 <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: T.orangeLight }}>
                   <Bot size={16} style={{ color: T.orange }} />
                 </div>
@@ -1672,17 +1676,21 @@ function OverviewPage({ flows, limits, flowUsed, flowLimit, activeBots, chatbotL
                 <Badge className={`${FLOW_COLORS[f.lifecycleStatus]} border text-xs font-medium`}>{f.lifecycleStatus}</Badge>
                 <div className="flex items-center gap-1.5">
                   <Button size="sm" variant="outline" className="text-xs h-7 gap-1"
-                    onClick={() => { setSelectedFlowId(String(f.id)); navigate("/dashboard/automations/workflow"); }}>
+                    onClick={(e) => { e.stopPropagation(); setSelectedFlowId(String(f.id)); navigate("/dashboard/automations/workflow"); }}>
+                    <Settings2 size={11} />Edit
+                  </Button>
+                  <Button size="sm" variant="outline" className="text-xs h-7 gap-1"
+                    onClick={(e) => { e.stopPropagation(); setSelectedFlowId(String(f.id)); navigate("/dashboard/automations/workflow"); }}>
                     <GitBranch size={11} />Workflow
                   </Button>
                   <Button size="sm" className="text-xs h-7 text-white gap-1" style={{ background: T.orange }}
-                    onClick={() => publish(f.id)} disabled={!canPublishBot && f.lifecycleStatus !== "published"}>
+                    onClick={(e) => { e.stopPropagation(); publish(f.id); }} disabled={!canPublishBot && f.lifecycleStatus !== "published"}>
                     <UploadCloud size={11} />Publish
                   </Button>
                   {f.lifecycleStatus === "published" && (
-                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => unpublish(f.id)}>Unpublish</Button>
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={(e) => { e.stopPropagation(); unpublish(f.id); }}>Unpublish</Button>
                   )}
-                  <Button size="sm" variant="ghost" className="text-xs h-7 text-red-500 hover:bg-red-50" onClick={() => deleteFlow(f.id)}>
+                  <Button size="sm" variant="ghost" className="text-xs h-7 text-red-500 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); deleteFlow(f.id); }}>
                     <Trash2 size={11} />
                   </Button>
                 </div>
@@ -2170,4 +2178,3 @@ function QaPage({ faqItems, faqForm, setFaqForm, saveFaq, deleteFaq, editingFaqI
     </div>
   );
 }
-
