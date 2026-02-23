@@ -1148,6 +1148,8 @@ export default function AutomationsPage() {
   const [billingLimits, setBillingLimits] = useState({});
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ name: "", description: "", companyName: "" });
+  const [showEditFlow, setShowEditFlow] = useState(false);
+  const [editFlowForm, setEditFlowForm] = useState({ name: "", description: "", isActive: true });
 
   /* ── History-aware node state ── */
   const [history, dispatch] = useReducer(historyReducer, { past: [], present: [], future: [] });
@@ -1238,6 +1240,14 @@ export default function AutomationsPage() {
 
   useEffect(() => { loadAll(); }, []);
   useEffect(() => { if (selectedFlowId) loadFlowDetails(selectedFlowId); }, [selectedFlowId]);
+  useEffect(() => {
+    if (!selectedFlow) return;
+    setEditFlowForm({
+      name: selectedFlow.name || "",
+      description: selectedFlow.description || "",
+      isActive: !!selectedFlow.isActive,
+    });
+  }, [selectedFlow]);
   // Mark dirty when nodes change (but not on initial load / reset)
   useEffect(() => {
     if (history.past.length > 0) setIsDirty(true);
@@ -1330,6 +1340,26 @@ export default function AutomationsPage() {
       await loadAll();
       if (String(selectedFlowId) === String(flowId)) { setSelectedFlowId(""); setNodes([]); }
     } catch (e) { toast.error(e?.message || "Delete failed"); }
+  };
+
+  const updateSelectedFlow = async () => {
+    if (!selectedFlowId || !selectedFlow) return;
+    try {
+      const fallbackKeywords = triggerKeywords.split(",").map((x) => x.trim()).filter(Boolean);
+      await apiPut(`/api/automation/flows/${selectedFlowId}`, {
+        name: editFlowForm.name || selectedFlow.name || "",
+        description: editFlowForm.description || "",
+        channel: selectedFlow.channel || "waba",
+        triggerType: selectedFlow.triggerType || "keyword",
+        isActive: !!editFlowForm.isActive,
+        triggerConfigJson: selectedFlow.triggerConfigJson || JSON.stringify({ keywords: fallbackKeywords }),
+      });
+      toast.success("Flow updated");
+      setShowEditFlow(false);
+      await loadAll();
+    } catch (e) {
+      toast.error(e?.message || "Update failed");
+    }
   };
 
   /* ── Node operations ── */
@@ -1592,6 +1622,9 @@ export default function AutomationsPage() {
             canUndo={canUndo} canRedo={canRedo} undoNodes={undoNodes} redoNodes={redoNodes}
             isDirty={isDirty} lastSaved={lastSaved} validation={validation}
             resetNodes={resetNodes}
+            showEditFlow={showEditFlow} setShowEditFlow={setShowEditFlow}
+            editFlowForm={editFlowForm} setEditFlowForm={setEditFlowForm}
+            updateSelectedFlow={updateSelectedFlow} deleteFlow={deleteFlow}
           />}
           {mode === "qa" && <QaPage faqItems={faqItems} faqForm={faqForm} setFaqForm={setFaqForm} saveFaq={saveFaq} deleteFaq={deleteFaq} editingFaqId={editingFaqId} startEditFaq={startEditFaq} cancelEditFaq={cancelEditFaq} />}
         </div>
@@ -1715,7 +1748,8 @@ function WorkflowCanvas({
   onNodeDragStart, onStartConnect, onConnectToNode, addNode, updateNode, removeNode,
   duplicateNode, disconnectNode,
   saveDraft, publish, saveTriggerKeywords, setZoom, fitToScreen, canPublishBot,
-  canUndo, canRedo, undoNodes, redoNodes, isDirty, lastSaved, validation, resetNodes
+  canUndo, canRedo, undoNodes, redoNodes, isDirty, lastSaved, validation, resetNodes,
+  showEditFlow, setShowEditFlow, editFlowForm, setEditFlowForm, updateSelectedFlow, deleteFlow
 }) {
   if (!selectedFlowId) {
     return (
@@ -1914,9 +1948,46 @@ function WorkflowCanvas({
               <Save size={12} />Save
               <kbd className="ml-1 text-[9px] bg-slate-100 rounded px-1 text-slate-400">⌘S</kbd>
             </Button>
+            <Dialog open={showEditFlow} onOpenChange={setShowEditFlow}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
+                  <Settings2 size={12} />Edit
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Edit Flow</DialogTitle>
+                  <DialogDescription>Update bot name, description and status.</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3 pt-2">
+                  <div>
+                    <Label className="text-xs font-semibold">Bot Name</Label>
+                    <Input className="mt-1" value={editFlowForm.name} onChange={(e) => setEditFlowForm((p) => ({ ...p, name: e.target.value }))} />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-semibold">Description</Label>
+                    <Textarea rows={2} className="mt-1" value={editFlowForm.description} onChange={(e) => setEditFlowForm((p) => ({ ...p, description: e.target.value }))} />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={editFlowForm.isActive}
+                      onChange={(e) => setEditFlowForm((p) => ({ ...p, isActive: e.target.checked }))}
+                    />
+                    Active
+                  </label>
+                  <Button className="w-full text-white" style={{ background: T.orange }} onClick={updateSelectedFlow}>
+                    Update Flow
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
             <Button size="sm" className="h-7 text-xs gap-1 text-white" style={{ background: T.orange }}
               onClick={() => publish()} disabled={!canPublishBot && selectedFlow?.lifecycleStatus !== "published" || validation.errors.length > 0}>
               <UploadCloud size={12} />Publish
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-red-500 hover:bg-red-50" onClick={() => deleteFlow(selectedFlowId)}>
+              <Trash2 size={12} />Delete
             </Button>
           </div>
         </div>
