@@ -1820,6 +1820,13 @@ function WorkflowCanvas({
           </div>
         </div>
 
+        {/* Trigger config (moved to top for visibility) */}
+        <div className="border-b border-slate-100 p-3 space-y-2">
+          <Label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 flex items-center gap-1"><Zap size={10} />Trigger Keywords</Label>
+          <Input value={triggerKeywords} onChange={(e) => setTriggerKeywords(e.target.value)} className="h-7 text-xs" placeholder="hi,hello,support" />
+          <Button size="sm" className="w-full h-7 text-xs text-white" style={{ background: T.orange }} onClick={saveTriggerKeywords}>Save Trigger</Button>
+        </div>
+
         <ScrollArea className="flex-1">
           <div className="p-3 space-y-3">
             {filteredSections.map((section) => {
@@ -1869,13 +1876,6 @@ function WorkflowCanvas({
             })}
           </div>
         </ScrollArea>
-
-        {/* Trigger config */}
-        <div className="border-t border-slate-100 p-3 space-y-2">
-          <Label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 flex items-center gap-1"><Zap size={10} />Trigger Keywords</Label>
-          <Input value={triggerKeywords} onChange={(e) => setTriggerKeywords(e.target.value)} className="h-7 text-xs" placeholder="hi,hello,support" />
-          <Button size="sm" className="w-full h-7 text-xs text-white" style={{ background: T.orange }} onClick={saveTriggerKeywords}>Save Trigger</Button>
-        </div>
       </div>
 
       {/* ── Canvas ── */}
