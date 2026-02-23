@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useEffect, useMemo, useState } from "react";
-import { apiGet, wabaExchangeCode, wabaGetOnboardingStatus, wabaStartOnboarding } from "@/lib/api";
+import { apiGet, getTenantWebhookAnalytics, wabaExchangeCode, wabaGetOnboardingStatus, wabaStartOnboarding } from "@/lib/api";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
@@ -30,6 +30,8 @@ const DashboardOverview = () => {
   const [campaigns, setCampaigns] = useState([]);
   const [wabaStatus, setWabaStatus] = useState({ state: "requested", isConnected: false, businessName: "", phone: "" });
   const [connectingWaba, setConnectingWaba] = useState(false);
+  const [webhookAnalytics, setWebhookAnalytics] = useState(null);
+  const [analyticsDays, setAnalyticsDays] = useState(7);
 
   useEffect(() => {
     Promise.all([apiGet("/api/messages"), apiGet("/api/contacts"), apiGet("/api/campaigns")])
@@ -40,6 +42,7 @@ const DashboardOverview = () => {
       })
       .catch(() => {});
     loadWabaStatus();
+    loadWebhookAnalytics(7);
   }, []);
 
   const facebookAppId = process.env.REACT_APP_FACEBOOK_APP_ID || "";
@@ -51,6 +54,15 @@ const DashboardOverview = () => {
       setWabaStatus(data || { state: "requested", isConnected: false, businessName: "", phone: "" });
     } catch {
       setWabaStatus({ state: "requested", isConnected: false, businessName: "", phone: "" });
+    }
+  };
+
+  const loadWebhookAnalytics = async (days) => {
+    try {
+      const an = await getTenantWebhookAnalytics(days);
+      setWebhookAnalytics(an || null);
+    } catch {
+      setWebhookAnalytics(null);
     }
   };
 
@@ -187,6 +199,21 @@ const DashboardOverview = () => {
       unread: false,
     },
   ];
+
+  const webhookStatusData = useMemo(() => {
+    const map = webhookAnalytics?.statusSummary || {};
+    return ["AcceptedByMeta", "Sent", "Delivered", "Read", "Failed"].map((k) => ({
+      name: k.replace("ByMeta", ""),
+      count: Number(map[k] || map[k.toLowerCase()] || 0),
+    }));
+  }, [webhookAnalytics]);
+
+  const webhookFailureData = useMemo(() => {
+    const map = webhookAnalytics?.failureCodes || {};
+    return Object.keys(map)
+      .slice(0, 6)
+      .map((k) => ({ name: k, count: Number(map[k] || 0) }));
+  }, [webhookAnalytics]);
 
   const getStatusBadge = (status) => {
     switch (status) {
@@ -380,6 +407,63 @@ const DashboardOverview = () => {
                   {conversation.unread && (
                     <div className="w-2 h-2 bg-orange-500 rounded-full mt-2 flex-shrink-0"></div>
                   )}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-6">
+        <Card className="border-slate-200">
+          <CardHeader>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle>Webhook Status Analytics</CardTitle>
+                <CardDescription>Tenant-level outbound status in last {analyticsDays} days</CardDescription>
+              </div>
+              <select
+                className="h-9 rounded-md border border-slate-200 bg-white px-2 text-sm"
+                value={analyticsDays}
+                onChange={(e) => {
+                  const d = Number(e.target.value);
+                  setAnalyticsDays(d);
+                  loadWebhookAnalytics(d);
+                }}
+              >
+                <option value={7}>7d</option>
+                <option value={15}>15d</option>
+                <option value={30}>30d</option>
+              </select>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[260px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={webhookStatusData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                  <XAxis dataKey="name" stroke="#64748B" fontSize={12} />
+                  <YAxis stroke="#64748B" fontSize={12} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#f97316" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>Failure Code Diagnostics</CardTitle>
+            <CardDescription>Top webhook/message failure codes for this tenant</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {!webhookFailureData.length && <p className="text-sm text-slate-500">No recent failure codes.</p>}
+              {webhookFailureData.map((row) => (
+                <div key={row.name} className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2">
+                  <span className="text-sm font-medium text-slate-700">{row.name}</span>
+                  <Badge variant="secondary" className="bg-orange-100 text-orange-700">{row.count}</Badge>
                 </div>
               ))}
             </div>

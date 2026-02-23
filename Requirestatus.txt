@@ -178,3 +178,22 @@ Update: 2026-02-22 (Platform ops wiring: queue health + WABA policy + analytics)
   - New tab: WABA Error Policies (list/upsert/deactivate)
   - Webhook Logs tab now includes queue health KPI cards
   - Webhook analytics panel (tenant selector, days filter, status/failure summaries)
+
+Update: 2026-02-22 (Tenant analytics + idempotency diagnostics + real Rabbit/SQS transport)
+- Added tenant-scoped webhook analytics API:
+  - `GET /api/analytics/webhook?days=7`
+  - Returns tenant status summary, pricing summary, origin summary, failure code summary, and daily trend.
+- Added idempotency diagnostics APIs:
+  - Tenant: `GET /api/idempotency/diagnostics?status=&staleMinutes=30&limit=200`
+  - Platform: `GET /api/platform/idempotency-diagnostics?tenantId=...&status=&staleMinutes=30&limit=300`
+  - Includes status summary + stale reserved key detection.
+- Added tenant dashboard webhook analytics UI:
+  - Dashboard now shows webhook status bar chart + failure-code diagnostics card with day filter.
+- Added platform idempotency diagnostics UI:
+  - New Platform Settings tab with tenant/status/stale filters and diagnostics table.
+- Upgraded queue transport support in both queue services:
+  - Implemented real providers for `rabbitmq` and `sqs` (enqueue/dequeue/depth), alongside existing `memory` and `redis`.
+  - Removed previous rabbitmq/sqs "always fallback" behavior.
+- Added backend package references:
+  - `RabbitMQ.Client`
+  - `AWSSDK.SQS`

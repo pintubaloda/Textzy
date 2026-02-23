@@ -22,7 +22,8 @@ import {
   upsertWabaErrorPolicy,
   deactivateWabaErrorPolicy,
   getPlatformWebhookAnalytics,
-  getPlatformCustomers
+  getPlatformCustomers,
+  getPlatformIdempotencyDiagnostics
 } from "@/lib/api";
 
 const FEATURE_CATALOG = [
@@ -84,6 +85,10 @@ const PlatformSettingsPage = () => {
   const [analyticsTenantId, setAnalyticsTenantId] = useState("");
   const [analyticsDays, setAnalyticsDays] = useState("7");
   const [tenants, setTenants] = useState([]);
+  const [idemTenantId, setIdemTenantId] = useState("");
+  const [idemStatus, setIdemStatus] = useState("all");
+  const [idemStaleMinutes, setIdemStaleMinutes] = useState("30");
+  const [idemData, setIdemData] = useState(null);
 
   const title = useMemo(
     () => (
@@ -93,6 +98,8 @@ const PlatformSettingsPage = () => {
         ? "Webhook Logs"
         : tab === "billing-plans"
         ? "Billing Plans"
+        : tab === "idempotency-diagnostics"
+        ? "Idempotency Diagnostics"
         : tab === "waba-policies"
         ? "WABA Error Policies"
         : "Waba Master Config"
@@ -149,6 +156,25 @@ const PlatformSettingsPage = () => {
             const rows = await listWabaErrorPolicies();
             if (!active) return;
             setWabaPolicies(rows || []);
+          } else if (tab === "idempotency-diagnostics") {
+            const customers = await getPlatformCustomers("").catch(() => []);
+            if (!active) return;
+            const list = customers || [];
+            setTenants(list);
+            const selected = idemTenantId || list[0]?.tenantId || "";
+            setIdemTenantId(selected);
+            if (selected) {
+              const data = await getPlatformIdempotencyDiagnostics({
+                tenantId: selected,
+                status: idemStatus === "all" ? "" : idemStatus,
+                staleMinutes: Number(idemStaleMinutes || 30),
+                limit: 300
+              }).catch(() => null);
+              if (!active) return;
+              setIdemData(data);
+            } else {
+              setIdemData(null);
+            }
           } else {
             const [res, qh, customers, an] = await Promise.all([
               getPlatformWebhookLogs({ provider: logProvider, limit: 100 }),
@@ -219,6 +245,13 @@ const PlatformSettingsPage = () => {
             onClick={() => setTab("waba-policies")}
           >
             WABA Error Policies
+          </Button>
+          <Button
+            variant={tab === "idempotency-diagnostics" ? "default" : "outline"}
+            className={tab === "idempotency-diagnostics" ? "bg-orange-500 hover:bg-orange-600" : ""}
+            onClick={() => setTab("idempotency-diagnostics")}
+          >
+            Idempotency Diagnostics
           </Button>
         </div>
       </div>
@@ -591,6 +624,94 @@ const PlatformSettingsPage = () => {
                     </tr>
                   ))}
                   {wabaPolicies.length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No policies found.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "idempotency-diagnostics" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>Idempotency Key Diagnostics</CardTitle>
+            <CardDescription>Inspect reserved/accepted/failed idempotency keys by tenant.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <Select value={idemTenantId || "none"} onValueChange={(v) => setIdemTenantId(v === "none" ? "" : v)}>
+                <SelectTrigger className="w-[280px]"><SelectValue placeholder="Select tenant" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Select tenant</SelectItem>
+                  {(tenants || []).map((t) => <SelectItem key={t.tenantId} value={t.tenantId}>{t.tenantName}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={idemStatus} onValueChange={setIdemStatus}>
+                <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All status</SelectItem>
+                  <SelectItem value="reserved">reserved</SelectItem>
+                  <SelectItem value="accepted">accepted</SelectItem>
+                  <SelectItem value="failed">failed</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input className="w-[180px]" type="number" min={1} value={idemStaleMinutes} onChange={(e) => setIdemStaleMinutes(e.target.value)} />
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  if (!idemTenantId) return toast.error("Select tenant first");
+                  const data = await getPlatformIdempotencyDiagnostics({
+                    tenantId: idemTenantId,
+                    status: idemStatus === "all" ? "" : idemStatus,
+                    staleMinutes: Number(idemStaleMinutes || 30),
+                    limit: 300
+                  });
+                  setIdemData(data || null);
+                }}
+              >
+                Refresh
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-xs text-slate-500">Reserved</div>
+                <div className="text-lg font-semibold">{idemData?.summary?.reserved || 0}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-xs text-slate-500">Accepted</div>
+                <div className="text-lg font-semibold">{idemData?.summary?.accepted || 0}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-xs text-slate-500">Stale Reserved (&gt; {idemData?.staleMinutes || idemStaleMinutes}m)</div>
+                <div className="text-lg font-semibold">{idemData?.staleReserved || 0}</div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left px-3 py-2">Created</th>
+                    <th className="text-left px-3 py-2">Key</th>
+                    <th className="text-left px-3 py-2">MessageId</th>
+                    <th className="text-left px-3 py-2">Status</th>
+                    <th className="text-left px-3 py-2">Stale</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(idemData?.items || []).map((x) => (
+                    <tr key={x.id} className="border-t border-slate-100">
+                      <td className="px-3 py-2 text-slate-600">{x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleString() : "-"}</td>
+                      <td className="px-3 py-2 text-slate-900">{x.key}</td>
+                      <td className="px-3 py-2 text-slate-700">{x.messageId || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700">{x.status}</td>
+                      <td className="px-3 py-2 text-slate-700">{x.stale ? "yes" : "no"}</td>
+                    </tr>
+                  ))}
+                  {(idemData?.items || []).length === 0 && (
+                    <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No records.</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>

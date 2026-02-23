@@ -263,6 +263,29 @@ export async function getPlatformWebhookAnalytics(tenantId = '', days = 7) {
   return apiGet(`/api/platform/webhook-analytics?${q.toString()}`)
 }
 
+export async function getTenantWebhookAnalytics(days = 7) {
+  const q = new URLSearchParams()
+  q.set('days', String(days))
+  return apiGet(`/api/analytics/webhook?${q.toString()}`)
+}
+
+export async function getTenantIdempotencyDiagnostics({ status = '', staleMinutes = 30, limit = 200 } = {}) {
+  const q = new URLSearchParams()
+  if (status) q.set('status', status)
+  q.set('staleMinutes', String(staleMinutes))
+  q.set('limit', String(limit))
+  return apiGet(`/api/idempotency/diagnostics?${q.toString()}`)
+}
+
+export async function getPlatformIdempotencyDiagnostics({ tenantId, status = '', staleMinutes = 30, limit = 300 } = {}) {
+  const q = new URLSearchParams()
+  if (tenantId) q.set('tenantId', tenantId)
+  if (status) q.set('status', status)
+  q.set('staleMinutes', String(staleMinutes))
+  q.set('limit', String(limit))
+  return apiGet(`/api/platform/idempotency-diagnostics?${q.toString()}`)
+}
+
 export async function listPaymentWebhooks() {
   return apiGet('/api/platform/payment-webhooks')
 }

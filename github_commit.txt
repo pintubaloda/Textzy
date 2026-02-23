@@ -166,3 +166,20 @@ Pending commit:
 
 Summary:
 - Added platform operational APIs (queue health, WABA error taxonomy, webhook analytics) and wired them into Platform Settings UI tabs/cards.
+
+Summary:
+- Added tenant webhook analytics endpoint + dashboard charts, idempotency diagnostics API/UI, and real RabbitMQ/SQS queue transport support.
+
+Pending commit:
+- backend-dotnet/Controllers/TenantWebhookAnalyticsController.cs
+- backend-dotnet/Controllers/IdempotencyDiagnosticsController.cs
+- backend-dotnet/Controllers/PlatformIdempotencyDiagnosticsController.cs
+- backend-dotnet/Services/WabaWebhookQueueService.cs
+- backend-dotnet/Services/OutboundMessageQueueService.cs
+- backend-dotnet/Textzy.Api.csproj
+- frontend/src/lib/api.js
+- frontend/src/pages/dashboard/DashboardOverview.jsx
+- frontend/src/pages/dashboard/PlatformSettingsPage.jsx
+- Requirestatus.txt
+- github_commit.txt
+- masterrequirement.docx

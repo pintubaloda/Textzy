@@ -1,5 +1,10 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using Amazon;
+using Amazon.Runtime;
+using Amazon.SQS;
+using Amazon.SQS.Model;
+using RabbitMQ.Client;
 using StackExchange.Redis;
 
 namespace Textzy.Api.Services;
@@ -18,6 +23,9 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
     private readonly string _provider = (config["OutboundQueue:Provider"] ?? "memory").Trim().ToLowerInvariant();
     private readonly string _redisConn = config["OutboundQueue:RedisConnection"] ?? config["REDIS_URL"] ?? string.Empty;
     private readonly string _redisKey = config["OutboundQueue:RedisListKey"] ?? "textzy:outbound:queue";
+    private readonly string _rabbitConn = config["OutboundQueue:RabbitMq:ConnectionString"] ?? config["RABBITMQ_URL"] ?? string.Empty;
+    private readonly string _rabbitQueue = config["OutboundQueue:RabbitMq:QueueName"] ?? "textzy.outbound.queue";
+    private readonly string _sqsQueueUrl = config["OutboundQueue:Sqs:QueueUrl"] ?? config["AWS_SQS_OUTBOUND_QUEUE_URL"] ?? string.Empty;
     private readonly Lazy<ConnectionMultiplexer?> _redis = new(() =>
     {
         try
@@ -31,16 +39,60 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
             return null;
         }
     });
+    private readonly Lazy<IConnection?> _rabbitConnLazy = new(() =>
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(config["OutboundQueue:RabbitMq:ConnectionString"] ?? config["RABBITMQ_URL"])) return null;
+            var factory = new ConnectionFactory
+            {
+                Uri = new Uri(config["OutboundQueue:RabbitMq:ConnectionString"] ?? config["RABBITMQ_URL"]),
+                DispatchConsumersAsync = false
+            };
+            return factory.CreateConnection();
+        }
+        catch
+        {
+            return null;
+        }
+    });
+    private readonly Lazy<IAmazonSQS?> _sqs = new(() =>
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(config["OutboundQueue:Sqs:QueueUrl"] ?? config["AWS_SQS_OUTBOUND_QUEUE_URL"])) return null;
+            var sqsConfig = new AmazonSQSConfig();
+            if (!string.IsNullOrWhiteSpace(config["OutboundQueue:Sqs:ServiceUrl"] ?? config["AWS_SQS_SERVICE_URL"]))
+            {
+                sqsConfig.ServiceURL = config["OutboundQueue:Sqs:ServiceUrl"] ?? config["AWS_SQS_SERVICE_URL"];
+            }
+            else if (!string.IsNullOrWhiteSpace(config["OutboundQueue:Sqs:Region"] ?? config["AWS_REGION"]))
+            {
+                sqsConfig.RegionEndpoint = RegionEndpoint.GetBySystemName(config["OutboundQueue:Sqs:Region"] ?? config["AWS_REGION"]);
+            }
+
+            var access = config["OutboundQueue:Sqs:AccessKey"] ?? config["AWS_ACCESS_KEY_ID"];
+            var secret = config["OutboundQueue:Sqs:SecretKey"] ?? config["AWS_SECRET_ACCESS_KEY"];
+            if (!string.IsNullOrWhiteSpace(access) && !string.IsNullOrWhiteSpace(secret))
+            {
+                return new AmazonSQSClient(new BasicAWSCredentials(access, secret), sqsConfig);
+            }
+            return new AmazonSQSClient(sqsConfig);
+        }
+        catch
+        {
+            return null;
+        }
+    });
 
     public string ActiveProvider
     {
         get
         {
             if (_provider == "redis" && !string.IsNullOrWhiteSpace(_redisConn) && _redis.Value is not null) return "redis";
-            if (_provider is "rabbitmq" or "sqs")
-            {
-                logger.LogWarning("Outbound queue provider {Provider} is not configured yet; falling back to memory.", _provider);
-            }
+            if (_provider == "rabbitmq" && !string.IsNullOrWhiteSpace(_rabbitConn) && _rabbitConnLazy.Value is not null) return "rabbitmq";
+            if (_provider == "sqs" && !string.IsNullOrWhiteSpace(_sqsQueueUrl) && _sqs.Value is not null) return "sqs";
+            if (_provider is "rabbitmq" or "sqs") logger.LogWarning("Outbound queue provider {Provider} unavailable; falling back to memory.", _provider);
             return "memory";
         }
     }
@@ -54,6 +106,26 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
             await db.ListRightPushAsync(_redisKey, payload);
             return;
         }
+        if (ActiveProvider == "rabbitmq")
+        {
+            using var ch = _rabbitConnLazy.Value!.CreateModel();
+            ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false);
+            var payload = JsonSerializer.Serialize(item);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(payload);
+            var props = ch.CreateBasicProperties();
+            props.Persistent = true;
+            ch.BasicPublish("", _rabbitQueue, props, bytes);
+            return;
+        }
+        if (ActiveProvider == "sqs")
+        {
+            await _sqs.Value!.SendMessageAsync(new SendMessageRequest
+            {
+                QueueUrl = _sqsQueueUrl,
+                MessageBody = JsonSerializer.Serialize(item)
+            }, ct);
+            return;
+        }
 
         Interlocked.Increment(ref _memoryDepth);
         await _memory.Writer.WriteAsync(item, ct);
@@ -65,6 +137,23 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
         {
             var db = _redis.Value!.GetDatabase();
             return await db.ListLengthAsync(_redisKey);
+        }
+        if (ActiveProvider == "rabbitmq")
+        {
+            using var ch = _rabbitConnLazy.Value!.CreateModel();
+            ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false);
+            return ch.MessageCount(_rabbitQueue);
+        }
+        if (ActiveProvider == "sqs")
+        {
+            var attrs = await _sqs.Value!.GetQueueAttributesAsync(new GetQueueAttributesRequest
+            {
+                QueueUrl = _sqsQueueUrl,
+                AttributeNames = new List<string> { "ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible" }
+            }, ct);
+            var visible = attrs.ApproximateNumberOfMessages;
+            var inFlight = attrs.ApproximateNumberOfMessagesNotVisible;
+            return visible + inFlight;
         }
         return Math.Max(0, Interlocked.CompareExchange(ref _memoryDepth, 0, 0));
     }
@@ -82,6 +171,46 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
                     try { return JsonSerializer.Deserialize<OutboundMessageQueueItem>(popped!); } catch { return null; }
                 }
                 await Task.Delay(200, ct);
+            }
+            return null;
+        }
+        if (ActiveProvider == "rabbitmq")
+        {
+            using var ch = _rabbitConnLazy.Value!.CreateModel();
+            ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false);
+            while (!ct.IsCancellationRequested)
+            {
+                var result = ch.BasicGet(_rabbitQueue, autoAck: true);
+                if (result is not null)
+                {
+                    var payload = System.Text.Encoding.UTF8.GetString(result.Body.ToArray());
+                    try { return JsonSerializer.Deserialize<OutboundMessageQueueItem>(payload); } catch { return null; }
+                }
+                await Task.Delay(200, ct);
+            }
+            return null;
+        }
+        if (ActiveProvider == "sqs")
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var received = await _sqs.Value!.ReceiveMessageAsync(new ReceiveMessageRequest
+                {
+                    QueueUrl = _sqsQueueUrl,
+                    MaxNumberOfMessages = 1,
+                    WaitTimeSeconds = 5,
+                    VisibilityTimeout = 30
+                }, ct);
+                var msg = received.Messages.FirstOrDefault();
+                if (msg is null)
+                {
+                    await Task.Delay(200, ct);
+                    continue;
+                }
+                OutboundMessageQueueItem? item = null;
+                try { item = JsonSerializer.Deserialize<OutboundMessageQueueItem>(msg.Body); } catch { }
+                await _sqs.Value.DeleteMessageAsync(_sqsQueueUrl, msg.ReceiptHandle, ct);
+                return item;
             }
             return null;
         }
