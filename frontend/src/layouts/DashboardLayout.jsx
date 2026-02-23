@@ -51,10 +51,18 @@ const DashboardLayout = () => {
   const [darkMode, setDarkMode] = useState(false);
   const [projects, setProjects] = useState([]);
   const [switchingProject, setSwitchingProject] = useState("");
+  const [ownerMode, setOwnerMode] = useState(() => {
+    try {
+      return localStorage.getItem("textzy_owner_mode") || "self";
+    } catch {
+      return "self";
+    }
+  });
   const session = getSession();
   const role = (session.role || "").toLowerCase();
   const canAccessPlatformSettings = role === "super_admin";
   const isPlatformOwner = role === "super_admin";
+  const isPlatformView = isPlatformOwner && ownerMode === "platform";
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
   const isTemplatesPage = location.pathname.startsWith("/dashboard/templates");
   const isSmsSetupPage = location.pathname.startsWith("/dashboard/sms-setup");
@@ -73,6 +81,12 @@ const DashboardLayout = () => {
     initializeMe();
     authProjects().then((res) => setProjects(Array.isArray(res) ? res : [])).catch(() => setProjects([]));
   }, []);
+  useEffect(() => {
+    if (!isPlatformOwner) return;
+    try {
+      localStorage.setItem("textzy_owner_mode", ownerMode);
+    } catch {}
+  }, [isPlatformOwner, ownerMode]);
 
   const handleProjectSwitch = async (slug) => {
     if (!slug || slug === session.tenantSlug) return;
@@ -104,7 +118,7 @@ const DashboardLayout = () => {
     { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
   ];
 
-  const navigation = isPlatformOwner ? platformNavigation : tenantNavigation;
+  const navigation = isPlatformView ? platformNavigation : tenantNavigation;
 
   const isActive = (href) => {
     if (href === "/dashboard") {
@@ -192,6 +206,29 @@ const DashboardLayout = () => {
               <DropdownMenuItem onClick={() => navigate("/projects")}>Manage Projects</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {isPlatformOwner && (
+            <div className="hidden lg:flex items-center rounded-lg border border-slate-200 bg-white p-1">
+              <button
+                className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                  !isPlatformView ? "bg-orange-50 text-orange-600 font-medium" : "text-slate-600 hover:bg-slate-50"
+                }`}
+                onClick={() => setOwnerMode("self")}
+                data-testid="owner-mode-self"
+              >
+                Self Use
+              </button>
+              <button
+                className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                  isPlatformView ? "bg-orange-50 text-orange-600 font-medium" : "text-slate-600 hover:bg-slate-50"
+                }`}
+                onClick={() => setOwnerMode("platform")}
+                data-testid="owner-mode-platform"
+              >
+                Platform Control
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -271,6 +308,19 @@ const DashboardLayout = () => {
                 <CreditCard className="w-4 h-4 mr-2" />
                 Billing
               </DropdownMenuItem>
+              {isPlatformOwner && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setOwnerMode("self")}>
+                    <User className="w-4 h-4 mr-2" />
+                    Self Use Mode
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setOwnerMode("platform")}>
+                    <Shield className="w-4 h-4 mr-2" />
+                    Platform Control Mode
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout} className="text-red-600" data-testid="logout-menu-item">
                 <LogOut className="w-4 h-4 mr-2" />
@@ -393,7 +443,7 @@ const DashboardLayout = () => {
                 )}
               </div>
             ))}
-            {canAccessPlatformSettings && sidebarOpen && (
+            {canAccessPlatformSettings && sidebarOpen && isPlatformView && (
               <div className="pt-3 mt-3 border-t border-slate-200">
                 <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">
                   Platform Setting
