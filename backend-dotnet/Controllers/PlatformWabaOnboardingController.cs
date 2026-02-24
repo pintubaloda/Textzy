@@ -280,6 +280,164 @@ public class PlatformWabaOnboardingController(
     public Task<IActionResult> LookupByWabaAlias([FromQuery] Guid? tenantId, [FromQuery] string wabaId, CancellationToken ct)
         => LookupByWaba(tenantId, wabaId, ct);
 
+    [HttpGet("meta/businesses")]
+    public async Task<IActionResult> MetaBusinesses([FromQuery] Guid? tenantId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+        var ctx = await ResolveLookupTokenAsync(tenantId, ct);
+        if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
+
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/me/businesses?fields=id,name";
+        var (ok, status, body) = await GraphGetRawAsync(url, ctx.AccessToken, ct);
+        if (!ok) return StatusCode(status, new { error = "graph_meta_businesses_failed", status, detail = body });
+        return Content(body, "application/json");
+    }
+
+    [HttpGet("meta/system-users")]
+    public async Task<IActionResult> MetaSystemUsers([FromQuery] string businessId, [FromQuery] Guid? tenantId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+        if (string.IsNullOrWhiteSpace(businessId)) return BadRequest("businessId is required.");
+
+        var ctx = await ResolveLookupTokenAsync(tenantId, ct);
+        if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
+
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{businessId.Trim()}/system_users?fields=id,name,role,created_time";
+        var (ok, status, body) = await GraphGetRawAsync(url, ctx.AccessToken, ct);
+        if (!ok) return StatusCode(status, new { error = "graph_meta_system_users_failed", status, detail = body });
+        return Content(body, "application/json");
+    }
+
+    [HttpGet("meta/owned-wabas")]
+    public async Task<IActionResult> MetaOwnedWabas([FromQuery] string businessId, [FromQuery] Guid? tenantId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+        if (string.IsNullOrWhiteSpace(businessId)) return BadRequest("businessId is required.");
+
+        var ctx = await ResolveLookupTokenAsync(tenantId, ct);
+        if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
+
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{businessId.Trim()}/owned_whatsapp_business_accounts?fields=id,name,business_verification_status";
+        var (ok, status, body) = await GraphGetRawAsync(url, ctx.AccessToken, ct);
+        if (!ok) return StatusCode(status, new { error = "graph_meta_owned_wabas_failed", status, detail = body });
+        return Content(body, "application/json");
+    }
+
+    [HttpGet("meta/phone-numbers")]
+    public async Task<IActionResult> MetaPhoneNumbers([FromQuery] string wabaId, [FromQuery] Guid? tenantId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+        if (string.IsNullOrWhiteSpace(wabaId)) return BadRequest("wabaId is required.");
+
+        var ctx = await ResolveLookupTokenAsync(tenantId, ct);
+        if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
+
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{wabaId.Trim()}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,name_status,status";
+        var (ok, status, body) = await GraphGetRawAsync(url, ctx.AccessToken, ct);
+        if (!ok) return StatusCode(status, new { error = "graph_meta_phone_numbers_failed", status, detail = body });
+        return Content(body, "application/json");
+    }
+
+    [HttpGet("meta/assigned-users")]
+    public async Task<IActionResult> MetaAssignedUsers([FromQuery] string wabaId, [FromQuery] string businessId, [FromQuery] Guid? tenantId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+        if (string.IsNullOrWhiteSpace(wabaId)) return BadRequest("wabaId is required.");
+        if (string.IsNullOrWhiteSpace(businessId)) return BadRequest("businessId is required.");
+
+        var ctx = await ResolveLookupTokenAsync(tenantId, ct);
+        if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
+
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{wabaId.Trim()}/assigned_users?business={Uri.EscapeDataString(businessId.Trim())}";
+        var (ok, status, body) = await GraphGetRawAsync(url, ctx.AccessToken, ct);
+        if (!ok) return StatusCode(status, new { error = "graph_meta_assigned_users_failed", status, detail = body });
+        return Content(body, "application/json");
+    }
+
+    [HttpPost("meta/assigned-users")]
+    public async Task<IActionResult> MetaAssignUser([FromBody] MetaAssignUserRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+        if (string.IsNullOrWhiteSpace(request.WabaId)) return BadRequest("wabaId is required.");
+        if (string.IsNullOrWhiteSpace(request.BusinessId)) return BadRequest("businessId is required.");
+        if (string.IsNullOrWhiteSpace(request.UserId)) return BadRequest("userId is required.");
+
+        var ctx = await ResolveLookupTokenAsync(request.TenantId, ct);
+        if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
+
+        var tasks = request.Tasks is { Length: > 0 } ? request.Tasks : ["MANAGE"];
+        var form = new Dictionary<string, string>
+        {
+            ["user"] = request.UserId.Trim(),
+            ["tasks"] = JsonSerializer.Serialize(tasks),
+            ["business"] = request.BusinessId.Trim()
+        };
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{request.WabaId.Trim()}/assigned_users";
+        var (ok, status, body) = await GraphPostFormRawAsync(url, ctx.AccessToken, form, ct);
+        if (!ok) return StatusCode(status, new { error = "graph_meta_assign_user_failed", status, detail = body });
+        return Content(body, "application/json");
+    }
+
+    [HttpGet("meta/subscribed-apps")]
+    public async Task<IActionResult> MetaSubscribedApps([FromQuery] string wabaId, [FromQuery] Guid? tenantId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+        if (string.IsNullOrWhiteSpace(wabaId)) return BadRequest("wabaId is required.");
+
+        var ctx = await ResolveLookupTokenAsync(tenantId, ct);
+        if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
+
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{wabaId.Trim()}/subscribed_apps";
+        var (ok, status, body) = await GraphGetRawAsync(url, ctx.AccessToken, ct);
+        if (!ok) return StatusCode(status, new { error = "graph_meta_subscribed_apps_failed", status, detail = body });
+        return Content(body, "application/json");
+    }
+
+    [HttpPost("meta/subscribed-apps")]
+    public async Task<IActionResult> MetaSubscribeApp([FromBody] MetaSubscribeAppRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+        if (string.IsNullOrWhiteSpace(request.WabaId)) return BadRequest("wabaId is required.");
+
+        var ctx = await ResolveLookupTokenAsync(request.TenantId, ct);
+        if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
+
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{request.WabaId.Trim()}/subscribed_apps";
+        var (ok, status, body) = await GraphPostFormRawAsync(url, ctx.AccessToken, null, ct);
+        if (!ok) return StatusCode(status, new { error = "graph_meta_subscribe_app_failed", status, detail = body });
+        return Content(body, "application/json");
+    }
+
+    [HttpPost("meta/register-phone")]
+    public async Task<IActionResult> MetaRegisterPhone([FromBody] MetaRegisterPhoneRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+        if (string.IsNullOrWhiteSpace(request.PhoneNumberId)) return BadRequest("phoneNumberId is required.");
+        if (string.IsNullOrWhiteSpace(request.Pin)) return BadRequest("pin is required.");
+
+        var ctx = await ResolveLookupTokenAsync(request.TenantId, ct);
+        if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
+
+        var form = new Dictionary<string, string>
+        {
+            ["messaging_product"] = "whatsapp",
+            ["pin"] = request.Pin.Trim()
+        };
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{request.PhoneNumberId.Trim()}/register";
+        var (ok, status, body) = await GraphPostFormRawAsync(url, ctx.AccessToken, form, ct);
+        if (!ok) return StatusCode(status, new { error = "graph_meta_register_phone_failed", status, detail = body });
+        return Content(body, "application/json");
+    }
+
     private async Task<LookupTokenContext?> ResolveLookupTokenAsync(Guid? tenantId, CancellationToken ct)
     {
         var platformToken = await ResolvePlatformTokenAsync(ct);
@@ -360,6 +518,18 @@ public class PlatformWabaOnboardingController(
         return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
     }
 
+    private async Task<(bool ok, int status, string body)> GraphPostFormRawAsync(string url, string accessToken, Dictionary<string, string>? form, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient("whatsapp-cloud");
+        using var req = new HttpRequestMessage(HttpMethod.Post, url);
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        if (form is not null && form.Count > 0)
+            req.Content = new FormUrlEncodedContent(form);
+        using var resp = await client.SendAsync(req, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
+    }
+
     private static string TryGetString(JsonElement root, string property)
     {
         if (!root.TryGetProperty(property, out var p)) return string.Empty;
@@ -402,6 +572,28 @@ public class PlatformWabaOnboardingController(
     {
         public Guid TenantId { get; set; }
         public string Reason { get; set; } = string.Empty;
+    }
+
+    public sealed class MetaAssignUserRequest
+    {
+        public Guid? TenantId { get; set; }
+        public string WabaId { get; set; } = string.Empty;
+        public string BusinessId { get; set; } = string.Empty;
+        public string UserId { get; set; } = string.Empty;
+        public string[] Tasks { get; set; } = [];
+    }
+
+    public sealed class MetaSubscribeAppRequest
+    {
+        public Guid? TenantId { get; set; }
+        public string WabaId { get; set; } = string.Empty;
+    }
+
+    public sealed class MetaRegisterPhoneRequest
+    {
+        public Guid? TenantId { get; set; }
+        public string PhoneNumberId { get; set; } = string.Empty;
+        public string Pin { get; set; } = string.Empty;
     }
 
     private sealed record LookupTokenContext(Guid? TenantId, string TenantName, string TenantSlug, string AccessToken, string TokenSource);
