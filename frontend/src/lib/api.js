@@ -280,6 +280,10 @@ export async function getPlatformWabaOnboardingSummary() {
   return apiGet('/api/platform/waba/onboarding-summary')
 }
 
+export async function cancelPlatformWabaRequest(tenantId, reason = '') {
+  return apiPost('/api/platform/waba/cancel-request', { tenantId, reason })
+}
+
 export async function getTenantWebhookAnalytics(days = 7) {
   const q = new URLSearchParams()
   q.set('days', String(days))

@@ -24,7 +24,8 @@ import {
   getPlatformWebhookAnalytics,
   getPlatformCustomers,
   getPlatformIdempotencyDiagnostics,
-  getPlatformWabaOnboardingSummary
+  getPlatformWabaOnboardingSummary,
+  cancelPlatformWabaRequest
 } from "@/lib/api";
 
 const FEATURE_CATALOG = [
@@ -613,6 +614,7 @@ const PlatformSettingsPage = () => {
                     <th className="text-left px-3 py-2 font-medium text-slate-600">WABA</th>
                     <th className="text-left px-3 py-2 font-medium text-slate-600">Phone</th>
                     <th className="text-left px-3 py-2 font-medium text-slate-600">Last Error</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -624,11 +626,32 @@ const PlatformSettingsPage = () => {
                       <td className="px-3 py-2 text-slate-700">{x.wabaId || "-"}</td>
                       <td className="px-3 py-2 text-slate-700">{x.displayPhoneNumber || "-"}</td>
                       <td className="px-3 py-2 text-slate-600 max-w-[320px] truncate">{x.lastError || "-"}</td>
+                      <td className="px-3 py-2">
+                        {["requested", "code_received", "assets_linked", "webhook_subscribed"].includes((x.state || "").toLowerCase()) ? (
+                          <Button
+                            variant="outline"
+                            className="h-8 px-3 text-xs"
+                            onClick={async () => {
+                              try {
+                                await cancelPlatformWabaRequest(x.tenantId);
+                                toast.success(`Cancelled onboarding for ${x.tenantName}`);
+                                setOnboardingSummary(await getPlatformWabaOnboardingSummary());
+                              } catch (e) {
+                                toast.error(e?.message || "Failed to cancel onboarding request.");
+                              }
+                            }}
+                          >
+                            Cancel Request
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-slate-400">-</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {(onboardingSummary?.projects || []).length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">No projects found.</td>
+                      <td colSpan={7} className="px-3 py-6 text-center text-slate-500">No projects found.</td>
                     </tr>
                   )}
                 </tbody>
