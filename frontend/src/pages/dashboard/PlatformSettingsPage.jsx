@@ -255,40 +255,8 @@ const PlatformSettingsPage = () => {
     };
   }, [tab, logProvider]);
 
-  const platformMenus = [
-    { key: "waba-master", label: "Waba Master Config" },
-    { key: "payment-gateway", label: "Payment Gateway Setup" },
-    { key: "webhook-logs", label: "Webhook Logs" },
-    { key: "request-logs", label: "Request Logs" },
-    { key: "billing-plans", label: "Billing Plans" },
-    { key: "waba-onboarding", label: "Waba Onboarding" },
-    { key: "waba-lookup", label: "Waba Lookup" },
-    { key: "waba-policies", label: "Waba Error Policies" },
-    { key: "idempotency-diagnostics", label: "Idempotency Diagnostics" },
-  ];
-
   return (
-    <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]" data-testid="platform-settings-page">
-      <Card className="h-fit border-slate-200">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-xl">Platform Setting</CardTitle>
-          <CardDescription>Owner-level controls</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {platformMenus.map((item) => (
-            <Button
-              key={item.key}
-              variant={tab === item.key ? "default" : "outline"}
-              className={`w-full justify-start ${tab === item.key ? "bg-orange-500 hover:bg-orange-600" : ""}`}
-              onClick={() => setTab(item.key)}
-            >
-              {item.label}
-            </Button>
-          ))}
-        </CardContent>
-      </Card>
-
-      <div className="space-y-4">
+    <div className="space-y-4" data-testid="platform-settings-page">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>
           <p className="text-sm text-slate-500">Platform owner level global configuration.</p>
@@ -1276,7 +1244,6 @@ const PlatformSettingsPage = () => {
           </CardContent>
         </Card>
       )}
-      </div>
     </div>
   );
 };

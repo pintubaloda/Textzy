@@ -69,6 +69,7 @@ const DashboardLayout = () => {
   const isAutomationsPage = location.pathname.startsWith("/dashboard/automations");
   const currentTemplatesTab = new URLSearchParams(location.search).get("tab") || "whatsapp";
   const currentSettingsTab = new URLSearchParams(location.search).get("tab") || "profile";
+  const currentPlatformTab = new URLSearchParams(location.search).get("tab") || "waba-master";
   const settingsMenus = [
     { key: "profile", label: "Profile" },
     { key: "company", label: "Company" },
@@ -451,7 +452,7 @@ const DashboardLayout = () => {
                 <Link
                   to="/dashboard/platform-settings?tab=waba-master"
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                    location.pathname.startsWith("/dashboard/platform-settings") && new URLSearchParams(location.search).get("tab") !== "payment-gateway"
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "waba-master"
                       ? "bg-orange-50 text-orange-600 font-medium"
                       : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                   }`}
@@ -463,7 +464,7 @@ const DashboardLayout = () => {
                 <Link
                   to="/dashboard/platform-settings?tab=payment-gateway"
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                    location.pathname.startsWith("/dashboard/platform-settings") && new URLSearchParams(location.search).get("tab") === "payment-gateway"
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "payment-gateway"
                       ? "bg-orange-50 text-orange-600 font-medium"
                       : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                   }`}
@@ -475,7 +476,7 @@ const DashboardLayout = () => {
                 <Link
                   to="/dashboard/platform-settings?tab=webhook-logs"
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                    location.pathname.startsWith("/dashboard/platform-settings") && new URLSearchParams(location.search).get("tab") === "webhook-logs"
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "webhook-logs"
                       ? "bg-orange-50 text-orange-600 font-medium"
                       : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                   }`}
@@ -483,6 +484,78 @@ const DashboardLayout = () => {
                 >
                   <Plug className="w-4 h-4 flex-shrink-0" />
                   <span className="flex-1 text-sm">Webhook Logs</span>
+                </Link>
+                <Link
+                  to="/dashboard/platform-settings?tab=request-logs"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "request-logs"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <FileText className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">Request Logs</span>
+                </Link>
+                <Link
+                  to="/dashboard/platform-settings?tab=billing-plans"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "billing-plans"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <CreditCard className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">Billing Plans</span>
+                </Link>
+                <Link
+                  to="/dashboard/platform-settings?tab=waba-onboarding"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "waba-onboarding"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Shield className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">Waba Onboarding</span>
+                </Link>
+                <Link
+                  to="/dashboard/platform-settings?tab=waba-lookup"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "waba-lookup"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Search className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">Waba Lookup</span>
+                </Link>
+                <Link
+                  to="/dashboard/platform-settings?tab=waba-policies"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "waba-policies"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Shield className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">Waba Error Policies</span>
+                </Link>
+                <Link
+                  to="/dashboard/platform-settings?tab=idempotency-diagnostics"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "idempotency-diagnostics"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Check className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">Idempotency Diagnostics</span>
                 </Link>
               </div>
             )}
