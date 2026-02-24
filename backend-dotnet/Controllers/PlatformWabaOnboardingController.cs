@@ -34,7 +34,7 @@ public class PlatformWabaOnboardingController(
 
         var rows = new List<object>(tenants.Count);
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var knownStates = new[] { "requested", "code_received", "assets_linked", "webhook_subscribed", "ready", "cancelled", "not_configured", "error" };
+        var knownStates = new[] { "requested", "code_received", "assets_linked", "webhook_subscribed", "ready", "degraded", "disabled", "cancelled", "not_configured", "error" };
         foreach (var s in knownStates) counts[s] = 0;
 
         foreach (var tenant in tenants)
@@ -151,6 +151,124 @@ public class PlatformWabaOnboardingController(
         await tenantDb.SaveChangesAsync(ct);
 
         return Ok(new { cancelled = true, tenantId = request.TenantId });
+    }
+
+    [HttpGet("lifecycle")]
+    public async Task<IActionResult> LifecycleStatus([FromQuery] Guid tenantId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+        if (tenantId == Guid.Empty) return BadRequest("tenantId is required.");
+
+        var tenant = await controlDb.Tenants.FirstOrDefaultAsync(x => x.Id == tenantId, ct);
+        if (tenant is null) return NotFound("Tenant not found.");
+        using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
+        var cfg = await tenantDb.TenantWabaConfigs
+            .Where(x => x.TenantId == tenantId)
+            .OrderByDescending(x => x.IsActive)
+            .ThenByDescending(x => x.ConnectedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (cfg is null) return NotFound("Tenant WABA config not found.");
+        var token = UnprotectToken(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(token)) return BadRequest("Tenant token missing.");
+
+        var checks = new Dictionary<string, object>();
+        if (!string.IsNullOrWhiteSpace(cfg.BusinessManagerId))
+        {
+            var systemUsersUrl = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{cfg.BusinessManagerId}/system_users?fields=id,name";
+            var (ok, status, body) = await GraphGetRawAsync(systemUsersUrl, token, ct);
+            checks["systemUsers"] = new { ok, status, body };
+        }
+        if (!string.IsNullOrWhiteSpace(cfg.WabaId) && !string.IsNullOrWhiteSpace(cfg.BusinessManagerId))
+        {
+            var assignedUrl = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{cfg.WabaId}/assigned_users?business={Uri.EscapeDataString(cfg.BusinessManagerId)}";
+            var (ok, status, body) = await GraphGetRawAsync(assignedUrl, token, ct);
+            checks["assignedUsers"] = new { ok, status, body };
+        }
+
+        return Ok(new
+        {
+            tenantId = tenant.Id,
+            tenantName = tenant.Name,
+            tenantSlug = tenant.Slug,
+            cfg.WabaId,
+            cfg.PhoneNumberId,
+            cfg.BusinessManagerId,
+            cfg.SystemUserId,
+            cfg.SystemUserName,
+            cfg.TokenSource,
+            cfg.PermanentTokenIssuedAtUtc,
+            cfg.PermanentTokenExpiresAtUtc,
+            cfg.OnboardingState,
+            cfg.PermissionAuditPassed,
+            checks
+        });
+    }
+
+    [HttpPost("lifecycle/reissue-token")]
+    public async Task<IActionResult> ReissueSystemUserToken([FromBody] LifecycleTenantDto request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+        if (request.TenantId == Guid.Empty) return BadRequest("tenantId is required.");
+
+        var tenant = await controlDb.Tenants.FirstOrDefaultAsync(x => x.Id == request.TenantId, ct);
+        if (tenant is null) return NotFound("Tenant not found.");
+        using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
+        var cfg = await tenantDb.TenantWabaConfigs
+            .Where(x => x.TenantId == request.TenantId)
+            .OrderByDescending(x => x.IsActive)
+            .ThenByDescending(x => x.ConnectedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (cfg is null) return NotFound("Tenant WABA config not found.");
+        if (string.IsNullOrWhiteSpace(cfg.SystemUserId)) return BadRequest("SystemUserId missing on tenant config.");
+        var token = UnprotectToken(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(token)) return BadRequest("Tenant token missing.");
+
+        var form = new Dictionary<string, string>
+        {
+            ["business_app"] = _waOptions.AppId,
+            ["scope"] = "whatsapp_business_management,whatsapp_business_messaging,business_management"
+        };
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{cfg.SystemUserId}/access_tokens";
+        var (ok, status, body) = await GraphPostFormRawAsync(url, token, form, ct);
+        if (!ok) return StatusCode(status, new { error = "graph_system_user_access_token_failed", status, detail = body });
+
+        using var doc = JsonDocument.Parse(body);
+        var newToken = TryGetString(doc.RootElement, "access_token");
+        if (string.IsNullOrWhiteSpace(newToken)) return StatusCode(502, new { error = "missing_access_token", detail = body });
+
+        cfg.AccessToken = ProtectToken(newToken);
+        cfg.TokenSource = "system_user";
+        cfg.PermanentTokenIssuedAtUtc = DateTime.UtcNow;
+        cfg.PermanentTokenExpiresAtUtc = null;
+        cfg.LastError = string.Empty;
+        await tenantDb.SaveChangesAsync(ct);
+
+        return Ok(new { ok = true, cfg.TenantId, cfg.SystemUserId, cfg.TokenSource, cfg.PermanentTokenIssuedAtUtc });
+    }
+
+    [HttpPost("lifecycle/deactivate")]
+    public async Task<IActionResult> DeactivateTenantWaba([FromBody] LifecycleTenantDto request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+        if (request.TenantId == Guid.Empty) return BadRequest("tenantId is required.");
+
+        var tenant = await controlDb.Tenants.FirstOrDefaultAsync(x => x.Id == request.TenantId, ct);
+        if (tenant is null) return NotFound("Tenant not found.");
+        using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
+        var cfg = await tenantDb.TenantWabaConfigs
+            .Where(x => x.TenantId == request.TenantId)
+            .OrderByDescending(x => x.IsActive)
+            .ThenByDescending(x => x.ConnectedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (cfg is null) return NotFound("Tenant WABA config not found.");
+        cfg.IsActive = false;
+        cfg.OnboardingState = "disabled";
+        cfg.LastError = "Disabled by platform owner.";
+        await tenantDb.SaveChangesAsync(ct);
+        return Ok(new { ok = true, cfg.TenantId, cfg.OnboardingState });
     }
 
     [HttpGet("lookup/by-phone")]
@@ -534,9 +652,23 @@ public class PlatformWabaOnboardingController(
             .FirstOrDefaultAsync(ct);
         if (cfg is null || string.IsNullOrWhiteSpace(cfg.AccessToken)) return null;
 
-        var accessToken = crypto.Decrypt(cfg.AccessToken);
+        var accessToken = UnprotectToken(cfg.AccessToken);
         if (string.IsNullOrWhiteSpace(accessToken)) return null;
         return (tenant.Id, tenant.Name, tenant.Slug, accessToken);
+    }
+
+    private string UnprotectToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return string.Empty;
+        if (!token.StartsWith("enc:", StringComparison.Ordinal)) return token;
+        try { return crypto.Decrypt(token[4..]); } catch { return string.Empty; }
+    }
+
+    private string ProtectToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return string.Empty;
+        if (token.StartsWith("enc:", StringComparison.Ordinal)) return token;
+        return "enc:" + crypto.Encrypt(token);
     }
 
     private async Task<(bool ok, int status, string body)> GraphGetRawAsync(string url, string accessToken, CancellationToken ct)
@@ -649,6 +781,11 @@ public class PlatformWabaOnboardingController(
         public Guid? TenantId { get; set; }
         public string PhoneNumberId { get; set; } = string.Empty;
         public string Pin { get; set; } = string.Empty;
+    }
+
+    public sealed class LifecycleTenantDto
+    {
+        public Guid TenantId { get; set; }
     }
 
     private sealed record LookupTokenContext(Guid? TenantId, string TenantName, string TenantSlug, string AccessToken, string TokenSource);

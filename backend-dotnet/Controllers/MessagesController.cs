@@ -20,6 +20,10 @@ public class MessagesController(
     public async Task<IActionResult> Send([FromBody] SendMessageRequest request, CancellationToken ct)
     {
         if (!rbac.HasPermission(InboxWrite)) return Forbid();
+        var idempotencyKey = Request.Headers["Idempotency-Key"].FirstOrDefault()?.Trim();
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+            return BadRequest(new { error = "Idempotency-Key header is required." });
+        request.IdempotencyKey = idempotencyKey;
 
         try
         {

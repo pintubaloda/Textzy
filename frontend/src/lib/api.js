@@ -88,7 +88,11 @@ export async function apiGet(path) {
 }
 
 export async function apiPost(path, body) {
-  const res = await apiRequest(path, { method: 'POST', body: JSON.stringify(body) })
+  const headers = {}
+  if (path === '/api/messages/send') {
+    headers['Idempotency-Key'] = body?.idempotencyKey || buildIdempotencyKey('msg')
+  }
+  const res = await apiRequest(path, { method: 'POST', headers, body: JSON.stringify(body) })
   if (!res.ok) {
     const msg = await res.text()
     throw new Error(msg || `POST ${path} failed (${res.status})`)

@@ -30,4 +30,5 @@ public class TenantDbContext(DbContextOptions<TenantDbContext> options) : DbCont
     public DbSet<FaqKnowledgeItem> FaqKnowledgeItems => Set<FaqKnowledgeItem>();
     public DbSet<IdempotencyKeyRecord> IdempotencyKeys => Set<IdempotencyKeyRecord>();
     public DbSet<MessageEvent> MessageEvents => Set<MessageEvent>();
+    public DbSet<OutboundDeadLetter> OutboundDeadLetters => Set<OutboundDeadLetter>();
 }

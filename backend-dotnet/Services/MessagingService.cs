@@ -16,11 +16,16 @@ public class MessagingService(
         await billingGuard.RotateMonthlyBucketAsync(tenancy.TenantId, ct);
         var idempotencyKey = (request.IdempotencyKey ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(idempotencyKey))
-        {
-            idempotencyKey = $"msg-{tenancy.TenantId:N}-{request.Channel}-{request.Recipient}-{StableHash($"{request.UseTemplate}|{request.TemplateName}|{request.TemplateLanguageCode}|{string.Join(",", request.TemplateParameters)}|{request.Body}")}";
-        }
+            throw new InvalidOperationException("Idempotency-Key header is required.");
 
+        var now = DateTime.UtcNow;
         var keyRow = await db.IdempotencyKeys.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Key == idempotencyKey, ct);
+        if (keyRow is not null && keyRow.ExpiresAtUtc <= now)
+        {
+            db.IdempotencyKeys.Remove(keyRow);
+            await db.SaveChangesAsync(ct);
+            keyRow = null;
+        }
         if (keyRow?.MessageId is Guid linkedMessageId)
         {
             var linked = await db.Messages.FirstOrDefaultAsync(x => x.Id == linkedMessageId && x.TenantId == tenancy.TenantId, ct);
@@ -71,15 +76,17 @@ public class MessagingService(
                 TenantId = tenancy.TenantId,
                 Key = idempotencyKey,
                 MessageId = message.Id,
-                Status = "queued",
-                CreatedAtUtc = DateTime.UtcNow
+                Status = "reserved",
+                CreatedAtUtc = now,
+                ExpiresAtUtc = now.AddHours(24)
             };
             db.IdempotencyKeys.Add(keyRow);
         }
         else
         {
             keyRow.MessageId = message.Id;
-            keyRow.Status = "queued";
+            keyRow.Status = "reserved";
+            keyRow.ExpiresAtUtc = now.AddHours(24);
         }
         db.MessageEvents.Add(new MessageEvent
         {
@@ -137,19 +144,25 @@ public class MessagingService(
                 existingContact.Name = request.Recipient;
         }
 
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            var existingAfterConflict = await db.Messages
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.IdempotencyKey == idempotencyKey, ct);
+            if (existingAfterConflict is not null) return existingAfterConflict;
+            throw;
+        }
         await queue.EnqueueAsync(new OutboundMessageQueueItem
         {
             MessageId = message.Id,
             TenantId = tenancy.TenantId,
-            TenantSlug = tenancy.TenantSlug
+            TenantSlug = tenancy.TenantSlug,
+            IdempotencyKey = idempotencyKey
         }, ct);
         return message;
-    }
-
-    private static string StableHash(string raw)
-    {
-        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw ?? string.Empty));
-        return Convert.ToHexString(bytes)[..16].ToLowerInvariant();
     }
 }

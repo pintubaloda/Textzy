@@ -14,6 +14,7 @@ public sealed class OutboundMessageQueueItem
     public Guid MessageId { get; init; }
     public Guid TenantId { get; init; }
     public string TenantSlug { get; init; } = string.Empty;
+    public string IdempotencyKey { get; init; } = string.Empty;
 }
 
 public class OutboundMessageQueueService(IConfiguration config, ILogger<OutboundMessageQueueService> logger)
@@ -109,7 +110,13 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
         if (ActiveProvider == "rabbitmq")
         {
             using var ch = _rabbitConnLazy.Value!.CreateModel();
-            ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false);
+            var args = new Dictionary<string, object>
+            {
+                ["x-dead-letter-exchange"] = string.Empty,
+                ["x-dead-letter-routing-key"] = $"{_rabbitQueue}.dead"
+            };
+            ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false, arguments: args);
+            ch.QueueDeclare($"{_rabbitQueue}.dead", durable: true, exclusive: false, autoDelete: false);
             var payload = JsonSerializer.Serialize(item);
             var bytes = System.Text.Encoding.UTF8.GetBytes(payload);
             var props = ch.CreateBasicProperties();
@@ -141,7 +148,13 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
         if (ActiveProvider == "rabbitmq")
         {
             using var ch = _rabbitConnLazy.Value!.CreateModel();
-            ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false);
+            var args = new Dictionary<string, object>
+            {
+                ["x-dead-letter-exchange"] = string.Empty,
+                ["x-dead-letter-routing-key"] = $"{_rabbitQueue}.dead"
+            };
+            ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false, arguments: args);
+            ch.QueueDeclare($"{_rabbitQueue}.dead", durable: true, exclusive: false, autoDelete: false);
             return ch.MessageCount(_rabbitQueue);
         }
         if (ActiveProvider == "sqs")
@@ -177,14 +190,30 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
         if (ActiveProvider == "rabbitmq")
         {
             using var ch = _rabbitConnLazy.Value!.CreateModel();
-            ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false);
+            var args = new Dictionary<string, object>
+            {
+                ["x-dead-letter-exchange"] = string.Empty,
+                ["x-dead-letter-routing-key"] = $"{_rabbitQueue}.dead"
+            };
+            ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false, arguments: args);
+            ch.QueueDeclare($"{_rabbitQueue}.dead", durable: true, exclusive: false, autoDelete: false);
             while (!ct.IsCancellationRequested)
             {
-                var result = ch.BasicGet(_rabbitQueue, autoAck: true);
+                var result = ch.BasicGet(_rabbitQueue, autoAck: false);
                 if (result is not null)
                 {
                     var payload = System.Text.Encoding.UTF8.GetString(result.Body.ToArray());
-                    try { return JsonSerializer.Deserialize<OutboundMessageQueueItem>(payload); } catch { return null; }
+                    try
+                    {
+                        var item = JsonSerializer.Deserialize<OutboundMessageQueueItem>(payload);
+                        ch.BasicAck(result.DeliveryTag, multiple: false);
+                        return item;
+                    }
+                    catch
+                    {
+                        ch.BasicNack(result.DeliveryTag, multiple: false, requeue: false);
+                        return null;
+                    }
                 }
                 await Task.Delay(200, ct);
             }

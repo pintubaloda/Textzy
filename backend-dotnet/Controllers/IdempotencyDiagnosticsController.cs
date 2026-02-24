@@ -28,6 +28,7 @@ public class IdempotencyDiagnosticsController(
         limit = Math.Clamp(limit, 1, 1000);
         staleMinutes = Math.Clamp(staleMinutes, 1, 24 * 60);
         var staleBefore = DateTime.UtcNow.AddMinutes(-staleMinutes);
+        var now = DateTime.UtcNow;
 
         var tenant = await controlDb.Tenants.FirstOrDefaultAsync(x => x.Id == tenancy.TenantId, ct);
         if (tenant is null) return NotFound("Tenant not found.");
@@ -47,7 +48,8 @@ public class IdempotencyDiagnosticsController(
                 x.MessageId,
                 x.Status,
                 x.CreatedAtUtc,
-                stale = x.Status == "reserved" && x.CreatedAtUtc < staleBefore
+                x.ExpiresAtUtc,
+                stale = x.Status == "reserved" && (x.ExpiresAtUtc < now || x.CreatedAtUtc < staleBefore)
             })
             .ToListAsync(ct);
 
@@ -58,7 +60,7 @@ public class IdempotencyDiagnosticsController(
             .ToListAsync(ct);
 
         var staleReserved = await db.IdempotencyKeys
-            .CountAsync(x => x.TenantId == tenancy.TenantId && x.Status == "reserved" && x.CreatedAtUtc < staleBefore, ct);
+            .CountAsync(x => x.TenantId == tenancy.TenantId && x.Status == "reserved" && (x.ExpiresAtUtc < now || x.CreatedAtUtc < staleBefore), ct);
 
         return Ok(new
         {

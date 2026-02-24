@@ -5,6 +5,7 @@ using Textzy.Api.Models;
 using Textzy.Api.Providers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Textzy.Api.Services;
 
@@ -93,7 +94,11 @@ public class OutboundMessageWorker(
                     message.LastError = string.Empty;
                     message.NextRetryAtUtc = null;
                     var idem = await tenantDb.IdempotencyKeys.FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.MessageId == message.Id, stoppingToken);
-                    if (idem is not null) idem.Status = "accepted";
+                    if (idem is not null)
+                    {
+                        idem.Status = "accepted";
+                        idem.ExpiresAtUtc = DateTime.UtcNow.AddHours(24);
+                    }
                     tenantDb.MessageEvents.Add(MessageStateMachine.BuildEvent(tenant.Id, message.Id, message.ProviderMessageId, "outbound", "accepted", MessageStateMachine.AcceptedByMeta));
                     await tenantDb.SaveChangesAsync(stoppingToken);
                     await hub.Clients.Group($"tenant:{tenant.Slug}").SendAsync("message.sent", new
@@ -108,7 +113,7 @@ public class OutboundMessageWorker(
                 }
                 catch (Exception ex)
                 {
-                    var retryable = IsRetryable(ex, out var reason);
+                    var retryable = IsRetryable(ex, controlDb, out var reason, out var errorCode, out var errorTitle, out var errorDetail);
                     message.RetryCount += 1;
                     message.LastError = Truncate($"{reason}: {ex.Message}", 1500);
 
@@ -117,8 +122,34 @@ public class OutboundMessageWorker(
                         message.Status = MessageStateMachine.Failed;
                         message.NextRetryAtUtc = null;
                         var idem = await tenantDb.IdempotencyKeys.FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.MessageId == message.Id, stoppingToken);
-                        if (idem is not null) idem.Status = "failed";
+                        if (idem is not null)
+                        {
+                            idem.Status = "failed";
+                            idem.ExpiresAtUtc = DateTime.UtcNow.AddDays(7);
+                        }
                         tenantDb.MessageEvents.Add(MessageStateMachine.BuildEvent(tenant.Id, message.Id, message.ProviderMessageId, "outbound", "failed", MessageStateMachine.Failed));
+                        tenantDb.OutboundDeadLetters.Add(new OutboundDeadLetter
+                        {
+                            Id = Guid.NewGuid(),
+                            TenantId = tenant.Id,
+                            MessageId = message.Id,
+                            IdempotencyKey = message.IdempotencyKey,
+                            AttemptCount = message.RetryCount,
+                            Classification = retryable ? "exhausted" : "permanent",
+                            ErrorCode = errorCode,
+                            ErrorTitle = errorTitle,
+                            ErrorDetail = string.IsNullOrWhiteSpace(errorDetail) ? Truncate(ex.Message, 1500) : errorDetail,
+                            PayloadJson = JsonSerializer.Serialize(new
+                            {
+                                message.Id,
+                                message.Recipient,
+                                message.Channel,
+                                message.MessageType,
+                                message.Body,
+                                message.ProviderMessageId
+                            }),
+                            CreatedAtUtc = DateTime.UtcNow
+                        });
                     }
                     else
                     {
@@ -148,10 +179,23 @@ public class OutboundMessageWorker(
         }
     }
 
-    private static bool IsRetryable(Exception ex, out string reason)
+    private static bool IsRetryable(Exception ex, ControlDbContext controlDb, out string reason, out string errorCode, out string errorTitle, out string errorDetail)
     {
         var msg = (ex.Message ?? string.Empty).ToLowerInvariant();
-        if (msg.Contains("invalid oauth") || msg.Contains("(401)") || msg.Contains("(403)") || msg.Contains("permission") || msg.Contains("policy") || msg.Contains("session closed"))
+        errorCode = ExtractErrorCode(ex.Message);
+        errorTitle = string.Empty;
+        errorDetail = string.Empty;
+        if (!string.IsNullOrWhiteSpace(errorCode))
+        {
+            var policy = controlDb.WabaErrorPolicies.AsNoTracking().FirstOrDefault(x => x.Code == errorCode && x.IsActive);
+            if (policy is not null)
+            {
+                reason = $"policy_{policy.Classification.ToLowerInvariant()}";
+                return string.Equals(policy.Classification, "retryable", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        if (msg.Contains("invalid oauth") || msg.Contains("(401)") || msg.Contains("(403)") || msg.Contains("permission") || msg.Contains("policy") || msg.Contains("session closed") || msg.Contains("recipient not valid"))
         {
             reason = "non_retryable_auth_or_policy";
             return false;
@@ -164,6 +208,17 @@ public class OutboundMessageWorker(
 
         reason = "retryable_unknown";
         return true;
+    }
+
+    private static string ExtractErrorCode(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return string.Empty;
+        var pattern = "\"code\"\\s*:\\s*(\\d+)";
+        var m = Regex.Match(message, pattern, RegexOptions.IgnoreCase);
+        if (m.Success) return m.Groups[1].Value;
+
+        var fallback = Regex.Match(message, @"\b(190|200|131026|131000|131005|132000)\b");
+        return fallback.Success ? fallback.Groups[1].Value : string.Empty;
     }
 
     private static TimeSpan RetryDelay(int retryCount)
