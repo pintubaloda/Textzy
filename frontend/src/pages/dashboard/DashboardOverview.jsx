@@ -172,6 +172,10 @@ const DashboardOverview = () => {
     }
   };
 
+  const handleReuseExistingWaba = () => {
+    window.location.assign("/dashboard/whatsapp-onboarding");
+  };
+
   const computedStats = useMemo(() => {
     const total = messages.length;
     const sent = messages.filter((x) => x.status === "Accepted").length;
@@ -339,8 +343,8 @@ const DashboardOverview = () => {
             <div className="px-5 py-2 rounded-full bg-white/90 border border-slate-200 text-slate-700 shadow-sm">TRAIL(Pro + Flows)</div>
           </div>
 
-          <div className="grid lg:grid-cols-3 gap-4 items-start">
-            <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm self-start h-auto">
+          <div className="grid lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="text-3xl font-heading font-semibold leading-tight mb-4 text-slate-900">Setup FREE WhatsApp Business Account</h3>
               <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-white to-orange-50 p-4 mb-5 text-base text-slate-700">Apply for WhatsApp Business API</div>
               <p className="text-slate-600 mb-2 text-lg leading-snug">Click on Continue with Facebook to apply for WhatsApp Business API</p>
@@ -350,6 +354,19 @@ const DashboardOverview = () => {
                 <Button className="bg-orange-500 hover:bg-orange-600 text-white text-base px-7 shadow-md shadow-orange-500/25" onClick={handleEmbeddedConnect} disabled={connectingWaba}>
                   {connectingWaba ? "Connecting..." : "Continue with Facebook"}
                 </Button>
+              </div>
+              <div className="mt-3">
+                <Button
+                  variant="outline"
+                  className="border-slate-300 text-slate-700 bg-white hover:bg-slate-100 text-base px-7"
+                  onClick={handleReuseExistingWaba}
+                >
+                  Reuse Existing WABA
+                </Button>
+                <p className="text-sm text-slate-500 mt-2 leading-relaxed max-w-2xl">
+                  If you are already using WhatsApp Business, click here to connect your existing account to this project
+                  without creating a new WABA.
+                </p>
               </div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
