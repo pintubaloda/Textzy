@@ -21,6 +21,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, getTenantWebhookAnalytics, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaReuseExisting, wabaStartOnboarding } from "@/lib/api";
+import { loadFacebookSdk } from "@/lib/facebookSdk";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
@@ -98,20 +99,6 @@ const DashboardOverview = () => {
       setWebhookAnalytics(null);
     }
   };
-
-  const loadFacebookSdk = (appId) => new Promise((resolve, reject) => {
-    if (window.FB) return resolve(window.FB);
-    window.fbAsyncInit = function () {
-      window.FB.init({ appId, cookie: true, xfbml: false, version: "v21.0" });
-      resolve(window.FB);
-    };
-    const script = document.createElement("script");
-    script.async = true;
-    script.defer = true;
-    script.src = "https://connect.facebook.net/en_US/sdk.js";
-    script.onerror = reject;
-    document.body.appendChild(script);
-  });
 
   const handleEmbeddedConnect = async () => {
     const { appId: facebookAppId, configId: embeddedConfigId } = await resolveEmbeddedConfig();

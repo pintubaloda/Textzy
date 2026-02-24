@@ -13,22 +13,7 @@ import {
   wabaReuseExisting,
   wabaRecheckOnboarding,
 } from "@/lib/api";
-
-function loadFacebookSdk(appId) {
-  return new Promise((resolve, reject) => {
-    if (window.FB) return resolve(window.FB);
-    window.fbAsyncInit = function () {
-      window.FB.init({ appId, cookie: true, xfbml: false, version: "v21.0" });
-      resolve(window.FB);
-    };
-    const script = document.createElement("script");
-    script.async = true;
-    script.defer = true;
-    script.src = "https://connect.facebook.net/en_US/sdk.js";
-    script.onerror = reject;
-    document.body.appendChild(script);
-  });
-}
+import { loadFacebookSdk } from "@/lib/facebookSdk";
 
 const stateMap = {
   requested: "Requested",

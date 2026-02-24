@@ -19,6 +19,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaReuseExisting, wabaStartOnboarding } from "@/lib/api";
+import { loadFacebookSdk } from "@/lib/facebookSdk";
 
 const SettingsPage = () => {
   const [saving, setSaving] = useState(false);
@@ -130,19 +131,7 @@ const SettingsPage = () => {
 
     setConnectingWaba(true);
     try {
-      const FB = await new Promise((resolve, reject) => {
-        if (window.FB) return resolve(window.FB);
-        window.fbAsyncInit = function () {
-          window.FB.init({ appId: facebookAppId, cookie: true, xfbml: false, version: "v21.0" });
-          resolve(window.FB);
-        };
-        const script = document.createElement("script");
-        script.async = true;
-        script.defer = true;
-        script.src = "https://connect.facebook.net/en_US/sdk.js";
-        script.onerror = reject;
-        document.body.appendChild(script);
-      });
+      const FB = await loadFacebookSdk(facebookAppId);
 
       FB.login((response) => {
         if (!response || !response.authResponse) {
