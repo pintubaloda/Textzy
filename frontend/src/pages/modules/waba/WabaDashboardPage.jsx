@@ -96,25 +96,26 @@ export default function WabaDashboardPage() {
     setLoadingWaba(true)
     try {
       const FB = await loadFacebookSdk(facebookAppId)
-      FB.login(async (response) => {
+      FB.login((response) => {
         if (!response || !response.authResponse) {
           toast.error('Embedded signup cancelled')
           setLoadingWaba(false)
           return
         }
 
-        try {
-          // In embedded signup flow, backend should exchange auth code.
-          // Here we use accessToken fallback if code is unavailable in popup callback.
-          const codeOrToken = response.authResponse.code || response.authResponse.accessToken
-          await exchangeEmbeddedSignupCode(codeOrToken)
-          toast.success('WhatsApp business onboarding connected')
-          await loadWabaStatus()
-        } catch {
-          toast.error('Failed to exchange embedded signup code')
-        } finally {
-          setLoadingWaba(false)
-        }
+        Promise.resolve()
+          .then(() => {
+            // In embedded signup flow, backend should exchange auth code.
+            // Here we use accessToken fallback if code is unavailable in popup callback.
+            const codeOrToken = response.authResponse.code || response.authResponse.accessToken
+            return exchangeEmbeddedSignupCode(codeOrToken)
+          })
+          .then(() => {
+            toast.success('WhatsApp business onboarding connected')
+            return loadWabaStatus()
+          })
+          .catch(() => toast.error('Failed to exchange embedded signup code'))
+          .finally(() => setLoadingWaba(false))
       }, {
         config_id: embeddedConfigId,
         response_type: 'code',

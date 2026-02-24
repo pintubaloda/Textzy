@@ -144,7 +144,7 @@ const SettingsPage = () => {
         document.body.appendChild(script);
       });
 
-      FB.login(async (response) => {
+      FB.login((response) => {
         if (!response || !response.authResponse) {
           setConnectingWaba(false);
           toast.error("Embedded signup cancelled");
@@ -156,15 +156,12 @@ const SettingsPage = () => {
           toast.error("Meta did not return authorization code");
           return;
         }
-        try {
-          await wabaExchangeCode(code);
-          await loadWabaStatus();
-          toast.success("WhatsApp connected");
-        } catch (e) {
-          toast.error(e.message || "Code exchange failed");
-        } finally {
-          setConnectingWaba(false);
-        }
+        Promise.resolve()
+          .then(() => wabaExchangeCode(code))
+          .then(() => loadWabaStatus())
+          .then(() => toast.success("WhatsApp connected"))
+          .catch((e) => toast.error(e.message || "Code exchange failed"))
+          .finally(() => setConnectingWaba(false));
       }, {
         config_id: embeddedConfigId,
         response_type: "code",

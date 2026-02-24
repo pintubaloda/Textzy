@@ -123,7 +123,7 @@ const DashboardOverview = () => {
     try {
       await wabaStartOnboarding();
       const FB = await loadFacebookSdk(facebookAppId);
-      FB.login(async (response) => {
+      FB.login((response) => {
         if (!response || !response.authResponse) {
           setConnectingWaba(false);
           toast.error("Embedded signup cancelled");
@@ -137,15 +137,12 @@ const DashboardOverview = () => {
           return;
         }
 
-        try {
-          await wabaExchangeCode(code);
-          await loadWabaStatus();
-          toast.success("WhatsApp onboarding connected");
-        } catch (e) {
-          toast.error(e.message || "Failed to exchange embedded signup code");
-        } finally {
-          setConnectingWaba(false);
-        }
+        Promise.resolve()
+          .then(() => wabaExchangeCode(code))
+          .then(() => loadWabaStatus())
+          .then(() => toast.success("WhatsApp onboarding connected"))
+          .catch((e) => toast.error(e.message || "Failed to exchange embedded signup code"))
+          .finally(() => setConnectingWaba(false));
       }, {
         config_id: embeddedConfigId,
         response_type: "code",

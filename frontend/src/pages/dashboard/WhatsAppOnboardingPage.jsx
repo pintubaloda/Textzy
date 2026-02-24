@@ -123,7 +123,7 @@ export default function WhatsAppOnboardingPage() {
     setConnecting(true);
     try {
       const FB = await loadFacebookSdk(facebookAppId);
-      FB.login(async (response) => {
+      FB.login((response) => {
         if (!response || !response.authResponse) {
           setConnecting(false);
           toast.error("Embedded signup cancelled");
@@ -137,15 +137,12 @@ export default function WhatsAppOnboardingPage() {
           return;
         }
 
-        try {
-          await wabaExchangeCode(code);
-          await loadStatus();
-          toast.success("Embedded signup exchange complete");
-        } catch (e) {
-          toast.error(e.message || "Code exchange failed");
-        } finally {
-          setConnecting(false);
-        }
+        Promise.resolve()
+          .then(() => wabaExchangeCode(code))
+          .then(() => loadStatus())
+          .then(() => toast.success("Embedded signup exchange complete"))
+          .catch((e) => toast.error(e.message || "Code exchange failed"))
+          .finally(() => setConnecting(false));
       }, {
         config_id: embeddedConfigId,
         response_type: "code",
