@@ -98,10 +98,10 @@ const DashboardOverview = () => {
     }
   };
 
-  const loadFacebookSdk = () => new Promise((resolve, reject) => {
+  const loadFacebookSdk = (appId) => new Promise((resolve, reject) => {
     if (window.FB) return resolve(window.FB);
     window.fbAsyncInit = function () {
-      window.FB.init({ appId: facebookAppId, cookie: true, xfbml: false, version: "v21.0" });
+      window.FB.init({ appId, cookie: true, xfbml: false, version: "v21.0" });
       resolve(window.FB);
     };
     const script = document.createElement("script");
@@ -122,7 +122,7 @@ const DashboardOverview = () => {
     setConnectingWaba(true);
     try {
       await wabaStartOnboarding();
-      const FB = await loadFacebookSdk();
+      const FB = await loadFacebookSdk(facebookAppId);
       FB.login(async (response) => {
         if (!response || !response.authResponse) {
           setConnectingWaba(false);
