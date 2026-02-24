@@ -205,6 +205,10 @@ public class PlatformWabaOnboardingController(
         });
     }
 
+    [HttpGet("lookup/by-phone-number-id")]
+    public Task<IActionResult> LookupByPhoneAlias([FromQuery] Guid tenantId, [FromQuery] string phoneNumberId, CancellationToken ct)
+        => LookupByPhone(tenantId, phoneNumberId, ct);
+
     [HttpGet("lookup/by-waba")]
     public async Task<IActionResult> LookupByWaba([FromQuery] Guid tenantId, [FromQuery] string wabaId, CancellationToken ct)
     {
@@ -271,6 +275,10 @@ public class PlatformWabaOnboardingController(
             rawPhones = bodyPhones
         });
     }
+
+    [HttpGet("lookup/by-waba-id")]
+    public Task<IActionResult> LookupByWabaAlias([FromQuery] Guid tenantId, [FromQuery] string wabaId, CancellationToken ct)
+        => LookupByWaba(tenantId, wabaId, ct);
 
     private async Task<(Guid tenantId, string tenantName, string tenantSlug, string accessToken)?> ResolveTenantTokenAsync(Guid tenantId, CancellationToken ct)
     {
