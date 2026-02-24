@@ -2,22 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { apiGet, exchangeEmbeddedSignupCode, getEmbeddedSignupConfig, getWabaStatus, reuseExistingEmbeddedSignup } from '../../../api/client'
 import { useToast } from '../../../feedback/ToastProvider'
 import WabaShell from '../../../components/waba/WabaShell'
-
-function loadFacebookSdk(appId) {
-  return new Promise((resolve, reject) => {
-    if (window.FB) return resolve(window.FB)
-    window.fbAsyncInit = function () {
-      window.FB.init({ appId, cookie: true, xfbml: false, version: 'v21.0' })
-      resolve(window.FB)
-    }
-    const script = document.createElement('script')
-    script.async = true
-    script.defer = true
-    script.src = 'https://connect.facebook.net/en_US/sdk.js'
-    script.onerror = reject
-    document.body.appendChild(script)
-  })
-}
+import { loadFacebookSdk } from '../../../lib/facebookSdk'
 
 export default function WabaDashboardPage() {
   const toast = useToast()
