@@ -282,8 +282,11 @@ public class PlatformWabaOnboardingController(
         using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
         var cfg = await tenantDb.TenantWabaConfigs
             .AsNoTracking()
-            .Where(x => x.TenantId == tenantId && x.IsActive)
-            .OrderByDescending(x => x.ConnectedAtUtc)
+            .Where(x => x.TenantId == tenantId && !string.IsNullOrWhiteSpace(x.AccessToken))
+            .OrderByDescending(x => x.IsActive)
+            .ThenByDescending(x => x.ConnectedAtUtc)
+            .ThenByDescending(x => x.ExchangedAtUtc)
+            .ThenByDescending(x => x.CodeReceivedAtUtc)
             .FirstOrDefaultAsync(ct);
         if (cfg is null || string.IsNullOrWhiteSpace(cfg.AccessToken)) return null;
 
