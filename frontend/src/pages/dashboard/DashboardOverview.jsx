@@ -339,8 +339,8 @@ const DashboardOverview = () => {
             <div className="px-5 py-2 rounded-full bg-white/90 border border-slate-200 text-slate-700 shadow-sm">TRAIL(Pro + Flows)</div>
           </div>
 
-          <div className="grid lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="grid lg:grid-cols-3 gap-4 items-start">
+            <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm self-start h-auto">
               <h3 className="text-3xl font-heading font-semibold leading-tight mb-4 text-slate-900">Setup FREE WhatsApp Business Account</h3>
               <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-white to-orange-50 p-4 mb-5 text-base text-slate-700">Apply for WhatsApp Business API</div>
               <p className="text-slate-600 mb-2 text-lg leading-snug">Click on Continue with Facebook to apply for WhatsApp Business API</p>
