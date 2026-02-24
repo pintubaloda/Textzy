@@ -45,6 +45,14 @@ export default function ProjectSelectPage() {
     return projects.slice(0, 3);
   }, [projects]);
 
+  const getAccessMeta = (role) => {
+    const normalized = String(role || "").toLowerCase();
+    if (normalized === "super_admin") {
+      return { label: "Global Access", className: "bg-amber-100 text-amber-700 border-amber-200" };
+    }
+    return { label: "Assigned Access", className: "bg-emerald-100 text-emerald-700 border-emerald-200" };
+  };
+
   const onCreate = async () => {
     const next = name.trim();
     if (!next) {
@@ -85,6 +93,12 @@ export default function ProjectSelectPage() {
             <p className="text-4xl font-bold">Welcome {session.email?.split("@")[0] || "User"}..!</p>
             <h1 className="text-5xl lg:text-7xl font-heading font-bold leading-tight">Achieve Design Excellence</h1>
             <p className="text-slate-600 text-lg max-w-xl">One Business Project is associated with one WhatsApp Business API Number</p>
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700">
+              <span className={`inline-block h-2 w-2 rounded-full ${String(session.role || "").toLowerCase() === "super_admin" ? "bg-amber-500" : "bg-emerald-500"}`} />
+              {String(session.role || "").toLowerCase() === "super_admin"
+                ? "Platform Owner: you can access all projects"
+                : "User Access: only assigned projects are visible"}
+            </div>
 
             <div className="space-y-4 max-w-2xl">
               <div className="relative">
@@ -111,7 +125,10 @@ export default function ProjectSelectPage() {
                       <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${idx === 1 ? "bg-slate-100" : "bg-white/15"}`}>
                         <Building2 className={`w-6 h-6 ${idx === 1 ? "text-slate-700" : "text-white"}`} />
                       </div>
-                      <div className="font-semibold text-2xl leading-tight">{p.name}</div>
+                      <div className="flex-1">
+                        <div className="font-semibold text-2xl leading-tight">{p.name}</div>
+                        <Badge className={`mt-2 border ${getAccessMeta(p.role).className}`}>{getAccessMeta(p.role).label}</Badge>
+                      </div>
                     </div>
                     <div className={`border-t border-dashed ${idx === 1 ? "border-slate-300" : "border-white/25"}`} />
                     <div className="grid grid-cols-2 gap-4">
@@ -144,9 +161,12 @@ export default function ProjectSelectPage() {
             {!loading && !!projects.length && (
               <div className="flex flex-wrap gap-2">
                 {projects.map((p) => (
-                  <Badge key={p.slug} className="bg-slate-200 text-slate-700 hover:bg-slate-300 rounded-full px-3 py-1 cursor-pointer" onClick={() => onView(p.slug)}>
-                    {p.name}
-                  </Badge>
+                  <div key={p.slug} className="flex items-center gap-2 rounded-full bg-slate-200 px-3 py-1">
+                    <Badge className="bg-transparent text-slate-700 hover:bg-transparent p-0 cursor-pointer" onClick={() => onView(p.slug)}>
+                      {p.name}
+                    </Badge>
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full border ${getAccessMeta(p.role).className}`}>{getAccessMeta(p.role).label}</span>
+                  </div>
                 ))}
               </div>
             )}
