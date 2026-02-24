@@ -627,7 +627,7 @@ const PlatformSettingsPage = () => {
                       <td className="px-3 py-2 text-slate-700">{x.displayPhoneNumber || "-"}</td>
                       <td className="px-3 py-2 text-slate-600 max-w-[320px] truncate">{x.lastError || "-"}</td>
                       <td className="px-3 py-2">
-                        {["requested", "code_received", "assets_linked", "webhook_subscribed"].includes((x.state || "").toLowerCase()) ? (
+                        {!["ready", "cancelled", "not_configured", "error"].includes((x.state || "").toLowerCase()) ? (
                           <Button
                             variant="outline"
                             className="h-8 px-3 text-xs"
