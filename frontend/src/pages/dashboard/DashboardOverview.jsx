@@ -30,6 +30,7 @@ const DashboardOverview = () => {
   const [campaigns, setCampaigns] = useState([]);
   const [wabaStatus, setWabaStatus] = useState({ state: "requested", isConnected: false, businessName: "", phone: "" });
   const [connectingWaba, setConnectingWaba] = useState(false);
+  const [reusingWaba, setReusingWaba] = useState(false);
   const [webhookAnalytics, setWebhookAnalytics] = useState(null);
   const [analyticsDays, setAnalyticsDays] = useState(7);
   const [embeddedCfg, setEmbeddedCfg] = useState({
@@ -172,8 +173,58 @@ const DashboardOverview = () => {
     }
   };
 
-  const handleReuseExistingWaba = () => {
-    window.location.assign("/dashboard/whatsapp-onboarding");
+  const handleReuseExistingWaba = async () => {
+    const { appId: facebookAppId, configId: embeddedConfigId } = await resolveEmbeddedConfig();
+    if (!facebookAppId || !embeddedConfigId) {
+      toast.error("Missing Facebook App ID or Embedded Config ID in Platform WABA Master Config");
+      return;
+    }
+
+    setReusingWaba(true);
+    try {
+      const FB = await loadFacebookSdk(facebookAppId);
+      FB.login((response) => {
+        if (!response || !response.authResponse) {
+          setReusingWaba(false);
+          toast.error("Embedded signup cancelled");
+          return;
+        }
+
+        const code = response.authResponse.code;
+        if (!code) {
+          setReusingWaba(false);
+          toast.error("Meta did not return authorization code");
+          return;
+        }
+
+        Promise.resolve()
+          .then(() => wabaReuseExisting(code))
+          .then(async (reuse) => {
+            if (reuse?.requiresSelection && Array.isArray(reuse.assets) && reuse.assets.length > 0) {
+              const options = reuse.assets.map((a, i) => `${i + 1}. ${a.wabaName || a.wabaId} (${a.displayPhoneNumber || a.phoneNumberId})`).join("\n");
+              const raw = window.prompt(`Select existing WABA number:\n${options}`, "1");
+              const index = Number(raw || "1") - 1;
+              const selected = reuse.assets[index];
+              if (!selected) throw new Error("Invalid selection");
+              await wabaReuseExisting(code, selected.wabaId, selected.phoneNumberId);
+            }
+            await loadWabaStatus();
+            toast.success("Existing WABA connected to this project");
+          })
+          .catch((e) => {
+            toast.error(e?.message || "Failed to reuse existing WABA");
+          })
+          .finally(() => setReusingWaba(false));
+      }, {
+        config_id: embeddedConfigId,
+        response_type: "code",
+        override_default_response_type: true,
+        scope: "business_management,whatsapp_business_management,whatsapp_business_messaging",
+      });
+    } catch (e) {
+      setReusingWaba(false);
+      toast.error(e?.message || "Unable to start reuse flow");
+    }
   };
 
   const computedStats = useMemo(() => {
@@ -357,11 +408,11 @@ const DashboardOverview = () => {
               </div>
               <div className="mt-3">
                 <Button
-                  variant="outline"
-                  className="border-slate-300 text-slate-700 bg-white hover:bg-slate-100 text-base px-7"
+                  className="bg-orange-500 hover:bg-orange-600 text-white text-base px-7 shadow-md shadow-orange-500/25"
                   onClick={handleReuseExistingWaba}
+                  disabled={reusingWaba}
                 >
-                  Reuse Existing WABA
+                  {reusingWaba ? "Reusing..." : "Reuse Existing WABA"}
                 </Button>
                 <p className="text-sm text-slate-500 mt-2 leading-relaxed max-w-2xl">
                   If you are already using WhatsApp Business, click here to connect your existing account to this project
