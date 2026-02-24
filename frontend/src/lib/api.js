@@ -302,6 +302,20 @@ export async function cancelPlatformWabaRequest(tenantId, reason = '') {
   return apiPost('/api/platform/waba/cancel-request', { tenantId, reason })
 }
 
+export async function platformLookupByPhone(tenantId, phoneNumberId) {
+  const q = new URLSearchParams()
+  q.set('tenantId', tenantId)
+  q.set('phoneNumberId', phoneNumberId)
+  return apiGet(`/api/platform/waba/lookup/by-phone?${q.toString()}`)
+}
+
+export async function platformLookupByWaba(tenantId, wabaId) {
+  const q = new URLSearchParams()
+  q.set('tenantId', tenantId)
+  q.set('wabaId', wabaId)
+  return apiGet(`/api/platform/waba/lookup/by-waba?${q.toString()}`)
+}
+
 export async function getTenantWebhookAnalytics(days = 7) {
   const q = new URLSearchParams()
   q.set('days', String(days))

@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http.Headers;
+using System.Text.Json;
 using Textzy.Api.Data;
 using Textzy.Api.Models;
 using Textzy.Api.Services;
@@ -11,9 +13,14 @@ namespace Textzy.Api.Controllers;
 [Route("api/platform/waba")]
 public class PlatformWabaOnboardingController(
     ControlDbContext controlDb,
+    SecretCryptoService crypto,
+    IHttpClientFactory httpClientFactory,
+    IConfiguration configuration,
     AuthContext auth,
     RbacService rbac) : ControllerBase
 {
+    private readonly WhatsAppOptions _waOptions = configuration.GetSection("WhatsApp").Get<WhatsAppOptions>() ?? new WhatsAppOptions();
+
     [HttpGet("onboarding-summary")]
     public async Task<IActionResult> GetOnboardingSummary(CancellationToken ct)
     {
@@ -144,6 +151,168 @@ public class PlatformWabaOnboardingController(
         await tenantDb.SaveChangesAsync(ct);
 
         return Ok(new { cancelled = true, tenantId = request.TenantId });
+    }
+
+    [HttpGet("lookup/by-phone")]
+    public async Task<IActionResult> LookupByPhone([FromQuery] Guid tenantId, [FromQuery] string phoneNumberId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+        if (tenantId == Guid.Empty) return BadRequest("tenantId is required.");
+        if (string.IsNullOrWhiteSpace(phoneNumberId)) return BadRequest("phoneNumberId is required.");
+
+        var ctx = await ResolveTenantTokenAsync(tenantId, ct);
+        if (ctx is null) return NotFound("Tenant or active WABA config not found.");
+
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{phoneNumberId.Trim()}?fields=id,display_phone_number,verified_name,quality_rating,name_status,whatsapp_business_account{{id,name}}";
+        var (ok, status, body) = await GraphGetRawAsync(url, ctx.Value.accessToken, ct);
+        if (!ok) return StatusCode(status, new { error = "graph_lookup_failed", status, detail = body });
+
+        string wabaId = string.Empty;
+        string wabaName = string.Empty;
+        string display = string.Empty;
+        string verifiedName = string.Empty;
+        string quality = string.Empty;
+        string nameStatus = string.Empty;
+
+        using (var doc = JsonDocument.Parse(body))
+        {
+            var root = doc.RootElement;
+            display = TryGetString(root, "display_phone_number");
+            verifiedName = TryGetString(root, "verified_name");
+            quality = TryGetString(root, "quality_rating");
+            nameStatus = TryGetString(root, "name_status");
+            if (root.TryGetProperty("whatsapp_business_account", out var wabaNode))
+            {
+                wabaId = TryGetString(wabaNode, "id");
+                wabaName = TryGetString(wabaNode, "name");
+            }
+        }
+
+        return Ok(new
+        {
+            tenantId = ctx.Value.tenantId,
+            tenantName = ctx.Value.tenantName,
+            tenantSlug = ctx.Value.tenantSlug,
+            phoneNumberId = phoneNumberId.Trim(),
+            displayPhoneNumber = display,
+            verifiedName,
+            qualityRating = quality,
+            nameStatus,
+            wabaId,
+            wabaName,
+            raw = body
+        });
+    }
+
+    [HttpGet("lookup/by-waba")]
+    public async Task<IActionResult> LookupByWaba([FromQuery] Guid tenantId, [FromQuery] string wabaId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+        if (tenantId == Guid.Empty) return BadRequest("tenantId is required.");
+        if (string.IsNullOrWhiteSpace(wabaId)) return BadRequest("wabaId is required.");
+
+        var ctx = await ResolveTenantTokenAsync(tenantId, ct);
+        if (ctx is null) return NotFound("Tenant or active WABA config not found.");
+
+        var wabaUrl = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{wabaId.Trim()}?fields=id,name,business_verification_status,account_review_status";
+        var phonesUrl = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{wabaId.Trim()}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,name_status,status";
+
+        var (okWaba, statusWaba, bodyWaba) = await GraphGetRawAsync(wabaUrl, ctx.Value.accessToken, ct);
+        if (!okWaba) return StatusCode(statusWaba, new { error = "graph_lookup_failed", status = statusWaba, detail = bodyWaba });
+
+        var (okPhones, statusPhones, bodyPhones) = await GraphGetRawAsync(phonesUrl, ctx.Value.accessToken, ct);
+        if (!okPhones) return StatusCode(statusPhones, new { error = "graph_lookup_failed", status = statusPhones, detail = bodyPhones });
+
+        string wabaName = string.Empty;
+        string verification = string.Empty;
+        string reviewStatus = string.Empty;
+        var phoneRows = new List<object>();
+
+        using (var doc = JsonDocument.Parse(bodyWaba))
+        {
+            var root = doc.RootElement;
+            wabaName = TryGetString(root, "name");
+            verification = TryGetString(root, "business_verification_status");
+            reviewStatus = TryGetString(root, "account_review_status");
+        }
+
+        using (var doc = JsonDocument.Parse(bodyPhones))
+        {
+            if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var x in data.EnumerateArray())
+                {
+                    phoneRows.Add(new
+                    {
+                        id = TryGetString(x, "id"),
+                        displayPhoneNumber = TryGetString(x, "display_phone_number"),
+                        verifiedName = TryGetString(x, "verified_name"),
+                        qualityRating = TryGetString(x, "quality_rating"),
+                        nameStatus = TryGetString(x, "name_status"),
+                        status = TryGetString(x, "status")
+                    });
+                }
+            }
+        }
+
+        return Ok(new
+        {
+            tenantId = ctx.Value.tenantId,
+            tenantName = ctx.Value.tenantName,
+            tenantSlug = ctx.Value.tenantSlug,
+            wabaId = wabaId.Trim(),
+            wabaName,
+            businessVerificationStatus = verification,
+            accountReviewStatus = reviewStatus,
+            phones = phoneRows,
+            rawWaba = bodyWaba,
+            rawPhones = bodyPhones
+        });
+    }
+
+    private async Task<(Guid tenantId, string tenantName, string tenantSlug, string accessToken)?> ResolveTenantTokenAsync(Guid tenantId, CancellationToken ct)
+    {
+        var tenant = await controlDb.Tenants
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == tenantId, ct);
+        if (tenant is null) return null;
+
+        using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
+        var cfg = await tenantDb.TenantWabaConfigs
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.IsActive)
+            .OrderByDescending(x => x.ConnectedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (cfg is null || string.IsNullOrWhiteSpace(cfg.AccessToken)) return null;
+
+        var accessToken = crypto.Decrypt(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(accessToken)) return null;
+        return (tenant.Id, tenant.Name, tenant.Slug, accessToken);
+    }
+
+    private async Task<(bool ok, int status, string body)> GraphGetRawAsync(string url, string accessToken, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient("whatsapp-cloud");
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        using var resp = await client.SendAsync(req, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
+    }
+
+    private static string TryGetString(JsonElement root, string property)
+    {
+        if (!root.TryGetProperty(property, out var p)) return string.Empty;
+        return p.ValueKind switch
+        {
+            JsonValueKind.String => p.GetString() ?? string.Empty,
+            JsonValueKind.Number => p.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => string.Empty
+        };
     }
 
     private static string NormalizeState(string state, TenantWabaConfig cfg)

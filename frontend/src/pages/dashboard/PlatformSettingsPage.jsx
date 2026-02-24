@@ -26,7 +26,9 @@ import {
   getPlatformCustomers,
   getPlatformIdempotencyDiagnostics,
   getPlatformWabaOnboardingSummary,
-  cancelPlatformWabaRequest
+  cancelPlatformWabaRequest,
+  platformLookupByPhone,
+  platformLookupByWaba
 } from "@/lib/api";
 
 const FEATURE_CATALOG = [
@@ -93,6 +95,12 @@ const PlatformSettingsPage = () => {
   const [idemStaleMinutes, setIdemStaleMinutes] = useState("30");
   const [idemData, setIdemData] = useState(null);
   const [onboardingSummary, setOnboardingSummary] = useState(null);
+  const [wabaLookupTenantId, setWabaLookupTenantId] = useState("");
+  const [lookupPhoneId, setLookupPhoneId] = useState("");
+  const [lookupWabaId, setLookupWabaId] = useState("");
+  const [lookupByPhoneData, setLookupByPhoneData] = useState(null);
+  const [lookupByWabaData, setLookupByWabaData] = useState(null);
+  const [lookupLoading, setLookupLoading] = useState(false);
   const [requestLogs, setRequestLogs] = useState([]);
   const [requestLogFilters, setRequestLogFilters] = useState({
     tenantId: "",
@@ -114,6 +122,8 @@ const PlatformSettingsPage = () => {
         ? "Billing Plans"
         : tab === "waba-onboarding"
         ? "WABA Onboarding Summary"
+        : tab === "waba-lookup"
+        ? "WABA ID / Phone ID Lookup"
         : tab === "idempotency-diagnostics"
         ? "Idempotency Diagnostics"
         : tab === "waba-policies"
@@ -187,6 +197,12 @@ const PlatformSettingsPage = () => {
             const rows = await getPlatformWabaOnboardingSummary();
             if (!active) return;
             setOnboardingSummary(rows || null);
+          } else if (tab === "waba-lookup") {
+            const customers = await getPlatformCustomers("").catch(() => []);
+            if (!active) return;
+            const list = customers || [];
+            setTenants(list);
+            if (list.length) setWabaLookupTenantId((prev) => prev || list[0].tenantId);
           } else if (tab === "waba-policies") {
             const rows = await listWabaErrorPolicies();
             if (!active) return;
@@ -287,6 +303,13 @@ const PlatformSettingsPage = () => {
             onClick={() => setTab("waba-onboarding")}
           >
             WABA Onboarding
+          </Button>
+          <Button
+            variant={tab === "waba-lookup" ? "default" : "outline"}
+            className={tab === "waba-lookup" ? "bg-orange-500 hover:bg-orange-600" : ""}
+            onClick={() => setTab("waba-lookup")}
+          >
+            WABA Lookup
           </Button>
           <Button
             variant={tab === "waba-policies" ? "default" : "outline"}
@@ -818,6 +841,125 @@ const PlatformSettingsPage = () => {
                   )}
                 </tbody>
               </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "waba-lookup" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>WABA ID / Phone ID Lookup</CardTitle>
+            <CardDescription>Resolve mapping in both directions using selected project token.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Project</Label>
+              <Select value={wabaLookupTenantId || "none"} onValueChange={(v) => setWabaLookupTenantId(v === "none" ? "" : v)}>
+                <SelectTrigger className="w-[320px]"><SelectValue placeholder="Select project" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Select project</SelectItem>
+                  {(tenants || []).map((t) => (
+                    <SelectItem key={t.tenantId} value={t.tenantId}>{t.tenantName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+                <div className="font-medium text-slate-900">Lookup by Phone Number ID</div>
+                <Input
+                  placeholder="Enter phone_number_id"
+                  value={lookupPhoneId}
+                  onChange={(e) => setLookupPhoneId(e.target.value)}
+                />
+                <Button
+                  className="bg-orange-500 hover:bg-orange-600"
+                  disabled={lookupLoading}
+                  onClick={async () => {
+                    if (!wabaLookupTenantId) return toast.error("Select project first");
+                    if (!lookupPhoneId.trim()) return toast.error("Enter phone number ID");
+                    try {
+                      setLookupLoading(true);
+                      const data = await platformLookupByPhone(wabaLookupTenantId, lookupPhoneId.trim());
+                      setLookupByPhoneData(data || null);
+                    } catch (e) {
+                      toast.error(e?.message || "Lookup failed");
+                    } finally {
+                      setLookupLoading(false);
+                    }
+                  }}
+                >
+                  Resolve Phone → WABA
+                </Button>
+                {lookupByPhoneData ? (
+                  <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm space-y-1">
+                    <div><span className="text-slate-500">Display:</span> <b>{lookupByPhoneData.displayPhoneNumber || "-"}</b></div>
+                    <div><span className="text-slate-500">Verified Name:</span> <b>{lookupByPhoneData.verifiedName || "-"}</b></div>
+                    <div><span className="text-slate-500">WABA ID:</span> <b>{lookupByPhoneData.wabaId || "-"}</b></div>
+                    <div><span className="text-slate-500">WABA Name:</span> <b>{lookupByPhoneData.wabaName || "-"}</b></div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+                <div className="font-medium text-slate-900">Lookup by WABA ID</div>
+                <Input
+                  placeholder="Enter waba_id"
+                  value={lookupWabaId}
+                  onChange={(e) => setLookupWabaId(e.target.value)}
+                />
+                <Button
+                  className="bg-orange-500 hover:bg-orange-600"
+                  disabled={lookupLoading}
+                  onClick={async () => {
+                    if (!wabaLookupTenantId) return toast.error("Select project first");
+                    if (!lookupWabaId.trim()) return toast.error("Enter WABA ID");
+                    try {
+                      setLookupLoading(true);
+                      const data = await platformLookupByWaba(wabaLookupTenantId, lookupWabaId.trim());
+                      setLookupByWabaData(data || null);
+                    } catch (e) {
+                      toast.error(e?.message || "Lookup failed");
+                    } finally {
+                      setLookupLoading(false);
+                    }
+                  }}
+                >
+                  Resolve WABA → Phones
+                </Button>
+                {lookupByWabaData ? (
+                  <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm space-y-1">
+                    <div><span className="text-slate-500">WABA Name:</span> <b>{lookupByWabaData.wabaName || "-"}</b></div>
+                    <div><span className="text-slate-500">Verification:</span> <b>{lookupByWabaData.businessVerificationStatus || "-"}</b></div>
+                    <div><span className="text-slate-500">Phones:</span> <b>{(lookupByWabaData.phones || []).length}</b></div>
+                    <div className="max-h-40 overflow-auto rounded border border-slate-200 bg-white mt-2">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="text-left px-2 py-1">Phone ID</th>
+                            <th className="text-left px-2 py-1">Display</th>
+                            <th className="text-left px-2 py-1">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(lookupByWabaData.phones || []).map((x) => (
+                            <tr key={x.id} className="border-t border-slate-100">
+                              <td className="px-2 py-1">{x.id || "-"}</td>
+                              <td className="px-2 py-1">{x.displayPhoneNumber || "-"}</td>
+                              <td className="px-2 py-1">{x.status || "-"}</td>
+                            </tr>
+                          ))}
+                          {(lookupByWabaData.phones || []).length === 0 && (
+                            <tr><td colSpan={3} className="px-2 py-3 text-center text-slate-500">No phone numbers.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </CardContent>
         </Card>
