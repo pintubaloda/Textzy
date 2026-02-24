@@ -1,7 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Textzy.Api.Data;
@@ -19,7 +17,7 @@ public class PlatformRequestLoggingMiddleware(RequestDelegate next)
         "/favicon.ico"
     };
 
-    public async Task Invoke(HttpContext context)
+    public async Task Invoke(HttpContext context, SensitiveDataRedactor redactor)
     {
         if (!ShouldLog(context))
         {
@@ -32,7 +30,7 @@ public class PlatformRequestLoggingMiddleware(RequestDelegate next)
         await using var responseBuffer = new MemoryStream();
         context.Response.Body = responseBuffer;
 
-        var requestBody = await ReadRequestBodyAsync(context);
+        var requestBody = await ReadRequestBodyAsync(context, redactor);
         string responseBody = string.Empty;
         string error = string.Empty;
 
@@ -42,7 +40,7 @@ public class PlatformRequestLoggingMiddleware(RequestDelegate next)
         }
         catch (Exception ex)
         {
-            error = ex.Message;
+            error = redactor.RedactText(ex.Message);
             throw;
         }
         finally
@@ -50,7 +48,7 @@ public class PlatformRequestLoggingMiddleware(RequestDelegate next)
             stopwatch.Stop();
             try
             {
-                responseBody = await ReadResponseBodyAsync(context, responseBuffer, originalResponseBody);
+                responseBody = await ReadResponseBodyAsync(context, responseBuffer, originalResponseBody, redactor);
                 await PersistLogAsync(context, stopwatch.ElapsedMilliseconds, requestBody, responseBody, error);
             }
             catch
@@ -72,7 +70,7 @@ public class PlatformRequestLoggingMiddleware(RequestDelegate next)
         return path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static async Task<string> ReadRequestBodyAsync(HttpContext context)
+    private static async Task<string> ReadRequestBodyAsync(HttpContext context, SensitiveDataRedactor redactor)
     {
         if (context.Request.Body == Stream.Null) return string.Empty;
         if (context.Request.ContentLength is > 1024 * 1024) return "[skipped: request body too large]";
@@ -87,10 +85,10 @@ public class PlatformRequestLoggingMiddleware(RequestDelegate next)
         using var reader = new StreamReader(context.Request.Body, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
         var body = await reader.ReadToEndAsync();
         context.Request.Body.Position = 0;
-        return NormalizeBody(body);
+        return NormalizeBody(body, redactor);
     }
 
-    private static async Task<string> ReadResponseBodyAsync(HttpContext context, MemoryStream responseBuffer, Stream originalResponseBody)
+    private static async Task<string> ReadResponseBodyAsync(HttpContext context, MemoryStream responseBuffer, Stream originalResponseBody, SensitiveDataRedactor redactor)
     {
         responseBuffer.Position = 0;
         using var reader = new StreamReader(responseBuffer, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
@@ -98,7 +96,7 @@ public class PlatformRequestLoggingMiddleware(RequestDelegate next)
         responseBuffer.Position = 0;
         await responseBuffer.CopyToAsync(originalResponseBody);
         await originalResponseBody.FlushAsync();
-        return NormalizeBody(body);
+        return NormalizeBody(body, redactor);
     }
 
     private async Task PersistLogAsync(HttpContext context, long durationMs, string requestBody, string responseBody, string error)
@@ -156,68 +154,10 @@ public class PlatformRequestLoggingMiddleware(RequestDelegate next)
         }
     }
 
-    private static string NormalizeBody(string body)
+    private static string NormalizeBody(string body, SensitiveDataRedactor redactor)
     {
-        if (string.IsNullOrWhiteSpace(body)) return string.Empty;
-        body = body.Trim();
-        if (body.Length > MaxBodyChars) body = body[..MaxBodyChars];
-        try
-        {
-            var node = JsonNode.Parse(body);
-            if (node is null) return body;
-            RedactJson(node);
-            return node.ToJsonString();
-        }
-        catch
-        {
-            return body;
-        }
+        return redactor.NormalizeAndRedactBody(body, MaxBodyChars);
     }
-
-    private static void RedactJson(JsonNode node)
-    {
-        if (node is JsonObject obj)
-        {
-            var keys = obj.Select(kv => kv.Key).ToList();
-            foreach (var key in keys)
-            {
-                if (IsSensitiveKey(key))
-                {
-                    obj[key] = "***";
-                    continue;
-                }
-
-                if (obj[key] is JsonNode child)
-                {
-                    RedactJson(child);
-                }
-            }
-            return;
-        }
-
-        if (node is JsonArray arr)
-        {
-            foreach (var item in arr)
-            {
-                if (item is JsonNode child)
-                {
-                    RedactJson(child);
-                }
-            }
-        }
-    }
-
-    private static bool IsSensitiveKey(string key) =>
-        key.Equals("password", StringComparison.OrdinalIgnoreCase) ||
-        key.Equals("passwordHash", StringComparison.OrdinalIgnoreCase) ||
-        key.Equals("passwordSalt", StringComparison.OrdinalIgnoreCase) ||
-        key.Equals("token", StringComparison.OrdinalIgnoreCase) ||
-        key.Equals("accessToken", StringComparison.OrdinalIgnoreCase) ||
-        key.Equals("refreshToken", StringComparison.OrdinalIgnoreCase) ||
-        key.Equals("authorization", StringComparison.OrdinalIgnoreCase) ||
-        key.Equals("appSecret", StringComparison.OrdinalIgnoreCase) ||
-        key.Equals("keySecret", StringComparison.OrdinalIgnoreCase) ||
-        key.Equals("webhookSecret", StringComparison.OrdinalIgnoreCase);
 
     private static string Truncate(string text, int max) =>
         string.IsNullOrEmpty(text) ? string.Empty : (text.Length <= max ? text : text[..max]);

@@ -21,4 +21,7 @@ public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbCo
     public DbSet<WebhookEvent> WebhookEvents => Set<WebhookEvent>();
     public DbSet<WabaErrorPolicy> WabaErrorPolicies => Set<WabaErrorPolicy>();
     public DbSet<PlatformRequestLog> PlatformRequestLogs => Set<PlatformRequestLog>();
+    public DbSet<WebhookReplayGuard> WebhookReplayGuards => Set<WebhookReplayGuard>();
+    public DbSet<SecuritySignal> SecuritySignals => Set<SecuritySignal>();
+    public DbSet<TenantSecurityControl> TenantSecurityControls => Set<TenantSecurityControl>();
 }

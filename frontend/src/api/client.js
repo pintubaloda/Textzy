@@ -25,7 +25,7 @@ async function baseFetch(path, options = {}, useAuth = true) {
   if (useAuth && token) headers.Authorization = `Bearer ${token}`
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
 
-  return fetch(`${API_BASE}${path}`, { ...options, headers })
+  return fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' })
 }
 
 async function refreshToken() {
@@ -77,6 +77,7 @@ export async function authLogin({ email, password, tenantSlug }) {
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: 'POST',
     headers,
+    credentials: 'include',
     body: JSON.stringify({ email, password })
   })
 

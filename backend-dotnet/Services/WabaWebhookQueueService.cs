@@ -29,6 +29,8 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
     private readonly string _redisKey = config["WebhookQueue:RedisListKey"] ?? "textzy:webhook:queue";
     private readonly string _rabbitConn = config["WebhookQueue:RabbitMq:ConnectionString"] ?? config["RABBITMQ_URL"] ?? string.Empty;
     private readonly string _rabbitQueue = config["WebhookQueue:RabbitMq:QueueName"] ?? "textzy.webhook.queue";
+    private readonly string _rabbitExchange = config["WebhookQueue:RabbitMq:ExchangeName"] ?? "textzy.webhook.exchange";
+    private readonly string _rabbitRoutingKey = config["WebhookQueue:RabbitMq:RoutingKey"] ?? "webhook.meta";
     private readonly string _sqsQueueUrl = config["WebhookQueue:Sqs:QueueUrl"] ?? config["AWS_SQS_WEBHOOK_QUEUE_URL"] ?? string.Empty;
     private readonly Lazy<ConnectionMultiplexer?> _redis = new(() =>
     {
@@ -113,6 +115,7 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
         if (ActiveProvider == "rabbitmq")
         {
             using var ch = _rabbitConnLazy.Value!.CreateModel();
+            ch.ExchangeDeclare(_rabbitExchange, ExchangeType.Topic, durable: true, autoDelete: false);
             var args = new Dictionary<string, object>
             {
                 ["x-dead-letter-exchange"] = string.Empty,
@@ -120,11 +123,12 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
             };
             ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false, arguments: args);
             ch.QueueDeclare($"{_rabbitQueue}.dead", durable: true, exclusive: false, autoDelete: false);
+            ch.QueueBind(_rabbitQueue, _rabbitExchange, _rabbitRoutingKey);
             var payload = JsonSerializer.Serialize(item);
             var bytes = System.Text.Encoding.UTF8.GetBytes(payload);
             var props = ch.CreateBasicProperties();
             props.Persistent = true;
-            ch.BasicPublish("", _rabbitQueue, props, bytes);
+            ch.BasicPublish(_rabbitExchange, _rabbitRoutingKey, props, bytes);
             return;
         }
         if (ActiveProvider == "sqs")
@@ -161,6 +165,7 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
         if (ActiveProvider == "rabbitmq")
         {
             using var ch = _rabbitConnLazy.Value!.CreateModel();
+            ch.ExchangeDeclare(_rabbitExchange, ExchangeType.Topic, durable: true, autoDelete: false);
             var args = new Dictionary<string, object>
             {
                 ["x-dead-letter-exchange"] = string.Empty,
@@ -168,6 +173,7 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
             };
             ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false, arguments: args);
             ch.QueueDeclare($"{_rabbitQueue}.dead", durable: true, exclusive: false, autoDelete: false);
+            ch.QueueBind(_rabbitQueue, _rabbitExchange, _rabbitRoutingKey);
             return ch.MessageCount(_rabbitQueue);
         }
         if (ActiveProvider == "sqs")
@@ -215,6 +221,7 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
     private async IAsyncEnumerable<WabaWebhookQueueItem> ReadRabbitAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         using var ch = _rabbitConnLazy.Value!.CreateModel();
+        ch.ExchangeDeclare(_rabbitExchange, ExchangeType.Topic, durable: true, autoDelete: false);
         var args = new Dictionary<string, object>
         {
             ["x-dead-letter-exchange"] = string.Empty,
@@ -222,6 +229,7 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
         };
         ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false, arguments: args);
         ch.QueueDeclare($"{_rabbitQueue}.dead", durable: true, exclusive: false, autoDelete: false);
+        ch.QueueBind(_rabbitQueue, _rabbitExchange, _rabbitRoutingKey);
         while (!ct.IsCancellationRequested)
         {
             var result = ch.BasicGet(_rabbitQueue, autoAck: false);
@@ -273,5 +281,28 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
             await _sqs.Value.DeleteMessageAsync(_sqsQueueUrl, msg.ReceiptHandle, ct);
             if (item is not null) yield return item;
         }
+    }
+
+    public async Task PurgeAsync(CancellationToken ct = default)
+    {
+        if (ActiveProvider == "redis")
+        {
+            await _redis.Value!.GetDatabase().KeyDeleteAsync(_redisKey);
+            return;
+        }
+        if (ActiveProvider == "rabbitmq")
+        {
+            using var ch = _rabbitConnLazy.Value!.CreateModel();
+            ch.QueuePurge(_rabbitQueue);
+            return;
+        }
+        if (ActiveProvider == "sqs")
+        {
+            await _sqs.Value!.PurgeQueueAsync(new PurgeQueueRequest { QueueUrl = _sqsQueueUrl }, ct);
+            return;
+        }
+
+        while (_channel.Reader.TryRead(out _)) { }
+        Interlocked.Exchange(ref _memoryDepth, 0);
     }
 }

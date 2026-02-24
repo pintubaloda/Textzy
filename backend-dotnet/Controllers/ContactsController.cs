@@ -14,7 +14,8 @@ public class ContactsController(
     TenantDbContext db,
     TenancyContext tenancy,
     RbacService rbac,
-    BillingGuardService billingGuard) : ControllerBase
+    BillingGuardService billingGuard,
+    ContactPiiService contactPii) : ControllerBase
 {
     [HttpGet]
     public IActionResult List()
@@ -33,13 +34,13 @@ public class ContactsController(
                 c.GroupId,
                 c.SegmentId,
                 Segment = s != null ? s.Name : null,
-                c.Name,
-                c.Email,
+                Name = contactPii.RevealName(c),
+                Email = contactPii.RevealEmail(c),
                 c.TagsCsv,
                 Tags = string.IsNullOrWhiteSpace(c.TagsCsv)
                     ? Array.Empty<string>()
                     : c.TagsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
-                c.Phone,
+                Phone = contactPii.RevealPhone(c),
                 c.OptInStatus,
                 c.CreatedAtUtc
             }).ToList();
@@ -50,6 +51,20 @@ public class ContactsController(
     public async Task<IActionResult> Create([FromBody] UpsertContactRequest request, CancellationToken ct)
     {
         if (!rbac.HasPermission(ContactsWrite)) return Forbid();
+        string name;
+        string phone;
+        string email;
+        try
+        {
+            name = InputGuardService.RequireTrimmed(request.Name, "Name", 256);
+            phone = InputGuardService.ValidatePhone(request.Phone);
+            email = InputGuardService.ValidateEmailOrEmpty(request.Email);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
         var currentCount = await db.Contacts.CountAsync(x => x.TenantId == tenancy.TenantId, ct);
         var limit = await billingGuard.CheckLimitAsync(tenancy.TenantId, "contacts", currentCount + 1, ct);
         if (!limit.Allowed) return BadRequest(limit.Message);
@@ -74,13 +89,14 @@ public class ContactsController(
         {
             Id = Guid.NewGuid(),
             TenantId = tenancy.TenantId,
-            Name = request.Name,
-            Email = request.Email ?? string.Empty,
+            Name = name,
+            Email = email,
             TagsCsv = tagsCsv,
-            Phone = request.Phone,
+            Phone = phone,
             GroupId = request.GroupId,
             SegmentId = request.SegmentId ?? defaultSegment.Id
         };
+        contactPii.Protect(item);
         db.Contacts.Add(item);
         await db.SaveChangesAsync(ct);
         await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "contacts", currentCount + 1, ct);
@@ -91,14 +107,29 @@ public class ContactsController(
     public async Task<IActionResult> Update(Guid id, [FromBody] UpsertContactRequest request, CancellationToken ct)
     {
         if (!rbac.HasPermission(ContactsWrite)) return Forbid();
+        string name;
+        string phone;
+        string email;
+        try
+        {
+            name = InputGuardService.RequireTrimmed(request.Name, "Name", 256);
+            phone = InputGuardService.ValidatePhone(request.Phone);
+            email = InputGuardService.ValidateEmailOrEmpty(request.Email);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
         var item = db.Contacts.FirstOrDefault(x => x.Id == id && x.TenantId == tenancy.TenantId);
         if (item is null) return NotFound();
-        item.Name = request.Name;
-        item.Email = request.Email ?? string.Empty;
+        item.Name = name;
+        item.Email = email;
         item.TagsCsv = request.TagsCsv ?? string.Empty;
-        item.Phone = request.Phone;
+        item.Phone = phone;
         item.GroupId = request.GroupId;
         item.SegmentId = request.SegmentId;
+        contactPii.Protect(item);
         await db.SaveChangesAsync(ct);
         return Ok(item);
     }

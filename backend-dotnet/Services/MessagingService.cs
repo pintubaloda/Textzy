@@ -9,14 +9,35 @@ public class MessagingService(
     TenantDbContext db,
     TenancyContext tenancy,
     OutboundMessageQueueService queue,
-    BillingGuardService billingGuard)
+    BillingGuardService billingGuard,
+    SecurityControlService security,
+    ContactPiiService contactPii)
 {
     public async Task<Message> EnqueueAsync(SendMessageRequest request, CancellationToken ct = default)
     {
         await billingGuard.RotateMonthlyBucketAsync(tenancy.TenantId, ct);
+        if (await security.IsCircuitBreakerOpenAsync(tenancy.TenantId, ct))
+            throw new InvalidOperationException("Tenant circuit breaker is active. Outbound messaging is paused.");
+
         var idempotencyKey = (request.IdempotencyKey ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(idempotencyKey))
             throw new InvalidOperationException("Idempotency-Key header is required.");
+        if (idempotencyKey.Length > 180) throw new InvalidOperationException("Idempotency-Key is too long.");
+
+        request.Recipient = InputGuardService.ValidatePhone(request.Recipient, "Recipient");
+        if (!request.UseTemplate)
+        {
+            request.Body = InputGuardService.RequireTrimmed(request.Body, "Message body", 4096);
+        }
+
+        var rpmOverride = await security.GetRatePerMinuteOverrideAsync(tenancy.TenantId, ct);
+        if (rpmOverride.HasValue)
+        {
+            var minuteAgo = DateTime.UtcNow.AddMinutes(-1);
+            var sentLastMinute = await db.Messages.CountAsync(x => x.TenantId == tenancy.TenantId && x.CreatedAtUtc >= minuteAgo, ct);
+            if (sentLastMinute >= rpmOverride.Value)
+                throw new InvalidOperationException($"Rate override reached ({rpmOverride.Value}/minute). Please retry shortly.");
+        }
 
         var now = DateTime.UtcNow;
         var keyRow = await db.IdempotencyKeys.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Key == idempotencyKey, ct);
@@ -124,7 +145,7 @@ public class MessagingService(
                 db.ContactSegments.Add(defaultSegment);
             }
 
-            db.Contacts.Add(new Contact
+            var newContact = new Contact
             {
                 Id = Guid.NewGuid(),
                 TenantId = tenancy.TenantId,
@@ -134,7 +155,9 @@ public class MessagingService(
                 TagsCsv = "New",
                 OptInStatus = "unknown",
                 CreatedAtUtc = DateTime.UtcNow
-            });
+            };
+            contactPii.Protect(newContact);
+            db.Contacts.Add(newContact);
             var currentContacts = await db.Contacts.CountAsync(x => x.TenantId == tenancy.TenantId, ct);
             await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "contacts", currentContacts + 1, ct);
         }
@@ -142,6 +165,7 @@ public class MessagingService(
         {
             if (string.IsNullOrWhiteSpace(existingContact.Name))
                 existingContact.Name = request.Recipient;
+            contactPii.Protect(existingContact);
         }
 
         try

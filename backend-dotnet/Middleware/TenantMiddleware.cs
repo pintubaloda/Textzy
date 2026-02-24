@@ -31,7 +31,8 @@ public class TenantMiddleware(RequestDelegate next)
         if (!context.Request.Headers.TryGetValue("X-Tenant-Slug", out var tenantSlug))
         {
             var authHeader = context.Request.Headers.Authorization.ToString();
-            if (authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            var hasCookieSession = context.Request.Cookies.ContainsKey(AuthCookieService.CookieName);
+            if (authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) || hasCookieSession)
             {
                 await _next(context);
                 return;

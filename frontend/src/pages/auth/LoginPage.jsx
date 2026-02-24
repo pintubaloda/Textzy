@@ -24,11 +24,11 @@ const LoginPage = () => {
     setLoading(true);
     
     try {
-      const login = await authLogin({
+      await authLogin({
         email: formData.email,
         password: formData.password,
       });
-      setSession({ token: login.accessToken });
+      setSession({ token: "" });
       await initializeMe();
       setLoading(false);
       toast.success("Welcome back! Select your project...");

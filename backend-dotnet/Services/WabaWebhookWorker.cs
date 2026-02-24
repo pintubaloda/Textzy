@@ -54,9 +54,10 @@ public class WabaWebhookWorker(
         await foreach (var item in queue.ReadAllAsync(stoppingToken))
         {
             using var scope = scopeFactory.CreateScope();
-            var controlDb = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
-            var tenantResolver = scope.ServiceProvider.GetRequiredService<WabaTenantResolver>();
-            var eventRow = await controlDb.WebhookEvents
+                var controlDb = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
+                var tenantResolver = scope.ServiceProvider.GetRequiredService<WabaTenantResolver>();
+                var contactPii = scope.ServiceProvider.GetRequiredService<ContactPiiService>();
+                var eventRow = await controlDb.WebhookEvents
                 .FirstOrDefaultAsync(x => x.Provider == item.Provider && x.EventKey == item.EventKey, stoppingToken);
 
             if (eventRow is not null && eventRow.Status == "Processed")
@@ -263,7 +264,7 @@ public class WabaWebhookWorker(
                             tenantDb.Set<ContactSegment>().Add(defaultSegment);
                         }
 
-                        tenantDb.Set<Contact>().Add(new Contact
+                        var newContact = new Contact
                         {
                             Id = Guid.NewGuid(),
                             TenantId = resolved.TenantId,
@@ -273,11 +274,14 @@ public class WabaWebhookWorker(
                             TagsCsv = "New",
                             OptInStatus = "opted_in",
                             CreatedAtUtc = DateTime.UtcNow
-                        });
+                        };
+                        contactPii.Protect(newContact);
+                        tenantDb.Set<Contact>().Add(newContact);
                     }
                     else if (!string.IsNullOrWhiteSpace(inbound.Name))
                     {
                         existingContact.Name = inbound.Name;
+                        contactPii.Protect(existingContact);
                     }
 
                     var inboundProviderId = string.IsNullOrWhiteSpace(inbound.MessageId) ? $"wa_in_{Guid.NewGuid():N}" : inbound.MessageId;

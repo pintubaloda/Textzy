@@ -7,7 +7,7 @@ public class AuthMiddleware(RequestDelegate next)
 {
     private readonly RequestDelegate _next = next;
 
-    public async Task Invoke(HttpContext context, SessionService sessions, ControlDbContext db, TenancyContext tenancy, AuthContext auth)
+    public async Task Invoke(HttpContext context, SessionService sessions, ControlDbContext db, TenancyContext tenancy, AuthContext auth, AuthCookieService authCookie)
     {
         var path = context.Request.Path.Value ?? string.Empty;
         var isAuthPath = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase)
@@ -27,14 +27,22 @@ public class AuthMiddleware(RequestDelegate next)
         }
 
         var header = context.Request.Headers.Authorization.ToString();
-        if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        var opaqueToken = string.Empty;
+        if (header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            opaqueToken = header["Bearer ".Length..].Trim();
+        }
+        else
+        {
+            opaqueToken = authCookie.ReadToken(context) ?? string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(opaqueToken))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             await context.Response.WriteAsync("Missing bearer token.");
             return;
         }
-
-        var opaqueToken = header["Bearer ".Length..].Trim();
         var session = sessions.Validate(opaqueToken);
         if (session is null)
         {

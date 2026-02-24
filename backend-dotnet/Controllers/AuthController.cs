@@ -16,15 +16,23 @@ public class AuthController(
     PasswordHasher hasher,
     SessionService sessions,
     TenancyContext tenancy,
-    AuthContext auth) : ControllerBase
+    AuthContext auth,
+    AuthCookieService authCookie) : ControllerBase
 {
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
-        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
-        var password = request.Password ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
-            return BadRequest("Email and password are required.");
+        string email;
+        string password;
+        try
+        {
+            email = InputGuardService.RequireTrimmed(request.Email, "Email", 320).ToLowerInvariant();
+            password = InputGuardService.RequireTrimmed(request.Password, "Password", 256);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
 
         var user = db.Users.FirstOrDefault(u => u.Email.ToLower() == email && u.IsActive);
         if (user is null)
@@ -77,6 +85,7 @@ public class AuthController(
         }
 
         var token = await sessions.CreateSessionAsync(user.Id, tenantId, ct);
+        authCookie.SetToken(HttpContext, token);
         return Ok(new AuthTokenResponse { AccessToken = token });
     }
 
@@ -138,12 +147,13 @@ public class AuthController(
     public async Task<IActionResult> Refresh(CancellationToken ct)
     {
         var header = Request.Headers.Authorization.ToString();
-        if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-            return Unauthorized("Missing bearer token.");
-
-        var token = header["Bearer ".Length..].Trim();
+        var token = header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? header["Bearer ".Length..].Trim()
+            : (authCookie.ReadToken(HttpContext) ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(token)) return Unauthorized("Missing bearer token.");
         var rotated = await sessions.RotateAsync(token, ct);
         if (rotated is null) return Unauthorized("Invalid or expired session.");
+        authCookie.SetToken(HttpContext, rotated);
         return Ok(new AuthTokenResponse { AccessToken = rotated });
     }
 
@@ -197,6 +207,7 @@ public class AuthController(
         if (tenant is null) return BadRequest("Invite tenant not found.");
 
         var sessionToken = await sessions.CreateSessionAsync(user.Id, invite.TenantId, ct);
+        authCookie.SetToken(HttpContext, sessionToken);
         return Ok(new { accessToken = sessionToken, tenantSlug = tenant.Slug, projectName = tenant.Name, role = invite.Role });
     }
 
@@ -204,9 +215,11 @@ public class AuthController(
     public async Task<IActionResult> Logout(CancellationToken ct)
     {
         var header = Request.Headers.Authorization.ToString();
-        if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return NoContent();
-        var token = header["Bearer ".Length..].Trim();
-        await sessions.RevokeAsync(token, ct);
+        var token = header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? header["Bearer ".Length..].Trim()
+            : (authCookie.ReadToken(HttpContext) ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(token)) await sessions.RevokeAsync(token, ct);
+        authCookie.Clear(HttpContext);
         return NoContent();
     }
 
@@ -329,6 +342,7 @@ public class AuthController(
         await db.SaveChangesAsync(ct);
 
         var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
+        authCookie.SetToken(HttpContext, token);
         return Ok(new { tenant.Id, tenant.Name, tenant.Slug, role = "owner", accessToken = token });
     }
 
@@ -352,6 +366,7 @@ public class AuthController(
         if (!isSuperAdmin && membership is null) return Forbid();
 
         var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
+        authCookie.SetToken(HttpContext, token);
         var role = isSuperAdmin ? RolePermissionCatalog.SuperAdmin : membership?.Role ?? "owner";
         return Ok(new { accessToken = token, tenantSlug = tenant.Slug, projectName = tenant.Name, role });
     }

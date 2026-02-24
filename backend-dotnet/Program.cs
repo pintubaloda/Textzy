@@ -106,9 +106,13 @@ builder.Services.AddScoped<PasswordHasher>();
 builder.Services.AddScoped<SessionService>();
 builder.Services.AddScoped<RbacService>();
 builder.Services.AddScoped<SecretCryptoService>();
+builder.Services.AddScoped<SensitiveDataRedactor>();
+builder.Services.AddScoped<AuthCookieService>();
+builder.Services.AddScoped<ContactPiiService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<BillingGuardService>();
+builder.Services.AddScoped<SecurityControlService>();
 builder.Services.AddScoped<IMessageProvider, MockMessageProvider>();
 builder.Services.AddScoped<MessagingService>();
 builder.Services.Configure<WhatsAppOptions>(builder.Configuration.GetSection("WhatsApp"));
@@ -124,6 +128,7 @@ builder.Services.AddHostedService<BroadcastWorker>();
 builder.Services.AddHostedService<OutboundMessageWorker>();
 builder.Services.AddHostedService<WabaWebhookWorker>();
 builder.Services.AddHostedService<WabaOnboardingHealthWorker>();
+builder.Services.AddHostedService<SecurityMonitoringWorker>();
 
 var app = builder.Build();
 
@@ -310,6 +315,46 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_PlatformRequestLogs_Path_CreatedAtUtc" ON "PlatformRequestLogs" ("Path","CreatedAtUtc");""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_PlatformRequestLogs_StatusCode_CreatedAtUtc" ON "PlatformRequestLogs" ("StatusCode","CreatedAtUtc");""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_PlatformRequestLogs_TenantId_CreatedAtUtc" ON "PlatformRequestLogs" ("TenantId","CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "WebhookReplayGuards" (
+            "Id" uuid PRIMARY KEY,
+            "Provider" text NOT NULL,
+            "ReplayKey" text NOT NULL,
+            "FirstSeenAtUtc" timestamp with time zone NOT NULL,
+            "ExpiresAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_WebhookReplayGuards_Provider_ReplayKey" ON "WebhookReplayGuards" ("Provider","ReplayKey");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_WebhookReplayGuards_ExpiresAtUtc" ON "WebhookReplayGuards" ("ExpiresAtUtc");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "SecuritySignals" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NULL,
+            "SignalType" text NOT NULL,
+            "Severity" text NOT NULL,
+            "Status" text NOT NULL,
+            "CountValue" integer NOT NULL DEFAULT 0,
+            "Details" text NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL,
+            "ResolvedAtUtc" timestamp with time zone NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SecuritySignals_Status_CreatedAtUtc" ON "SecuritySignals" ("Status","CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SecuritySignals_Tenant_CreatedAtUtc" ON "SecuritySignals" ("TenantId","CreatedAtUtc");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "TenantSecurityControls" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NOT NULL,
+            "CircuitBreakerEnabled" boolean NOT NULL DEFAULT false,
+            "RatePerMinuteOverride" integer NOT NULL DEFAULT 0,
+            "Reason" text NOT NULL DEFAULT '',
+            "UpdatedAtUtc" timestamp with time zone NOT NULL,
+            "UpdatedByUserId" uuid NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TenantSecurityControls_TenantId" ON "TenantSecurityControls" ("TenantId");""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "TeamInvitations" (
@@ -738,6 +783,11 @@ static void EnsureTenantCoreSchema(TenantDbContext db)
     db.Database.ExecuteSqlRaw("""ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "SegmentId" uuid NULL;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "Email" text NOT NULL DEFAULT '';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "TagsCsv" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "NameEncrypted" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "EmailEncrypted" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PhoneEncrypted" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PhoneHash" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_Contacts_Tenant_PhoneHash" ON "Contacts" ("TenantId","PhoneHash");""");
     db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "ChatbotConfigs" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "Greeting" text NOT NULL DEFAULT 'Hi! Welcome.', "Fallback" text NOT NULL DEFAULT 'Agent will join shortly.', "HandoffEnabled" boolean NOT NULL DEFAULT true, "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
     db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "SmsFlows" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "Name" text NOT NULL DEFAULT '', "Status" text NOT NULL DEFAULT 'Active', "SentCount" integer NOT NULL DEFAULT 0, "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
     db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "SmsInputFields" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "Name" text NOT NULL DEFAULT '', "Type" text NOT NULL DEFAULT 'text', "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");

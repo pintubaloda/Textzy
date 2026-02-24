@@ -31,6 +31,7 @@ public class OutboundMessageWorker(
                 using var scope = scopeFactory.CreateScope();
                 var controlDb = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
                 var crypto = scope.ServiceProvider.GetRequiredService<SecretCryptoService>();
+                var security = scope.ServiceProvider.GetRequiredService<SecurityControlService>();
                 var httpClientFactory = scope.ServiceProvider.GetRequiredService<IHttpClientFactory>();
                 var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
                 var waOptions = configuration.GetSection("WhatsApp").Get<WhatsAppOptions>() ?? new WhatsAppOptions();
@@ -41,6 +42,14 @@ public class OutboundMessageWorker(
                 var message = await tenantDb.Messages.FirstOrDefaultAsync(x => x.Id == job.MessageId, stoppingToken);
                 if (message is null) continue;
                 if (message.Status is "Accepted" or "AcceptedByMeta" or "Sent" or "Delivered" or "Read") continue;
+                if (await security.IsCircuitBreakerOpenAsync(job.TenantId, stoppingToken))
+                {
+                    message.Status = MessageStateMachine.RetryScheduled;
+                    message.LastError = "circuit_breaker_active";
+                    message.NextRetryAtUtc = DateTime.UtcNow.AddMinutes(5);
+                    await tenantDb.SaveChangesAsync(stoppingToken);
+                    continue;
+                }
                 if (message.NextRetryAtUtc.HasValue && message.NextRetryAtUtc.Value > DateTime.UtcNow)
                 {
                     await queue.EnqueueAsync(job, stoppingToken);
@@ -185,6 +194,8 @@ public class OutboundMessageWorker(
         errorCode = ExtractErrorCode(ex.Message);
         errorTitle = string.Empty;
         errorDetail = string.Empty;
+        var retryableCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "1", "2", "4", "131000" };
+        var permanentCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "190", "200", "131026", "131005", "132000" };
         if (!string.IsNullOrWhiteSpace(errorCode))
         {
             var policy = controlDb.WabaErrorPolicies.AsNoTracking().FirstOrDefault(x => x.Code == errorCode && x.IsActive);
@@ -192,6 +203,16 @@ public class OutboundMessageWorker(
             {
                 reason = $"policy_{policy.Classification.ToLowerInvariant()}";
                 return string.Equals(policy.Classification, "retryable", StringComparison.OrdinalIgnoreCase);
+            }
+            if (retryableCodes.Contains(errorCode))
+            {
+                reason = "retryable_meta_code";
+                return true;
+            }
+            if (permanentCodes.Contains(errorCode))
+            {
+                reason = "permanent_meta_code";
+                return false;
             }
         }
 
@@ -206,8 +227,8 @@ public class OutboundMessageWorker(
             return true;
         }
 
-        reason = "retryable_unknown";
-        return true;
+        reason = "non_retryable_unknown";
+        return false;
     }
 
     private static string ExtractErrorCode(string? message)

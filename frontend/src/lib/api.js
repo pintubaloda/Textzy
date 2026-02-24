@@ -61,14 +61,14 @@ async function baseFetch(path, options = {}, useAuth = true) {
     headers['Content-Type'] = 'application/json'
   }
 
-  return fetch(`${API_BASE}${path}`, { ...options, headers })
+  return fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' })
 }
 
 async function refresh() {
   const res = await baseFetch('/api/auth/refresh', { method: 'POST' }, true)
   if (!res.ok) return false
-  const data = await res.json()
-  setSession({ token: data.accessToken })
+  await res.json().catch(() => ({}))
+  setSession({ token: '' })
   return true
 }
 
@@ -135,6 +135,7 @@ export async function authLogin({ email, password, tenantSlug }) {
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: 'POST',
     headers,
+    credentials: 'include',
     body: JSON.stringify({ email, password })
   })
   if (!res.ok) {
@@ -148,6 +149,7 @@ export async function authAcceptInvite({ token, fullName, password }) {
   const res = await fetch(`${API_BASE}/api/auth/accept-invite`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify({ token, fullName, password })
   })
   if (!res.ok) {
@@ -173,33 +175,29 @@ export async function authProjects() {
 
 export async function createProject(name) {
   const data = await apiPost('/api/auth/projects', { name })
-  if (data?.accessToken) {
-    setSession({
-      token: data.accessToken,
-      tenantSlug: data.slug || '',
-      projectName: data.name || '',
-      role: data.role || 'owner'
-    })
-  }
+  setSession({
+    token: '',
+    tenantSlug: data?.slug || '',
+    projectName: data?.name || '',
+    role: data?.role || 'owner'
+  })
   return data
 }
 
 export async function switchProject(slug) {
   const data = await apiPost('/api/auth/switch-project', { slug })
-  if (data?.accessToken) {
-    setSession({
-      token: data.accessToken,
-      tenantSlug: data.tenantSlug || slug,
-      projectName: data.projectName || '',
-      role: data.role || ''
-    })
-  }
+  setSession({
+    token: '',
+    tenantSlug: data?.tenantSlug || slug,
+    projectName: data?.projectName || '',
+    role: data?.role || ''
+  })
   return data
 }
 
 export function requireAuthOrRedirect(navigate) {
   const s = getSession()
-  if (!s.token) {
+  if (!s.token && !s.email) {
     navigate('/login')
     return false
   }
@@ -277,6 +275,31 @@ export async function getPlatformRequestLogs({ tenantId = "", method = "", statu
 
 export async function getPlatformQueueHealth() {
   return apiGet('/api/platform/queue-health')
+}
+
+export async function getPlatformSecuritySignals({ status = "open", limit = 100 } = {}) {
+  const q = new URLSearchParams()
+  if (status) q.set("status", status)
+  q.set("limit", String(limit))
+  return apiGet(`/api/platform/security/signals?${q.toString()}`)
+}
+
+export async function resolvePlatformSecuritySignal(id) {
+  return apiPost(`/api/platform/security/signals/${id}/resolve`, {})
+}
+
+export async function getPlatformSecurityControls(tenantId) {
+  const q = new URLSearchParams()
+  q.set("tenantId", tenantId)
+  return apiGet(`/api/platform/security/controls?${q.toString()}`)
+}
+
+export async function upsertPlatformSecurityControls(payload) {
+  return apiPut("/api/platform/security/controls", payload)
+}
+
+export async function purgePlatformQueue(queue) {
+  return apiPost("/api/platform/security/queue/purge", { queue })
 }
 
 export async function listWabaErrorPolicies() {

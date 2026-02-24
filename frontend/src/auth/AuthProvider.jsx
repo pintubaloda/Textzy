@@ -55,7 +55,7 @@ export function AuthProvider({ children }) {
 
   const value = useMemo(() => ({
     session,
-    isAuthenticated: Boolean(session.token),
+    isAuthenticated: Boolean(session.token || session.email),
     login,
     logout,
     setTenantSlug: () => {}

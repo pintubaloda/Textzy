@@ -23,6 +23,11 @@ import {
   upsertWabaErrorPolicy,
   deactivateWabaErrorPolicy,
   getPlatformWebhookAnalytics,
+  getPlatformSecuritySignals,
+  resolvePlatformSecuritySignal,
+  getPlatformSecurityControls,
+  upsertPlatformSecurityControls,
+  purgePlatformQueue,
   getPlatformCustomers,
   getPlatformIdempotencyDiagnostics,
   getPlatformWabaOnboardingSummary,
@@ -101,6 +106,10 @@ const PlatformSettingsPage = () => {
   const [lookupByPhoneData, setLookupByPhoneData] = useState(null);
   const [lookupByWabaData, setLookupByWabaData] = useState(null);
   const [lookupLoading, setLookupLoading] = useState(false);
+  const [securitySignals, setSecuritySignals] = useState([]);
+  const [securityTenantId, setSecurityTenantId] = useState("");
+  const [securityControls, setSecurityControls] = useState({ circuitBreakerEnabled: false, ratePerMinuteOverride: 0, reason: "" });
+  const [securityStatusFilter, setSecurityStatusFilter] = useState("open");
   const [requestLogs, setRequestLogs] = useState([]);
   const [requestLogFilters, setRequestLogFilters] = useState({
     tenantId: "",
@@ -124,6 +133,8 @@ const PlatformSettingsPage = () => {
         ? "WABA Onboarding Summary"
         : tab === "waba-lookup"
         ? "WABA ID / Phone ID Lookup"
+        : tab === "security-ops"
+        ? "Security Operations"
         : tab === "idempotency-diagnostics"
         ? "Idempotency Diagnostics"
         : tab === "waba-policies"
@@ -204,6 +215,24 @@ const PlatformSettingsPage = () => {
             const list = customers || [];
             setTenants(list);
             if (list.length) setWabaLookupTenantId((prev) => prev || list[0].tenantId);
+          } else if (tab === "security-ops") {
+            const customers = await getPlatformCustomers("").catch(() => []);
+            if (!active) return;
+            const list = customers || [];
+            setTenants(list);
+            const selected = securityTenantId || list[0]?.tenantId || "";
+            setSecurityTenantId(selected);
+            const [signals, controls] = await Promise.all([
+              getPlatformSecuritySignals({ status: securityStatusFilter, limit: 200 }).catch(() => []),
+              selected ? getPlatformSecurityControls(selected).catch(() => null) : Promise.resolve(null)
+            ]);
+            if (!active) return;
+            setSecuritySignals(signals || []);
+            setSecurityControls({
+              circuitBreakerEnabled: !!controls?.circuitBreakerEnabled,
+              ratePerMinuteOverride: Number(controls?.ratePerMinuteOverride || 0),
+              reason: controls?.reason || ""
+            });
           } else if (tab === "waba-policies") {
             const rows = await listWabaErrorPolicies();
             if (!active) return;
@@ -253,7 +282,7 @@ const PlatformSettingsPage = () => {
     return () => {
       active = false;
     };
-  }, [tab, logProvider]);
+  }, [tab, logProvider, securityStatusFilter]);
 
   return (
     <div className="space-y-4" data-testid="platform-settings-page">
@@ -1054,6 +1083,180 @@ const PlatformSettingsPage = () => {
                   ))}
                   {(idemData?.items || []).length === 0 && (
                     <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No records.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "security-ops" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>Security Operations</CardTitle>
+            <CardDescription>
+              Manage circuit breaker, queue purge, and platform security signals.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-5">
+              <Select value={securityStatusFilter} onValueChange={setSecurityStatusFilter}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="resolved">Resolved</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={securityTenantId || "none"}
+                onValueChange={async (value) => {
+                  const nextTenantId = value === "none" ? "" : value;
+                  setSecurityTenantId(nextTenantId);
+                  if (!nextTenantId) {
+                    setSecurityControls({ circuitBreakerEnabled: false, ratePerMinuteOverride: 0, reason: "" });
+                    return;
+                  }
+                  const controls = await getPlatformSecurityControls(nextTenantId).catch(() => null);
+                  setSecurityControls({
+                    circuitBreakerEnabled: !!controls?.circuitBreakerEnabled,
+                    ratePerMinuteOverride: Number(controls?.ratePerMinuteOverride || 0),
+                    reason: controls?.reason || ""
+                  });
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Tenant" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Select tenant</SelectItem>
+                  {(tenants || []).map((t) => (
+                    <SelectItem key={t.tenantId} value={t.tenantId}>{t.tenantName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                type="number"
+                min={0}
+                placeholder="Rate/min override"
+                value={securityControls.ratePerMinuteOverride || 0}
+                onChange={(e) =>
+                  setSecurityControls((p) => ({ ...p, ratePerMinuteOverride: Number(e.target.value || 0) }))
+                }
+              />
+              <Input
+                placeholder="Reason"
+                value={securityControls.reason || ""}
+                onChange={(e) => setSecurityControls((p) => ({ ...p, reason: e.target.value }))}
+              />
+              <Button
+                className="bg-orange-500 hover:bg-orange-600"
+                onClick={async () => {
+                  if (!securityTenantId) return toast.error("Select tenant first");
+                  try {
+                    await upsertPlatformSecurityControls({
+                      tenantId: securityTenantId,
+                      circuitBreakerEnabled: !!securityControls.circuitBreakerEnabled,
+                      ratePerMinuteOverride: Number(securityControls.ratePerMinuteOverride || 0),
+                      reason: securityControls.reason || ""
+                    });
+                    toast.success("Security controls updated.");
+                  } catch {
+                    toast.error("Failed to update controls.");
+                  }
+                }}
+              >
+                Save Controls
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant={securityControls.circuitBreakerEnabled ? "default" : "outline"}
+                className={securityControls.circuitBreakerEnabled ? "bg-red-600 hover:bg-red-700" : ""}
+                onClick={() =>
+                  setSecurityControls((p) => ({ ...p, circuitBreakerEnabled: !p.circuitBreakerEnabled }))
+                }
+              >
+                Circuit Breaker: {securityControls.circuitBreakerEnabled ? "ON" : "OFF"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    await purgePlatformQueue("outbound");
+                    toast.success("Outbound queue purge requested.");
+                  } catch {
+                    toast.error("Failed to purge outbound queue.");
+                  }
+                }}
+              >
+                Purge Outbound Queue
+              </Button>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    await purgePlatformQueue("webhook");
+                    toast.success("Webhook queue purge requested.");
+                  } catch {
+                    toast.error("Failed to purge webhook queue.");
+                  }
+                }}
+              >
+                Purge Webhook Queue
+              </Button>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left px-3 py-2">Time</th>
+                    <th className="text-left px-3 py-2">Signal</th>
+                    <th className="text-left px-3 py-2">Severity</th>
+                    <th className="text-left px-3 py-2">Tenant</th>
+                    <th className="text-left px-3 py-2">Details</th>
+                    <th className="text-right px-3 py-2">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(securitySignals || []).map((s) => (
+                    <tr key={s.id} className="border-t border-slate-100 align-top">
+                      <td className="px-3 py-2 text-slate-600 whitespace-nowrap">
+                        {s.createdAtUtc ? new Date(s.createdAtUtc).toLocaleString() : "-"}
+                      </td>
+                      <td className="px-3 py-2 text-slate-900">{s.signalType || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700">{s.severity || "-"}</td>
+                      <td className="px-3 py-2 text-xs text-slate-600">{s.tenantId || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700 max-w-[420px] break-words">{s.details || "-"}</td>
+                      <td className="px-3 py-2 text-right">
+                        {String(s.status || "").toLowerCase() !== "resolved" ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={async () => {
+                              try {
+                                await resolvePlatformSecuritySignal(s.id);
+                                const rows = await getPlatformSecuritySignals({ status: securityStatusFilter, limit: 200 }).catch(() => []);
+                                setSecuritySignals(rows || []);
+                                toast.success("Signal marked resolved.");
+                              } catch {
+                                toast.error("Failed to resolve signal.");
+                              }
+                            }}
+                          >
+                            Resolve
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-emerald-600">Resolved</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {(securitySignals || []).length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">No security signals.</td>
+                    </tr>
                   )}
                 </tbody>
               </table>

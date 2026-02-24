@@ -26,6 +26,8 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
     private readonly string _redisKey = config["OutboundQueue:RedisListKey"] ?? "textzy:outbound:queue";
     private readonly string _rabbitConn = config["OutboundQueue:RabbitMq:ConnectionString"] ?? config["RABBITMQ_URL"] ?? string.Empty;
     private readonly string _rabbitQueue = config["OutboundQueue:RabbitMq:QueueName"] ?? "textzy.outbound.queue";
+    private readonly string _rabbitExchange = config["OutboundQueue:RabbitMq:ExchangeName"] ?? "textzy.outbound.exchange";
+    private readonly string _rabbitRoutingKey = config["OutboundQueue:RabbitMq:RoutingKey"] ?? "message.send";
     private readonly string _sqsQueueUrl = config["OutboundQueue:Sqs:QueueUrl"] ?? config["AWS_SQS_OUTBOUND_QUEUE_URL"] ?? string.Empty;
     private readonly Lazy<ConnectionMultiplexer?> _redis = new(() =>
     {
@@ -110,6 +112,7 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
         if (ActiveProvider == "rabbitmq")
         {
             using var ch = _rabbitConnLazy.Value!.CreateModel();
+            ch.ExchangeDeclare(_rabbitExchange, ExchangeType.Topic, durable: true, autoDelete: false);
             var args = new Dictionary<string, object>
             {
                 ["x-dead-letter-exchange"] = string.Empty,
@@ -117,11 +120,12 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
             };
             ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false, arguments: args);
             ch.QueueDeclare($"{_rabbitQueue}.dead", durable: true, exclusive: false, autoDelete: false);
+            ch.QueueBind(_rabbitQueue, _rabbitExchange, _rabbitRoutingKey);
             var payload = JsonSerializer.Serialize(item);
             var bytes = System.Text.Encoding.UTF8.GetBytes(payload);
             var props = ch.CreateBasicProperties();
             props.Persistent = true;
-            ch.BasicPublish("", _rabbitQueue, props, bytes);
+            ch.BasicPublish(_rabbitExchange, _rabbitRoutingKey, props, bytes);
             return;
         }
         if (ActiveProvider == "sqs")
@@ -148,6 +152,7 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
         if (ActiveProvider == "rabbitmq")
         {
             using var ch = _rabbitConnLazy.Value!.CreateModel();
+            ch.ExchangeDeclare(_rabbitExchange, ExchangeType.Topic, durable: true, autoDelete: false);
             var args = new Dictionary<string, object>
             {
                 ["x-dead-letter-exchange"] = string.Empty,
@@ -155,6 +160,7 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
             };
             ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false, arguments: args);
             ch.QueueDeclare($"{_rabbitQueue}.dead", durable: true, exclusive: false, autoDelete: false);
+            ch.QueueBind(_rabbitQueue, _rabbitExchange, _rabbitRoutingKey);
             return ch.MessageCount(_rabbitQueue);
         }
         if (ActiveProvider == "sqs")
@@ -190,6 +196,7 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
         if (ActiveProvider == "rabbitmq")
         {
             using var ch = _rabbitConnLazy.Value!.CreateModel();
+            ch.ExchangeDeclare(_rabbitExchange, ExchangeType.Topic, durable: true, autoDelete: false);
             var args = new Dictionary<string, object>
             {
                 ["x-dead-letter-exchange"] = string.Empty,
@@ -197,6 +204,7 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
             };
             ch.QueueDeclare(_rabbitQueue, durable: true, exclusive: false, autoDelete: false, arguments: args);
             ch.QueueDeclare($"{_rabbitQueue}.dead", durable: true, exclusive: false, autoDelete: false);
+            ch.QueueBind(_rabbitQueue, _rabbitExchange, _rabbitRoutingKey);
             while (!ct.IsCancellationRequested)
             {
                 var result = ch.BasicGet(_rabbitQueue, autoAck: false);
@@ -254,5 +262,28 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
         }
 
         return null;
+    }
+
+    public async Task PurgeAsync(CancellationToken ct = default)
+    {
+        if (ActiveProvider == "redis")
+        {
+            await _redis.Value!.GetDatabase().KeyDeleteAsync(_redisKey);
+            return;
+        }
+        if (ActiveProvider == "rabbitmq")
+        {
+            using var ch = _rabbitConnLazy.Value!.CreateModel();
+            ch.QueuePurge(_rabbitQueue);
+            return;
+        }
+        if (ActiveProvider == "sqs")
+        {
+            await _sqs.Value!.PurgeQueueAsync(new PurgeQueueRequest { QueueUrl = _sqsQueueUrl }, ct);
+            return;
+        }
+
+        while (_memory.Reader.TryRead(out _)) { }
+        Interlocked.Exchange(ref _memoryDepth, 0);
     }
 }
