@@ -10,6 +10,7 @@ import {
   wabaGetOnboardingStatus,
   wabaGetEmbeddedConfig,
   wabaExchangeCode,
+  wabaReuseExisting,
   wabaRecheckOnboarding,
 } from "@/lib/api";
 
@@ -141,7 +142,39 @@ export default function WhatsAppOnboardingPage() {
           .then(() => wabaExchangeCode(code))
           .then(() => loadStatus())
           .then(() => toast.success("Embedded signup exchange complete"))
-          .catch((e) => toast.error(e.message || "Code exchange failed"))
+          .catch(async (e) => {
+            const msg = e?.message || "Code exchange failed";
+            if (!msg.toLowerCase().includes("already linked")) {
+              toast.error(msg);
+              return;
+            }
+            try {
+              const reuse = await wabaReuseExisting(code);
+              if (!reuse?.requiresSelection) {
+                await loadStatus();
+                toast.success("Existing WABA reused for this project");
+                return;
+              }
+              const assets = reuse.assets || [];
+              if (!assets.length) {
+                toast.error("No reusable WABA assets found.");
+                return;
+              }
+              const options = assets.map((a, i) => `${i + 1}. ${a.wabaName} (${a.displayPhoneNumber || a.phoneNumberId})`).join("\n");
+              const raw = window.prompt(`Select existing WABA number:\n${options}`, "1");
+              const idx = Number(raw || "0");
+              if (!Number.isFinite(idx) || idx < 1 || idx > assets.length) {
+                toast.error("Selection cancelled.");
+                return;
+              }
+              const selected = assets[idx - 1];
+              await wabaReuseExisting(code, selected.wabaId, selected.phoneNumberId);
+              await loadStatus();
+              toast.success("Existing WABA linked successfully");
+            } catch (reuseErr) {
+              toast.error(reuseErr?.message || "Failed to reuse existing WABA");
+            }
+          })
           .finally(() => setConnecting(false));
       }, {
         config_id: embeddedConfigId,

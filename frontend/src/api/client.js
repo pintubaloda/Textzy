@@ -95,3 +95,7 @@ export async function exchangeEmbeddedSignupCode(code) {
 export async function getEmbeddedSignupConfig() {
   return apiGet('/api/waba/embedded-config')
 }
+
+export async function reuseExistingEmbeddedSignup(code, wabaId = '', phoneNumberId = '') {
+  return apiPost('/api/waba/onboarding/reuse-existing', { code, wabaId, phoneNumberId })
+}

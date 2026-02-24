@@ -224,6 +224,102 @@ public class WhatsAppCloudService(
         return config;
     }
 
+    public async Task<object> ReuseExistingFromCodeAsync(string code, string selectedWabaId, string selectedPhoneNumberId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(code)) throw new InvalidOperationException("Code is required.");
+        var accessToken = await ResolveAccessTokenAsync(code, ct);
+        var all = await DiscoverAllWabaAssetsAsync(accessToken, ct);
+        if (all.Count == 0)
+            throw new InvalidOperationException("No existing WABA assets found for this account.");
+
+        if (string.IsNullOrWhiteSpace(selectedWabaId) && string.IsNullOrWhiteSpace(selectedPhoneNumberId))
+        {
+            return new
+            {
+                requiresSelection = true,
+                count = all.Count,
+                assets = all.Select(x => new
+                {
+                    businessId = x.BusinessId,
+                    wabaId = x.WabaId,
+                    wabaName = x.WabaName,
+                    phoneNumberId = x.PhoneNumberId,
+                    displayPhoneNumber = x.DisplayPhoneNumber
+                }).ToList()
+            };
+        }
+
+        var selected = all.FirstOrDefault(x =>
+            (string.IsNullOrWhiteSpace(selectedWabaId) || string.Equals(x.WabaId, selectedWabaId, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrWhiteSpace(selectedPhoneNumberId) || string.Equals(x.PhoneNumberId, selectedPhoneNumberId, StringComparison.OrdinalIgnoreCase)));
+
+        if (selected is null)
+            throw new InvalidOperationException("Selected WABA/Phone not found in discovered assets.");
+
+        var conflict = await FindTenantBindingConflictAsync(selected.WabaId, selected.PhoneNumberId, ct);
+        if (conflict is not null)
+        {
+            throw new InvalidOperationException($"This WhatsApp account/number is already linked to another project ({conflict.Value.TenantName} / {conflict.Value.TenantSlug}).");
+        }
+
+        var config = await GetOrCreateTenantConfigAsync(ct);
+        config.OnboardingState = "code_received";
+        config.CodeReceivedAtUtc = DateTime.UtcNow;
+        config.LastError = string.Empty;
+
+        var lifecycle = await ProvisionSystemUserAndPermanentTokenAsync(accessToken, selected, ct);
+        if (lifecycle.Warnings.Count > 0)
+        {
+            config.LastError = string.Join(" | ", lifecycle.Warnings);
+        }
+
+        var effectiveToken = string.IsNullOrWhiteSpace(lifecycle.AccessToken) ? accessToken : lifecycle.AccessToken;
+        config.AccessToken = ProtectToken(effectiveToken);
+        config.TokenSource = string.IsNullOrWhiteSpace(lifecycle.AccessToken) ? "embedded_exchange" : lifecycle.TokenSource;
+        config.BusinessManagerId = lifecycle.BusinessId;
+        config.SystemUserId = lifecycle.SystemUserId;
+        config.SystemUserName = lifecycle.SystemUserName;
+        config.SystemUserCreatedAtUtc = lifecycle.SystemUserCreatedAtUtc;
+        config.AssetsAssignedAtUtc = lifecycle.AssetsAssignedAtUtc;
+        config.PermanentTokenIssuedAtUtc = string.IsNullOrWhiteSpace(lifecycle.AccessToken) ? null : DateTime.UtcNow;
+        config.PermanentTokenExpiresAtUtc = lifecycle.TokenExpiresAtUtc;
+        config.IsActive = true;
+        config.BusinessAccountName = selected.WabaName;
+        config.WabaId = selected.WabaId;
+        config.PhoneNumberId = selected.PhoneNumberId;
+        config.DisplayPhoneNumber = selected.DisplayPhoneNumber;
+        config.ConnectedAtUtc = DateTime.UtcNow;
+        config.ExchangedAtUtc = DateTime.UtcNow;
+        config.AssetsLinkedAtUtc = DateTime.UtcNow;
+        config.OnboardingState = "assets_linked";
+
+        var webhookOk = await EnsureWebhookSubscriptionAsync(config, effectiveToken, ct);
+        config.WebhookSubscribedAtUtc = webhookOk ? DateTime.UtcNow : null;
+        config.OnboardingState = webhookOk ? "webhook_subscribed" : "assets_linked";
+
+        var audit = await RunPostOnboardingChecksAsync(config, effectiveToken, ct);
+        config.PermissionAuditPassed = audit.PermissionAuditPassed;
+        config.BusinessVerificationStatus = audit.BusinessVerificationStatus;
+        config.PhoneQualityRating = audit.PhoneQualityRating;
+        config.PhoneNameStatus = audit.PhoneNameStatus;
+        if (audit.Warnings.Count > 0) config.LastError = string.Join(" | ", audit.Warnings);
+        config.OnboardingState = webhookOk && audit.PermissionAuditPassed ? "ready" : config.OnboardingState;
+        await tenantResolver.InvalidateAsync(config.PhoneNumberId, ct);
+
+        await tenantDb.SaveChangesAsync(ct);
+
+        return new
+        {
+            requiresSelection = false,
+            linked = true,
+            wabaId = config.WabaId,
+            phoneNumberId = config.PhoneNumberId,
+            businessName = config.BusinessAccountName,
+            phone = config.DisplayPhoneNumber,
+            state = config.OnboardingState
+        };
+    }
+
     public async Task<object> GetOnboardingStatusAsync(CancellationToken ct = default)
     {
         var config = await GetTenantConfigRowAsync(onlyActive: false, ct);
@@ -504,6 +600,87 @@ public class WhatsAppCloudService(
         }
 
         return null;
+    }
+
+    private async Task<List<DiscoveredWabaAsset>> DiscoverAllWabaAssetsAsync(string accessToken, CancellationToken ct)
+    {
+        var list = new List<DiscoveredWabaAsset>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var meUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/me?fields=id,name,whatsapp_business_accounts{{id,name,phone_numbers{{id,display_phone_number,verified_name}}}}";
+        var direct = await GraphGetAsync(meUrl, accessToken, ct);
+        if (direct is not null &&
+            direct.RootElement.TryGetProperty("whatsapp_business_accounts", out var wabasNode) &&
+            wabasNode.TryGetProperty("data", out var data) &&
+            data.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var waba in data.EnumerateArray())
+            {
+                var wabaId = TryGetString(waba, "id");
+                if (string.IsNullOrWhiteSpace(wabaId)) continue;
+                var wabaName = TryGetString(waba, "name");
+                if (!waba.TryGetProperty("phone_numbers", out var phonesNode) ||
+                    !phonesNode.TryGetProperty("data", out var phonesData) ||
+                    phonesData.ValueKind != JsonValueKind.Array) continue;
+
+                var businessId = await FindBusinessForWabaAsync(accessToken, wabaId, ct);
+                foreach (var phone in phonesData.EnumerateArray())
+                {
+                    var phoneId = TryGetString(phone, "id");
+                    if (string.IsNullOrWhiteSpace(phoneId)) continue;
+                    var key = $"{wabaId}|{phoneId}";
+                    if (!seen.Add(key)) continue;
+                    var display = TryGetString(phone, "display_phone_number");
+                    if (string.IsNullOrWhiteSpace(display)) display = TryGetString(phone, "verified_name");
+                    list.Add(new DiscoveredWabaAsset
+                    {
+                        BusinessId = businessId,
+                        WabaId = wabaId,
+                        WabaName = string.IsNullOrWhiteSpace(wabaName) ? "WhatsApp Business Account" : wabaName,
+                        PhoneNumberId = phoneId,
+                        DisplayPhoneNumber = string.IsNullOrWhiteSpace(display) ? "Unknown Number" : display
+                    });
+                }
+            }
+        }
+
+        var businessesUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/me/businesses?fields=id,name";
+        var businessesDoc = await GraphGetAsync(businessesUrl, accessToken, ct);
+        var businessIds = ReadIdsFromDataArray(businessesDoc);
+        foreach (var businessId in businessIds)
+        {
+            var ownedWabaUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{businessId}/owned_whatsapp_business_accounts?fields=id,name";
+            var ownedWabas = await GraphGetAsync(ownedWabaUrl, accessToken, ct);
+            var wabas = ReadObjectsFromDataArray(ownedWabas);
+            foreach (var waba in wabas)
+            {
+                var wabaId = TryGetString(waba, "id");
+                if (string.IsNullOrWhiteSpace(wabaId)) continue;
+                var wabaName = TryGetString(waba, "name");
+                var phonesUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{wabaId}/phone_numbers?fields=id,display_phone_number,verified_name";
+                var phonesDoc = await GraphGetAsync(phonesUrl, accessToken, ct);
+                var phones = ReadObjectsFromDataArray(phonesDoc);
+                foreach (var phone in phones)
+                {
+                    var phoneId = TryGetString(phone, "id");
+                    if (string.IsNullOrWhiteSpace(phoneId)) continue;
+                    var key = $"{wabaId}|{phoneId}";
+                    if (!seen.Add(key)) continue;
+                    var display = TryGetString(phone, "display_phone_number");
+                    if (string.IsNullOrWhiteSpace(display)) display = TryGetString(phone, "verified_name");
+                    list.Add(new DiscoveredWabaAsset
+                    {
+                        BusinessId = businessId,
+                        WabaId = wabaId,
+                        WabaName = string.IsNullOrWhiteSpace(wabaName) ? "WhatsApp Business Account" : wabaName,
+                        PhoneNumberId = phoneId,
+                        DisplayPhoneNumber = string.IsNullOrWhiteSpace(display) ? "Unknown Number" : display
+                    });
+                }
+            }
+        }
+
+        return list;
     }
 
     private static DiscoveredWabaAsset? ParseWabaAssetFromMe(JsonDocument? meDoc)

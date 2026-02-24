@@ -94,4 +94,19 @@ public class WabaOnboardingController(
         if (!rbac.HasPermission(InboxWrite)) return Forbid();
         return Ok(await whatsapp.GetOnboardingStatusAsync(ct));
     }
+
+    [HttpPost("onboarding/reuse-existing")]
+    public async Task<IActionResult> ReuseExisting([FromBody] WabaReuseExistingRequest request, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(InboxWrite)) return Forbid();
+        try
+        {
+            var result = await whatsapp.ReuseExistingFromCodeAsync(request.Code, request.WabaId, request.PhoneNumberId, ct);
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
 }

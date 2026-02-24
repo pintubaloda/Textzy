@@ -226,6 +226,10 @@ export async function wabaRecheckOnboarding() {
   return apiPost('/api/waba/onboarding/recheck', {})
 }
 
+export async function wabaReuseExisting(code, wabaId = '', phoneNumberId = '') {
+  return apiPost('/api/waba/onboarding/reuse-existing', { code, wabaId, phoneNumberId })
+}
+
 export async function getPlatformSettings(scope) {
   return apiGet(`/api/platform/settings/${scope}`)
 }
