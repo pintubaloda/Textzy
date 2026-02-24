@@ -14,6 +14,7 @@ namespace Textzy.Api.Controllers;
 public class PaymentWebhookController(
     ControlDbContext db,
     SecretCryptoService crypto,
+    AuditLogService audit,
     ILogger<PaymentWebhookController> logger) : ControllerBase
 {
     [HttpPost("{provider}")]
@@ -60,8 +61,57 @@ public class PaymentWebhookController(
             CreatedAtUtc = DateTime.UtcNow
         });
         await db.SaveChangesAsync(ct);
+        await HandleProviderEventAsync(provider, eventName, raw, ct);
         logger.LogInformation("Payment webhook received provider={Provider} event={Event}", provider, eventName);
         return Ok(new { ok = true });
+    }
+
+    private async Task HandleProviderEventAsync(string provider, string eventName, string raw, CancellationToken ct)
+    {
+        provider = (provider ?? string.Empty).Trim().ToLowerInvariant();
+        if (provider != "razorpay") return;
+        if (!string.Equals(eventName, "payment.captured", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(eventName, "order.paid", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            var payload = root.TryGetProperty("payload", out var pl) ? pl : default;
+            var paymentEntity = payload.ValueKind != JsonValueKind.Undefined &&
+                                payload.TryGetProperty("payment", out var pay) &&
+                                pay.TryGetProperty("entity", out var ent)
+                ? ent
+                : default;
+            if (paymentEntity.ValueKind == JsonValueKind.Undefined) return;
+
+            var orderId = paymentEntity.TryGetProperty("order_id", out var ordEl) ? ordEl.GetString() ?? string.Empty : string.Empty;
+            var paymentId = paymentEntity.TryGetProperty("id", out var pidEl) ? pidEl.GetString() ?? string.Empty : string.Empty;
+            if (string.IsNullOrWhiteSpace(orderId)) return;
+
+            var attempt = await db.BillingPaymentAttempts
+                .Where(x => x.Provider == "razorpay" && x.OrderId == orderId)
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .FirstOrDefaultAsync(ct);
+            if (attempt is null) return;
+
+            if (attempt.Status == "paid") return;
+
+            attempt.PaymentId = string.IsNullOrWhiteSpace(paymentId) ? attempt.PaymentId : paymentId;
+            attempt.Status = "paid";
+            attempt.PaidAtUtc = DateTime.UtcNow;
+            attempt.UpdatedAtUtc = DateTime.UtcNow;
+            attempt.RawResponse = raw;
+
+            await ActivateSubscriptionFromPaymentAsync(attempt, ct);
+            await db.SaveChangesAsync(ct);
+            await audit.WriteAsync("billing.razorpay.webhook.paid", $"tenant={attempt.TenantId}; order={attempt.OrderId}", ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Payment webhook processing failed provider={Provider} event={Event}", provider, eventName);
+        }
     }
 
     private static bool Verify(string provider, string body, string secret, IHeaderDictionary headers)
@@ -83,5 +133,61 @@ public class PaymentWebhookController(
         if (string.IsNullOrWhiteSpace(generic)) generic = headers["X-Signature"].ToString();
         if (string.IsNullOrWhiteSpace(generic)) return false;
         return string.Equals(generic.Trim(), secret.Trim(), StringComparison.Ordinal);
+    }
+
+    private async Task ActivateSubscriptionFromPaymentAsync(BillingPaymentAttempt attempt, CancellationToken ct)
+    {
+        var plan = await db.BillingPlans.FirstOrDefaultAsync(x => x.Id == attempt.PlanId, ct);
+        if (plan is null) return;
+
+        var sub = await db.TenantSubscriptions
+            .Where(x => x.TenantId == attempt.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (sub is null)
+        {
+            sub = new TenantSubscription
+            {
+                Id = Guid.NewGuid(),
+                TenantId = attempt.TenantId,
+                PlanId = attempt.PlanId,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            db.TenantSubscriptions.Add(sub);
+        }
+
+        var start = DateTime.UtcNow;
+        sub.PlanId = plan.Id;
+        sub.BillingCycle = string.IsNullOrWhiteSpace(attempt.BillingCycle) ? "monthly" : attempt.BillingCycle;
+        sub.Status = "active";
+        sub.CancelledAtUtc = null;
+        sub.StartedAtUtc = start;
+        sub.RenewAtUtc = sub.BillingCycle == "yearly" ? start.AddYears(1) : start.AddMonths(1);
+        sub.UpdatedAtUtc = DateTime.UtcNow;
+
+        var invoiceNo = $"INV-{start:yyyyMMdd}-{attempt.OrderId}";
+        var exists = await db.BillingInvoices.AnyAsync(x => x.TenantId == attempt.TenantId && x.InvoiceNo == invoiceNo, ct);
+        if (!exists)
+        {
+            var subtotal = attempt.Amount;
+            var tax = Math.Round(subtotal * 0.18m, 2, MidpointRounding.AwayFromZero);
+            var periodStart = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            var periodEnd = sub.BillingCycle == "yearly" ? periodStart.AddYears(1).AddSeconds(-1) : periodStart.AddMonths(1).AddSeconds(-1);
+            db.BillingInvoices.Add(new BillingInvoice
+            {
+                Id = Guid.NewGuid(),
+                InvoiceNo = invoiceNo,
+                TenantId = attempt.TenantId,
+                PeriodStartUtc = periodStart,
+                PeriodEndUtc = periodEnd,
+                Subtotal = subtotal,
+                TaxAmount = tax,
+                Total = subtotal + tax,
+                Status = "paid",
+                PaidAtUtc = attempt.PaidAtUtc ?? DateTime.UtcNow,
+                PdfUrl = string.Empty,
+                CreatedAtUtc = DateTime.UtcNow
+            });
+        }
     }
 }

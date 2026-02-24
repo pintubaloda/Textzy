@@ -21,7 +21,17 @@ import {
   Users,
   AlertTriangle,
 } from "lucide-react";
-import { changeBillingPlan, cancelBillingSubscription, getBillingInvoices, getBillingPlans, getBillingUsage, getCurrentBillingPlan } from "@/lib/api";
+import {
+  changeBillingPlan,
+  cancelBillingSubscription,
+  createRazorpayOrder,
+  getBillingInvoices,
+  getBillingPaymentConfig,
+  getBillingPlans,
+  getBillingUsage,
+  getCurrentBillingPlan,
+  verifyRazorpayPayment
+} from "@/lib/api";
 import { toast } from "sonner";
 
 const BillingPage = () => {
@@ -30,6 +40,8 @@ const BillingPage = () => {
   const [sub, setSub] = useState(null);
   const [usageValues, setUsageValues] = useState({});
   const [invoices, setInvoices] = useState([]);
+  const [paymentConfig, setPaymentConfig] = useState(null);
+  const [payingCode, setPayingCode] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -40,10 +52,12 @@ const BillingPage = () => {
           getBillingUsage(),
           getBillingInvoices()
         ]);
+        const paymentCfg = await getBillingPaymentConfig().catch(() => null);
         setPlans(Array.isArray(p) ? p : []);
         setSub(c || null);
         setUsageValues(u?.values || {});
         setInvoices(Array.isArray(i) ? i : []);
+        setPaymentConfig(paymentCfg);
       } catch (e) {
         toast.error(e.message || "Failed to load billing");
       }
@@ -59,6 +73,85 @@ const BillingPage = () => {
     contacts: { used: usageValues.contacts || 0, limit: limits.contacts || 0, percentage: pct(usageValues.contacts || 0, limits.contacts || 0) },
     team: { used: usageValues.teamMembers || 0, limit: limits.teamMembers || 0, percentage: pct(usageValues.teamMembers || 0, limits.teamMembers || 0) }
   }), [usageValues, limits]);
+
+  const ensureRazorpayScript = async () => {
+    if (window.Razorpay) return true;
+    await new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-razorpay-sdk="1"]');
+      if (existing) {
+        existing.addEventListener("load", () => resolve(true), { once: true });
+        existing.addEventListener("error", () => reject(new Error("Failed to load Razorpay SDK")), { once: true });
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.async = true;
+      script.dataset.razorpaySdk = "1";
+      script.onload = () => resolve(true);
+      script.onerror = () => reject(new Error("Failed to load Razorpay SDK"));
+      document.body.appendChild(script);
+    });
+    return !!window.Razorpay;
+  };
+
+  const refreshBillingData = async () => {
+    const [c, u, i] = await Promise.all([
+      getCurrentBillingPlan(),
+      getBillingUsage(),
+      getBillingInvoices()
+    ]);
+    setSub(c || null);
+    setUsageValues(u?.values || {});
+    setInvoices(Array.isArray(i) ? i : []);
+  };
+
+  const upgradeWithRazorpay = async (plan) => {
+    setPayingCode(plan.code);
+    try {
+      const cfg = paymentConfig;
+      if (!cfg?.razorpay?.enabled || !cfg?.razorpay?.keyId) throw new Error("Razorpay is not configured.");
+      const order = await createRazorpayOrder(plan.code, "monthly");
+      await ensureRazorpayScript();
+
+      await new Promise((resolve, reject) => {
+        const rzp = new window.Razorpay({
+          key: order.keyId,
+          amount: order.amount,
+          currency: order.currency || "INR",
+          order_id: order.orderId,
+          name: "Textzy",
+          description: `${plan.name} plan upgrade`,
+          handler: async function (resp) {
+            try {
+              await verifyRazorpayPayment({
+                planCode: plan.code,
+                billingCycle: "monthly",
+                razorpayOrderId: resp.razorpay_order_id,
+                razorpayPaymentId: resp.razorpay_payment_id,
+                razorpaySignature: resp.razorpay_signature
+              });
+              resolve(true);
+            } catch (e) {
+              reject(e);
+            }
+          },
+          modal: {
+            ondismiss: () => reject(new Error("Payment cancelled."))
+          },
+          theme: { color: "#f97316" }
+        });
+        rzp.open();
+      });
+
+      toast.success("Payment successful. Plan updated.");
+      await refreshBillingData();
+      setShowUpgradeDialog(false);
+    } catch (e) {
+      toast.error(e?.message || "Payment failed");
+    } finally {
+      setPayingCode("");
+    }
+  };
 
   return (
     <div className="space-y-6" data-testid="billing-page">
@@ -123,16 +216,28 @@ const BillingPage = () => {
                           if (currentPlan?.code === plan.code) return;
                           if (plan.code === "enterprise") return toast.info("Contact sales for enterprise.");
                           try {
+                            if ((paymentConfig?.provider || "").toLowerCase() === "razorpay" && paymentConfig?.razorpay?.enabled) {
+                              await upgradeWithRazorpay(plan);
+                              return;
+                            }
                             await changeBillingPlan(plan.code, "monthly");
                             toast.success("Plan changed");
-                            setSub(await getCurrentBillingPlan());
+                            await refreshBillingData();
                             setShowUpgradeDialog(false);
-                          } catch {
-                            toast.error("Failed to change plan");
+                          } catch (e) {
+                            toast.error(e?.message || "Failed to change plan");
                           }
                         }}
                       >
-                        {currentPlan?.code === plan.code ? "Current Plan" : plan.code === "enterprise" ? "Contact Sales" : "Upgrade"}
+                        {currentPlan?.code === plan.code
+                          ? "Current Plan"
+                          : plan.code === "enterprise"
+                          ? "Contact Sales"
+                          : payingCode === plan.code
+                          ? "Processing..."
+                          : (paymentConfig?.provider || "").toLowerCase() === "razorpay" && paymentConfig?.razorpay?.enabled
+                          ? "Pay & Upgrade"
+                          : "Upgrade"}
                       </Button>
                     </CardContent>
                   </Card>

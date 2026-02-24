@@ -391,6 +391,18 @@ export async function cancelBillingSubscription() {
   return apiPost('/api/billing/cancel', {})
 }
 
+export async function getBillingPaymentConfig() {
+  return apiGet('/api/billing/payment-config')
+}
+
+export async function createRazorpayOrder(planCode, billingCycle = 'monthly') {
+  return apiPost('/api/billing/razorpay/create-order', { planCode, billingCycle })
+}
+
+export async function verifyRazorpayPayment(payload) {
+  return apiPost('/api/billing/razorpay/verify', payload)
+}
+
 export async function getPublicPlans() {
   const res = await fetch(`${API_BASE}/api/public/plans`)
   if (!res.ok) throw new Error(`GET /api/public/plans failed (${res.status})`)

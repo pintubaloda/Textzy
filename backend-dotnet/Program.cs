@@ -386,6 +386,30 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingInvoices_TenantId" ON "BillingInvoices" ("TenantId");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "BillingPaymentAttempts" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NOT NULL,
+            "PlanId" uuid NOT NULL,
+            "BillingCycle" text NOT NULL,
+            "Provider" text NOT NULL,
+            "OrderId" text NOT NULL,
+            "PaymentId" text NOT NULL,
+            "Signature" text NOT NULL,
+            "Amount" numeric(18,2) NOT NULL,
+            "Currency" text NOT NULL,
+            "Status" text NOT NULL,
+            "NotesJson" text NOT NULL,
+            "RawResponse" text NOT NULL,
+            "LastError" text NOT NULL,
+            "PaidAtUtc" timestamp with time zone NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL,
+            "UpdatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_BillingPaymentAttempts_OrderId" ON "BillingPaymentAttempts" ("OrderId");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingPaymentAttempts_TenantId_CreatedAtUtc" ON "BillingPaymentAttempts" ("TenantId","CreatedAtUtc");""");
 }
 
 static string NormalizeConnectionString(string raw)
