@@ -23,7 +23,8 @@ import {
   deactivateWabaErrorPolicy,
   getPlatformWebhookAnalytics,
   getPlatformCustomers,
-  getPlatformIdempotencyDiagnostics
+  getPlatformIdempotencyDiagnostics,
+  getPlatformWabaOnboardingSummary
 } from "@/lib/api";
 
 const FEATURE_CATALOG = [
@@ -89,6 +90,7 @@ const PlatformSettingsPage = () => {
   const [idemStatus, setIdemStatus] = useState("all");
   const [idemStaleMinutes, setIdemStaleMinutes] = useState("30");
   const [idemData, setIdemData] = useState(null);
+  const [onboardingSummary, setOnboardingSummary] = useState(null);
 
   const title = useMemo(
     () => (
@@ -98,6 +100,8 @@ const PlatformSettingsPage = () => {
         ? "Webhook Logs"
         : tab === "billing-plans"
         ? "Billing Plans"
+        : tab === "waba-onboarding"
+        ? "WABA Onboarding Summary"
         : tab === "idempotency-diagnostics"
         ? "Idempotency Diagnostics"
         : tab === "waba-policies"
@@ -152,6 +156,10 @@ const PlatformSettingsPage = () => {
             const rows = await listPlatformBillingPlans();
             if (!active) return;
             setPlans(rows || []);
+          } else if (tab === "waba-onboarding") {
+            const rows = await getPlatformWabaOnboardingSummary();
+            if (!active) return;
+            setOnboardingSummary(rows || null);
           } else if (tab === "waba-policies") {
             const rows = await listWabaErrorPolicies();
             if (!active) return;
@@ -238,6 +246,13 @@ const PlatformSettingsPage = () => {
             onClick={() => setTab("billing-plans")}
           >
             Billing Plans
+          </Button>
+          <Button
+            variant={tab === "waba-onboarding" ? "default" : "outline"}
+            className={tab === "waba-onboarding" ? "bg-orange-500 hover:bg-orange-600" : ""}
+            onClick={() => setTab("waba-onboarding")}
+          >
+            WABA Onboarding
           </Button>
           <Button
             variant={tab === "waba-policies" ? "default" : "outline"}
@@ -555,6 +570,65 @@ const PlatformSettingsPage = () => {
                   {logs.length === 0 && (
                     <tr>
                       <td colSpan={6} className="px-3 py-6 text-center text-slate-500">No webhook logs found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "waba-onboarding" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>Project Onboarding States</CardTitle>
+            <CardDescription>Counts and per-project WABA onboarding status for owner control.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {Object.entries(onboardingSummary?.counts || {}).map(([state, value]) => (
+                <div key={state} className="rounded-lg border border-slate-200 p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">{state.replaceAll("_", " ")}</div>
+                  <div className="text-xl font-semibold text-slate-900">{value}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-between items-center">
+              <p className="text-sm text-slate-600">Total projects: {onboardingSummary?.totalProjects ?? 0}</p>
+              <Button
+                variant="outline"
+                onClick={async () => setOnboardingSummary(await getPlatformWabaOnboardingSummary())}
+              >
+                Refresh
+              </Button>
+            </div>
+            <div className="rounded-lg border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">Project</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">Slug</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">State</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">WABA</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">Phone</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-600">Last Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(onboardingSummary?.projects || []).map((x) => (
+                    <tr key={x.tenantId} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{x.tenantName || "-"}</td>
+                      <td className="px-3 py-2 text-slate-600">{x.tenantSlug || "-"}</td>
+                      <td className="px-3 py-2">{x.state || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700">{x.wabaId || "-"}</td>
+                      <td className="px-3 py-2 text-slate-700">{x.displayPhoneNumber || "-"}</td>
+                      <td className="px-3 py-2 text-slate-600 max-w-[320px] truncate">{x.lastError || "-"}</td>
+                    </tr>
+                  ))}
+                  {(onboardingSummary?.projects || []).length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">No projects found.</td>
                     </tr>
                   )}
                 </tbody>

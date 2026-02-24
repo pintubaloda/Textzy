@@ -276,6 +276,10 @@ export async function getPlatformWebhookAnalytics(tenantId = '', days = 7) {
   return apiGet(`/api/platform/webhook-analytics?${q.toString()}`)
 }
 
+export async function getPlatformWabaOnboardingSummary() {
+  return apiGet('/api/platform/waba/onboarding-summary')
+}
+
 export async function getTenantWebhookAnalytics(days = 7) {
   const q = new URLSearchParams()
   q.set('days', String(days))

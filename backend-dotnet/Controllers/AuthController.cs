@@ -222,6 +222,23 @@ public class AuthController(
     {
         if (!auth.IsAuthenticated) return Unauthorized();
 
+        var isSuperAdmin = db.Users.Any(u => u.Id == auth.UserId && u.IsSuperAdmin);
+        if (isSuperAdmin)
+        {
+            var allProjects = db.Tenants
+                .OrderBy(t => t.CreatedAtUtc)
+                .Select(t => new
+                {
+                    t.Id,
+                    t.Name,
+                    t.Slug,
+                    Role = RolePermissionCatalog.SuperAdmin,
+                    t.CreatedAtUtc
+                })
+                .ToList();
+            return Ok(allProjects);
+        }
+
         var projects = db.TenantUsers
             .Where(tu => tu.UserId == auth.UserId)
             .Join(db.Tenants, tu => tu.TenantId, t => t.Id, (tu, t) => new
@@ -325,12 +342,18 @@ public class AuthController(
         var tenant = await db.Tenants.FirstOrDefaultAsync(t => t.Slug == slug, ct);
         if (tenant is null) return NotFound("Project not found.");
 
+        var isSuperAdmin = await db.Users
+            .Where(u => u.Id == auth.UserId)
+            .Select(u => u.IsSuperAdmin)
+            .FirstOrDefaultAsync(ct);
+
         var membership = await db.TenantUsers
             .FirstOrDefaultAsync(tu => tu.UserId == auth.UserId && tu.TenantId == tenant.Id, ct);
-        if (membership is null) return Forbid();
+        if (!isSuperAdmin && membership is null) return Forbid();
 
         var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
-        return Ok(new { accessToken = token, tenantSlug = tenant.Slug, projectName = tenant.Name, role = membership.Role });
+        var role = isSuperAdmin ? RolePermissionCatalog.SuperAdmin : membership?.Role ?? "owner";
+        return Ok(new { accessToken = token, tenantSlug = tenant.Slug, projectName = tenant.Name, role });
     }
 
     private static string NormalizeSlug(string value)
