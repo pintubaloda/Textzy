@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
 using Textzy.Api.Models;
 using Textzy.Api.Services;
@@ -13,17 +14,40 @@ public class WabaWebhookController(
     WhatsAppCloudService whatsapp,
     WabaWebhookQueueService queue,
     ControlDbContext controlDb,
+    SecretCryptoService crypto,
     IConfiguration config,
     ILogger<WabaWebhookController> logger) : ControllerBase
 {
     [HttpGet]
-    public IActionResult Verify(
+    public async Task<IActionResult> Verify(
         [FromQuery(Name = "hub.mode")] string mode,
         [FromQuery(Name = "hub.verify_token")] string verifyToken,
-        [FromQuery(Name = "hub.challenge")] string challenge)
+        [FromQuery(Name = "hub.challenge")] string challenge,
+        CancellationToken ct)
     {
-        var expected = config.GetSection("WhatsApp").Get<WhatsAppOptions>()?.VerifyToken ?? string.Empty;
-        if (mode == "subscribe" && verifyToken == expected) return Content(challenge);
+        var expectedFromConfig = config.GetSection("WhatsApp").Get<WhatsAppOptions>()?.VerifyToken ?? string.Empty;
+        var expectedFromPlatform = string.Empty;
+        try
+        {
+            var row = await controlDb.PlatformSettings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Scope == "waba-master" && x.Key == "verifyToken", ct);
+            if (row is not null && !string.IsNullOrWhiteSpace(row.ValueEncrypted))
+                expectedFromPlatform = crypto.Decrypt(row.ValueEncrypted);
+        }
+        catch
+        {
+            // Keep webhook verification resilient even if settings read fails.
+        }
+
+        var verified = mode == "subscribe" &&
+                       (!string.IsNullOrWhiteSpace(verifyToken)) &&
+                       (
+                           string.Equals(verifyToken, expectedFromPlatform, StringComparison.Ordinal) ||
+                           string.Equals(verifyToken, expectedFromConfig, StringComparison.Ordinal)
+                       );
+
+        if (verified) return Content(challenge);
         return Forbid();
     }
 
