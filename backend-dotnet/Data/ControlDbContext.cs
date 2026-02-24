@@ -20,4 +20,5 @@ public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbCo
     public DbSet<BillingPaymentAttempt> BillingPaymentAttempts => Set<BillingPaymentAttempt>();
     public DbSet<WebhookEvent> WebhookEvents => Set<WebhookEvent>();
     public DbSet<WabaErrorPolicy> WabaErrorPolicies => Set<WabaErrorPolicy>();
+    public DbSet<PlatformRequestLog> PlatformRequestLogs => Set<PlatformRequestLog>();
 }

@@ -10,6 +10,7 @@ import {
   getPlatformSettings,
   savePlatformSettings,
   getPlatformWebhookLogs,
+  getPlatformRequestLogs,
   listPaymentWebhooks,
   autoCreatePaymentWebhook,
   upsertPaymentWebhook,
@@ -92,6 +93,14 @@ const PlatformSettingsPage = () => {
   const [idemStaleMinutes, setIdemStaleMinutes] = useState("30");
   const [idemData, setIdemData] = useState(null);
   const [onboardingSummary, setOnboardingSummary] = useState(null);
+  const [requestLogs, setRequestLogs] = useState([]);
+  const [requestLogFilters, setRequestLogFilters] = useState({
+    tenantId: "",
+    method: "",
+    statusCode: "",
+    pathContains: "",
+    limit: "200",
+  });
 
   const title = useMemo(
     () => (
@@ -99,6 +108,8 @@ const PlatformSettingsPage = () => {
         ? "Payment Gateway Setup"
         : tab === "webhook-logs"
         ? "Webhook Logs"
+        : tab === "request-logs"
+        ? "Request Logs"
         : tab === "billing-plans"
         ? "Billing Plans"
         : tab === "waba-onboarding"
@@ -158,6 +169,20 @@ const PlatformSettingsPage = () => {
             const rows = await listPlatformBillingPlans();
             if (!active) return;
             setPlans(rows || []);
+          } else if (tab === "request-logs") {
+            const [customers, rows] = await Promise.all([
+              getPlatformCustomers("").catch(() => []),
+              getPlatformRequestLogs({
+                tenantId: requestLogFilters.tenantId,
+                method: requestLogFilters.method,
+                statusCode: requestLogFilters.statusCode,
+                pathContains: requestLogFilters.pathContains,
+                limit: Number(requestLogFilters.limit || 200),
+              }).catch(() => []),
+            ]);
+            if (!active) return;
+            setTenants(customers || []);
+            setRequestLogs(rows || []);
           } else if (tab === "waba-onboarding") {
             const rows = await getPlatformWabaOnboardingSummary();
             if (!active) return;
@@ -241,6 +266,13 @@ const PlatformSettingsPage = () => {
             onClick={() => setTab("webhook-logs")}
           >
             Webhook Logs
+          </Button>
+          <Button
+            variant={tab === "request-logs" ? "default" : "outline"}
+            className={tab === "request-logs" ? "bg-orange-500 hover:bg-orange-600" : ""}
+            onClick={() => setTab("request-logs")}
+          >
+            Request Logs
           </Button>
           <Button
             variant={tab === "billing-plans" ? "default" : "outline"}
@@ -576,6 +608,131 @@ const PlatformSettingsPage = () => {
                   {logs.length === 0 && (
                     <tr>
                       <td colSpan={6} className="px-3 py-6 text-center text-slate-500">No webhook logs found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "request-logs" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>API Request / Response Logs</CardTitle>
+            <CardDescription>All API requests with request/response snapshots for platform diagnostics.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid gap-2 md:grid-cols-6">
+              <Select
+                value={requestLogFilters.tenantId || "all"}
+                onValueChange={(v) => setRequestLogFilters((p) => ({ ...p, tenantId: v === "all" ? "" : v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Tenant" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All tenants</SelectItem>
+                  {(tenants || []).map((t) => <SelectItem key={t.tenantId} value={t.tenantId}>{t.tenantName}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select
+                value={requestLogFilters.method || "all"}
+                onValueChange={(v) => setRequestLogFilters((p) => ({ ...p, method: v === "all" ? "" : v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Method" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All methods</SelectItem>
+                  <SelectItem value="GET">GET</SelectItem>
+                  <SelectItem value="POST">POST</SelectItem>
+                  <SelectItem value="PUT">PUT</SelectItem>
+                  <SelectItem value="PATCH">PATCH</SelectItem>
+                  <SelectItem value="DELETE">DELETE</SelectItem>
+                  <SelectItem value="OPTIONS">OPTIONS</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="Status code"
+                value={requestLogFilters.statusCode}
+                onChange={(e) => setRequestLogFilters((p) => ({ ...p, statusCode: e.target.value }))}
+              />
+              <Input
+                placeholder="Path contains..."
+                value={requestLogFilters.pathContains}
+                onChange={(e) => setRequestLogFilters((p) => ({ ...p, pathContains: e.target.value }))}
+              />
+              <Input
+                placeholder="Limit"
+                value={requestLogFilters.limit}
+                onChange={(e) => setRequestLogFilters((p) => ({ ...p, limit: e.target.value }))}
+              />
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  const rows = await getPlatformRequestLogs({
+                    tenantId: requestLogFilters.tenantId,
+                    method: requestLogFilters.method,
+                    statusCode: requestLogFilters.statusCode,
+                    pathContains: requestLogFilters.pathContains,
+                    limit: Number(requestLogFilters.limit || 200),
+                  });
+                  setRequestLogs(rows || []);
+                }}
+              >
+                Refresh
+              </Button>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left px-3 py-2">Time</th>
+                    <th className="text-left px-3 py-2">Method</th>
+                    <th className="text-left px-3 py-2">Path</th>
+                    <th className="text-left px-3 py-2">Status</th>
+                    <th className="text-left px-3 py-2">Duration</th>
+                    <th className="text-left px-3 py-2">Tenant</th>
+                    <th className="text-left px-3 py-2">Payload</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(requestLogs || []).map((x) => (
+                    <tr key={x.id} className="border-t border-slate-100 align-top">
+                      <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleString() : "-"}</td>
+                      <td className="px-3 py-2 text-slate-900">{x.method}</td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-slate-900">{x.path}</div>
+                        <div className="text-xs text-slate-500 break-all">{x.queryString || "-"}</div>
+                      </td>
+                      <td className="px-3 py-2 text-slate-800">{x.statusCode}</td>
+                      <td className="px-3 py-2 text-slate-800">{x.durationMs} ms</td>
+                      <td className="px-3 py-2 text-xs text-slate-600">{x.tenantId || "-"}</td>
+                      <td className="px-3 py-2">
+                        <details>
+                          <summary className="cursor-pointer text-xs text-orange-600">View request/response</summary>
+                          <div className="mt-2 space-y-2">
+                            <div>
+                              <div className="text-[11px] font-medium text-slate-500">Request</div>
+                              <pre className="max-h-40 overflow-auto rounded border border-slate-100 bg-slate-50 p-2 text-[11px] text-slate-700 whitespace-pre-wrap">{x.requestBody || "-"}</pre>
+                            </div>
+                            <div>
+                              <div className="text-[11px] font-medium text-slate-500">Response</div>
+                              <pre className="max-h-40 overflow-auto rounded border border-slate-100 bg-slate-50 p-2 text-[11px] text-slate-700 whitespace-pre-wrap">{x.responseBody || "-"}</pre>
+                            </div>
+                            {x.error ? (
+                              <div>
+                                <div className="text-[11px] font-medium text-red-600">Error</div>
+                                <pre className="max-h-20 overflow-auto rounded border border-red-100 bg-red-50 p-2 text-[11px] text-red-700 whitespace-pre-wrap">{x.error}</pre>
+                              </div>
+                            ) : null}
+                          </div>
+                        </details>
+                      </td>
+                    </tr>
+                  ))}
+                  {(requestLogs || []).length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-3 py-6 text-center text-slate-500">No request logs found.</td>
                     </tr>
                   )}
                 </tbody>

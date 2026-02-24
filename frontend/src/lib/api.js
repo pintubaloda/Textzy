@@ -257,6 +257,16 @@ export async function getPlatformWebhookLogs({ provider = "", limit = 100 } = {}
   return apiGet(`/api/platform/webhook-logs?${q.toString()}`)
 }
 
+export async function getPlatformRequestLogs({ tenantId = "", method = "", statusCode = "", pathContains = "", limit = 200 } = {}) {
+  const q = new URLSearchParams()
+  if (tenantId) q.set("tenantId", tenantId)
+  if (method) q.set("method", method)
+  if (statusCode) q.set("statusCode", String(statusCode))
+  if (pathContains) q.set("pathContains", pathContains)
+  q.set("limit", String(limit))
+  return apiGet(`/api/platform/request-logs?${q.toString()}`)
+}
+
 export async function getPlatformQueueHealth() {
   return apiGet('/api/platform/queue-health')
 }

@@ -172,6 +172,7 @@ if (!app.Environment.IsProduction())
     app.UseHttpsRedirection();
 }
 app.UseCors("frontend");
+app.UseMiddleware<PlatformRequestLoggingMiddleware>();
 app.UseMiddleware<TenantMiddleware>();
 app.UseMiddleware<AuthMiddleware>();
 app.MapControllers();
@@ -285,6 +286,29 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_WabaErrorPolicies_Code" ON "WabaErrorPolicies" ("Code");""");
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "PlatformRequestLogs" (
+            "Id" uuid PRIMARY KEY,
+            "CreatedAtUtc" timestamp with time zone NOT NULL,
+            "RequestId" text NOT NULL,
+            "Method" text NOT NULL,
+            "Path" text NOT NULL,
+            "QueryString" text NOT NULL,
+            "StatusCode" integer NOT NULL,
+            "DurationMs" integer NOT NULL,
+            "TenantId" uuid NULL,
+            "UserId" uuid NULL,
+            "ClientIp" text NOT NULL,
+            "UserAgent" text NOT NULL,
+            "RequestBody" text NOT NULL,
+            "ResponseBody" text NOT NULL,
+            "Error" text NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_PlatformRequestLogs_CreatedAtUtc" ON "PlatformRequestLogs" ("CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_PlatformRequestLogs_Path_CreatedAtUtc" ON "PlatformRequestLogs" ("Path","CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_PlatformRequestLogs_StatusCode_CreatedAtUtc" ON "PlatformRequestLogs" ("StatusCode","CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_PlatformRequestLogs_TenantId_CreatedAtUtc" ON "PlatformRequestLogs" ("TenantId","CreatedAtUtc");""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "TeamInvitations" (
