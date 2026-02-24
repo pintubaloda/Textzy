@@ -310,6 +310,11 @@ public class PlatformWabaOnboardingController(
         return Content(body, "application/json");
     }
 
+    // Explicit Postman-parity path wrapper: GET /{business-id}/system_users
+    [HttpGet("meta/{businessId}/system_users")]
+    public Task<IActionResult> MetaSystemUsersByPath([FromRoute] string businessId, [FromQuery] Guid? tenantId, CancellationToken ct)
+        => MetaSystemUsers(businessId, tenantId, ct);
+
     [HttpGet("meta/owned-wabas")]
     public async Task<IActionResult> MetaOwnedWabas([FromQuery] string businessId, [FromQuery] Guid? tenantId, CancellationToken ct)
     {
@@ -359,6 +364,11 @@ public class PlatformWabaOnboardingController(
         return Content(body, "application/json");
     }
 
+    // Explicit Postman-parity path wrapper: GET /{assigned-waba-id}/assigned_users?business=...
+    [HttpGet("meta/{wabaId}/assigned_users")]
+    public Task<IActionResult> MetaAssignedUsersByPath([FromRoute] string wabaId, [FromQuery] string business, [FromQuery] Guid? tenantId, CancellationToken ct)
+        => MetaAssignedUsers(wabaId, business, tenantId, ct);
+
     [HttpPost("meta/assigned-users")]
     public async Task<IActionResult> MetaAssignUser([FromBody] MetaAssignUserRequest request, CancellationToken ct)
     {
@@ -382,6 +392,27 @@ public class PlatformWabaOnboardingController(
         var (ok, status, body) = await GraphPostFormRawAsync(url, ctx.AccessToken, form, ct);
         if (!ok) return StatusCode(status, new { error = "graph_meta_assign_user_failed", status, detail = body });
         return Content(body, "application/json");
+    }
+
+    // Explicit Postman-parity path wrapper: POST /{assigned-waba-id}/assigned_users?user=...&tasks=...&business=...
+    [HttpPost("meta/{wabaId}/assigned_users")]
+    public Task<IActionResult> MetaAssignUserByPath(
+        [FromRoute] string wabaId,
+        [FromQuery] string user,
+        [FromQuery] string tasks,
+        [FromQuery] string business,
+        [FromQuery] Guid? tenantId,
+        CancellationToken ct)
+    {
+        var parsedTasks = ParseTasks(tasks);
+        return MetaAssignUser(new MetaAssignUserRequest
+        {
+            TenantId = tenantId,
+            WabaId = wabaId,
+            BusinessId = business,
+            UserId = user,
+            Tasks = parsedTasks
+        }, ct);
     }
 
     [HttpGet("meta/subscribed-apps")]
@@ -528,6 +559,30 @@ public class PlatformWabaOnboardingController(
         using var resp = await client.SendAsync(req, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
         return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
+    }
+
+    private static string[] ParseTasks(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return ["MANAGE"];
+        var value = raw.Trim();
+        if (value.StartsWith("[", StringComparison.Ordinal))
+        {
+            try
+            {
+                var arr = JsonSerializer.Deserialize<string[]>(value);
+                if (arr is { Length: > 0 }) return arr.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            }
+            catch
+            {
+                // Fallback to CSV parsing below.
+            }
+        }
+
+        var csv = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return csv.Length > 0 ? csv : ["MANAGE"];
     }
 
     private static string TryGetString(JsonElement root, string property)

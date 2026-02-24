@@ -221,6 +221,7 @@ public class WhatsAppCloudService(
         await tenantResolver.InvalidateAsync(config.PhoneNumberId, ct);
 
         await tenantDb.SaveChangesAsync(ct);
+        await BootstrapMessageTemplatesAsync(config, effectiveToken, ct);
         return config;
     }
 
@@ -307,6 +308,7 @@ public class WhatsAppCloudService(
         await tenantResolver.InvalidateAsync(config.PhoneNumberId, ct);
 
         await tenantDb.SaveChangesAsync(ct);
+        await BootstrapMessageTemplatesAsync(config, effectiveToken, ct);
 
         return new
         {
@@ -318,6 +320,148 @@ public class WhatsAppCloudService(
             phone = config.DisplayPhoneNumber,
             state = config.OnboardingState
         };
+    }
+
+    private async Task BootstrapMessageTemplatesAsync(TenantWabaConfig config, string accessToken, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(config.WabaId) || string.IsNullOrWhiteSpace(accessToken)) return;
+        try
+        {
+            var after = string.Empty;
+            var pages = 0;
+            while (pages < 10)
+            {
+                pages++;
+                var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.WabaId}/message_templates?fields=name,status,category,language,components";
+                if (!string.IsNullOrWhiteSpace(after))
+                    url += $"&after={Uri.EscapeDataString(after)}";
+
+                var (ok, status, body) = await GraphGetRawAsync(url, accessToken, ct);
+                if (!ok)
+                {
+                    logger.LogWarning("Template bootstrap failed: tenant={TenantId} waba={WabaId} status={Status} body={Body}", tenancy.TenantId, config.WabaId, status, body);
+                    return;
+                }
+
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var t in data.EnumerateArray())
+                    {
+                        var name = TryGetString(t, "name");
+                        if (string.IsNullOrWhiteSpace(name)) continue;
+
+                        var language = TryGetString(t, "language");
+                        if (string.IsNullOrWhiteSpace(language)) language = "en";
+                        var category = TryGetString(t, "category");
+                        if (string.IsNullOrWhiteSpace(category)) category = "UTILITY";
+                        var statusText = TryGetString(t, "status");
+                        if (string.IsNullOrWhiteSpace(statusText)) statusText = "UNKNOWN";
+
+                        string bodyText = string.Empty;
+                        string headerType = "none";
+                        string headerText = string.Empty;
+                        string footerText = string.Empty;
+                        string buttonsJson = "[]";
+
+                        if (t.TryGetProperty("components", out var comps) && comps.ValueKind == JsonValueKind.Array)
+                        {
+                            var buttons = new List<object>();
+                            foreach (var c in comps.EnumerateArray())
+                            {
+                                var type = TryGetString(c, "type").ToUpperInvariant();
+                                if (type == "BODY")
+                                {
+                                    bodyText = TryGetString(c, "text");
+                                }
+                                else if (type == "HEADER")
+                                {
+                                    var fmt = TryGetString(c, "format").ToLowerInvariant();
+                                    headerType = string.IsNullOrWhiteSpace(fmt) ? "text" : fmt;
+                                    headerText = TryGetString(c, "text");
+                                }
+                                else if (type == "FOOTER")
+                                {
+                                    footerText = TryGetString(c, "text");
+                                }
+                                else if (type == "BUTTONS" && c.TryGetProperty("buttons", out var btns) && btns.ValueKind == JsonValueKind.Array)
+                                {
+                                    foreach (var b in btns.EnumerateArray())
+                                    {
+                                        buttons.Add(new
+                                        {
+                                            type = TryGetString(b, "type"),
+                                            text = TryGetString(b, "text"),
+                                            url = TryGetString(b, "url"),
+                                            phone_number = TryGetString(b, "phone_number")
+                                        });
+                                    }
+                                }
+                            }
+                            if (buttons.Count > 0) buttonsJson = JsonSerializer.Serialize(buttons);
+                        }
+
+                        if (string.IsNullOrWhiteSpace(bodyText))
+                            bodyText = $"Template: {name}";
+
+                        var existing = await tenantDb.Templates
+                            .FirstOrDefaultAsync(x =>
+                                x.TenantId == tenancy.TenantId &&
+                                x.Channel == ChannelType.WhatsApp &&
+                                x.Name == name &&
+                                x.Language == language, ct);
+
+                        if (existing is null)
+                        {
+                            tenantDb.Templates.Add(new Template
+                            {
+                                Id = Guid.NewGuid(),
+                                TenantId = tenancy.TenantId,
+                                Name = name,
+                                Channel = ChannelType.WhatsApp,
+                                Category = category,
+                                Language = language,
+                                Body = bodyText,
+                                LifecycleStatus = "approved",
+                                Version = 1,
+                                VariantGroup = $"{name}:{language}",
+                                Status = statusText,
+                                HeaderType = headerType,
+                                HeaderText = headerText,
+                                FooterText = footerText,
+                                ButtonsJson = buttonsJson,
+                                CreatedAtUtc = DateTime.UtcNow
+                            });
+                        }
+                        else
+                        {
+                            existing.Category = category;
+                            existing.Body = bodyText;
+                            existing.Status = statusText;
+                            existing.HeaderType = headerType;
+                            existing.HeaderText = headerText;
+                            existing.FooterText = footerText;
+                            existing.ButtonsJson = buttonsJson;
+                        }
+                    }
+                }
+
+                await tenantDb.SaveChangesAsync(ct);
+
+                after = string.Empty;
+                if (doc.RootElement.TryGetProperty("paging", out var paging) &&
+                    paging.TryGetProperty("cursors", out var cursors) &&
+                    cursors.TryGetProperty("after", out var afterNode))
+                {
+                    after = afterNode.GetString() ?? string.Empty;
+                }
+                if (string.IsNullOrWhiteSpace(after)) break;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Template bootstrap exception for tenant={TenantId} waba={WabaId}", tenancy.TenantId, config.WabaId);
+        }
     }
 
     public async Task<object> GetOnboardingStatusAsync(CancellationToken ct = default)
