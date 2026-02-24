@@ -198,7 +198,8 @@ public class OutboundMessageWorker(
         var permanentCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "190", "200", "131026", "131005", "132000" };
         if (!string.IsNullOrWhiteSpace(errorCode))
         {
-            var policy = controlDb.WabaErrorPolicies.AsNoTracking().FirstOrDefault(x => x.Code == errorCode && x.IsActive);
+            var code = errorCode;
+            var policy = controlDb.WabaErrorPolicies.AsNoTracking().FirstOrDefault(x => x.Code == code && x.IsActive);
             if (policy is not null)
             {
                 reason = $"policy_{policy.Classification.ToLowerInvariant()}";

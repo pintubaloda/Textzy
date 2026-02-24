@@ -55,7 +55,16 @@ public class PlatformSecurityController(
         if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
         if (tenantId == Guid.Empty) return BadRequest("tenantId is required.");
         var row = await controls.GetTenantControlAsync(tenantId, ct);
-        return Ok(row ?? new { tenantId, circuitBreakerEnabled = false, ratePerMinuteOverride = 0, reason = "" });
+        if (row is null)
+            return Ok(new { tenantId, circuitBreakerEnabled = false, ratePerMinuteOverride = 0, reason = "" });
+
+        return Ok(new
+        {
+            tenantId = row.TenantId,
+            circuitBreakerEnabled = row.CircuitBreakerEnabled,
+            ratePerMinuteOverride = row.RatePerMinuteOverride,
+            reason = row.Reason ?? string.Empty
+        });
     }
 
     [HttpPut("controls")]
