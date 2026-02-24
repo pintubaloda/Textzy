@@ -255,79 +255,44 @@ const PlatformSettingsPage = () => {
     };
   }, [tab, logProvider]);
 
+  const platformMenus = [
+    { key: "waba-master", label: "Waba Master Config" },
+    { key: "payment-gateway", label: "Payment Gateway Setup" },
+    { key: "webhook-logs", label: "Webhook Logs" },
+    { key: "request-logs", label: "Request Logs" },
+    { key: "billing-plans", label: "Billing Plans" },
+    { key: "waba-onboarding", label: "Waba Onboarding" },
+    { key: "waba-lookup", label: "Waba Lookup" },
+    { key: "waba-policies", label: "Waba Error Policies" },
+    { key: "idempotency-diagnostics", label: "Idempotency Diagnostics" },
+  ];
+
   return (
-    <div className="space-y-4" data-testid="platform-settings-page">
-      <div className="flex items-center justify-between">
+    <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]" data-testid="platform-settings-page">
+      <Card className="h-fit border-slate-200">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-xl">Platform Setting</CardTitle>
+          <CardDescription>Owner-level controls</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {platformMenus.map((item) => (
+            <Button
+              key={item.key}
+              variant={tab === item.key ? "default" : "outline"}
+              className={`w-full justify-start ${tab === item.key ? "bg-orange-500 hover:bg-orange-600" : ""}`}
+              onClick={() => setTab(item.key)}
+            >
+              {item.label}
+            </Button>
+          ))}
+        </CardContent>
+      </Card>
+
+      <div className="space-y-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>
           <p className="text-sm text-slate-500">Platform owner level global configuration.</p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant={tab === "waba-master" ? "default" : "outline"}
-            className={tab === "waba-master" ? "bg-orange-500 hover:bg-orange-600" : ""}
-            onClick={() => setTab("waba-master")}
-          >
-            Waba Master Config
-          </Button>
-          <Button
-            variant={tab === "payment-gateway" ? "default" : "outline"}
-            className={tab === "payment-gateway" ? "bg-orange-500 hover:bg-orange-600" : ""}
-            onClick={() => setTab("payment-gateway")}
-          >
-            Payment Gateway Setup
-          </Button>
-          <Button
-            variant={tab === "webhook-logs" ? "default" : "outline"}
-            className={tab === "webhook-logs" ? "bg-orange-500 hover:bg-orange-600" : ""}
-            onClick={() => setTab("webhook-logs")}
-          >
-            Webhook Logs
-          </Button>
-          <Button
-            variant={tab === "request-logs" ? "default" : "outline"}
-            className={tab === "request-logs" ? "bg-orange-500 hover:bg-orange-600" : ""}
-            onClick={() => setTab("request-logs")}
-          >
-            Request Logs
-          </Button>
-          <Button
-            variant={tab === "billing-plans" ? "default" : "outline"}
-            className={tab === "billing-plans" ? "bg-orange-500 hover:bg-orange-600" : ""}
-            onClick={() => setTab("billing-plans")}
-          >
-            Billing Plans
-          </Button>
-          <Button
-            variant={tab === "waba-onboarding" ? "default" : "outline"}
-            className={tab === "waba-onboarding" ? "bg-orange-500 hover:bg-orange-600" : ""}
-            onClick={() => setTab("waba-onboarding")}
-          >
-            WABA Onboarding
-          </Button>
-          <Button
-            variant={tab === "waba-lookup" ? "default" : "outline"}
-            className={tab === "waba-lookup" ? "bg-orange-500 hover:bg-orange-600" : ""}
-            onClick={() => setTab("waba-lookup")}
-          >
-            WABA Lookup
-          </Button>
-          <Button
-            variant={tab === "waba-policies" ? "default" : "outline"}
-            className={tab === "waba-policies" ? "bg-orange-500 hover:bg-orange-600" : ""}
-            onClick={() => setTab("waba-policies")}
-          >
-            WABA Error Policies
-          </Button>
-          <Button
-            variant={tab === "idempotency-diagnostics" ? "default" : "outline"}
-            className={tab === "idempotency-diagnostics" ? "bg-orange-500 hover:bg-orange-600" : ""}
-            onClick={() => setTab("idempotency-diagnostics")}
-          >
-            Idempotency Diagnostics
-          </Button>
-        </div>
-      </div>
 
       {tab === "waba-master" && (
         <Card className="border-slate-200">
@@ -1311,6 +1276,7 @@ const PlatformSettingsPage = () => {
           </CardContent>
         </Card>
       )}
+      </div>
     </div>
   );
 };
