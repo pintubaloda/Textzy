@@ -304,14 +304,14 @@ export async function cancelPlatformWabaRequest(tenantId, reason = '') {
 
 export async function platformLookupByPhone(tenantId, phoneNumberId) {
   const q = new URLSearchParams()
-  q.set('tenantId', tenantId)
+  if (tenantId) q.set('tenantId', tenantId)
   q.set('phoneNumberId', phoneNumberId)
   return apiGet(`/api/platform/waba/lookup/by-phone?${q.toString()}`)
 }
 
 export async function platformLookupByWaba(tenantId, wabaId) {
   const q = new URLSearchParams()
-  q.set('tenantId', tenantId)
+  if (tenantId) q.set('tenantId', tenantId)
   q.set('wabaId', wabaId)
   return apiGet(`/api/platform/waba/lookup/by-waba?${q.toString()}`)
 }

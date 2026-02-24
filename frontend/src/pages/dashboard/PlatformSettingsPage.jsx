@@ -62,7 +62,7 @@ const PlatformSettingsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "waba-master";
   const [gateway, setGateway] = useState("razorpay");
-  const [waba, setWaba] = useState({ appId: "", appSecret: "", embeddedConfigId: "", verifyToken: "", webhookUrl: "" });
+  const [waba, setWaba] = useState({ appId: "", appSecret: "", embeddedConfigId: "", verifyToken: "", webhookUrl: "", systemUserAccessToken: "" });
   const [payment, setPayment] = useState({ provider: "razorpay", merchantId: "", keyId: "", keySecret: "", webhookSecret: "" });
   const [webhookItems, setWebhookItems] = useState([]);
   const [webhookEdit, setWebhookEdit] = useState({ provider: "razorpay", endpointUrl: "", webhookId: "", eventsCsv: "" });
@@ -150,6 +150,7 @@ const PlatformSettingsPage = () => {
             embeddedConfigId: values.embeddedConfigId || values.configId || "",
             verifyToken: values.verifyToken || "",
             webhookUrl: values.webhookUrl || "",
+            systemUserAccessToken: values.systemUserAccessToken || values.accessToken || "",
           });
         } else if (tab === "payment-gateway") {
           const res = await getPlatformSettings("payment-gateway");
@@ -354,6 +355,16 @@ const PlatformSettingsPage = () => {
             <div className="space-y-2">
               <Label htmlFor="webhook-url">Webhook Callback URL</Label>
               <Input id="webhook-url" placeholder="https://your-api.com/api/waba/webhook" value={waba.webhookUrl} onChange={(e) => setWaba((p) => ({ ...p, webhookUrl: e.target.value }))} />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="system-user-access-token">System User Access Token (Platform Global)</Label>
+              <Input
+                id="system-user-access-token"
+                type="password"
+                placeholder="Paste system user token for global WABA lookup"
+                value={waba.systemUserAccessToken}
+                onChange={(e) => setWaba((p) => ({ ...p, systemUserAccessToken: e.target.value }))}
+              />
             </div>
             <div className="md:col-span-2 flex gap-2">
               <Button className="bg-orange-500 hover:bg-orange-600" disabled={loading} onClick={async () => {
@@ -850,15 +861,15 @@ const PlatformSettingsPage = () => {
         <Card className="border-slate-200">
           <CardHeader>
             <CardTitle>WABA ID / Phone ID Lookup</CardTitle>
-            <CardDescription>Resolve mapping in both directions using selected project token.</CardDescription>
+            <CardDescription>Resolve mapping in both directions using platform global token (project selection optional).</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Project</Label>
+              <Label>Project (Optional)</Label>
               <Select value={wabaLookupTenantId || "none"} onValueChange={(v) => setWabaLookupTenantId(v === "none" ? "" : v)}>
-                <SelectTrigger className="w-[320px]"><SelectValue placeholder="Select project" /></SelectTrigger>
+                <SelectTrigger className="w-[320px]"><SelectValue placeholder="No project selected (platform-global)" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">Select project</SelectItem>
+                  <SelectItem value="none">No project selected (platform-global)</SelectItem>
                   {(tenants || []).map((t) => (
                     <SelectItem key={t.tenantId} value={t.tenantId}>{t.tenantName}</SelectItem>
                   ))}
@@ -878,7 +889,6 @@ const PlatformSettingsPage = () => {
                   className="bg-orange-500 hover:bg-orange-600"
                   disabled={lookupLoading}
                   onClick={async () => {
-                    if (!wabaLookupTenantId) return toast.error("Select project first");
                     if (!lookupPhoneId.trim()) return toast.error("Enter phone number ID");
                     try {
                       setLookupLoading(true);
@@ -914,7 +924,6 @@ const PlatformSettingsPage = () => {
                   className="bg-orange-500 hover:bg-orange-600"
                   disabled={lookupLoading}
                   onClick={async () => {
-                    if (!wabaLookupTenantId) return toast.error("Select project first");
                     if (!lookupWabaId.trim()) return toast.error("Enter WABA ID");
                     try {
                       setLookupLoading(true);

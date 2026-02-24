@@ -154,18 +154,17 @@ public class PlatformWabaOnboardingController(
     }
 
     [HttpGet("lookup/by-phone")]
-    public async Task<IActionResult> LookupByPhone([FromQuery] Guid tenantId, [FromQuery] string phoneNumberId, CancellationToken ct)
+    public async Task<IActionResult> LookupByPhone([FromQuery] Guid? tenantId, [FromQuery] string phoneNumberId, CancellationToken ct)
     {
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
-        if (tenantId == Guid.Empty) return BadRequest("tenantId is required.");
         if (string.IsNullOrWhiteSpace(phoneNumberId)) return BadRequest("phoneNumberId is required.");
 
-        var ctx = await ResolveTenantTokenAsync(tenantId, ct);
-        if (ctx is null) return NotFound("Tenant or active WABA config not found.");
+        var ctx = await ResolveLookupTokenAsync(tenantId, ct);
+        if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
 
         var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{phoneNumberId.Trim()}?fields=id,display_phone_number,verified_name,quality_rating,name_status,whatsapp_business_account{{id,name}}";
-        var (ok, status, body) = await GraphGetRawAsync(url, ctx.Value.accessToken, ct);
+        var (ok, status, body) = await GraphGetRawAsync(url, ctx.AccessToken, ct);
         if (!ok) return StatusCode(status, new { error = "graph_lookup_failed", status, detail = body });
 
         string wabaId = string.Empty;
@@ -191,9 +190,10 @@ public class PlatformWabaOnboardingController(
 
         return Ok(new
         {
-            tenantId = ctx.Value.tenantId,
-            tenantName = ctx.Value.tenantName,
-            tenantSlug = ctx.Value.tenantSlug,
+            tenantId = ctx.TenantId,
+            tenantName = ctx.TenantName,
+            tenantSlug = ctx.TenantSlug,
+            tokenSource = ctx.TokenSource,
             phoneNumberId = phoneNumberId.Trim(),
             displayPhoneNumber = display,
             verifiedName,
@@ -206,27 +206,26 @@ public class PlatformWabaOnboardingController(
     }
 
     [HttpGet("lookup/by-phone-number-id")]
-    public Task<IActionResult> LookupByPhoneAlias([FromQuery] Guid tenantId, [FromQuery] string phoneNumberId, CancellationToken ct)
+    public Task<IActionResult> LookupByPhoneAlias([FromQuery] Guid? tenantId, [FromQuery] string phoneNumberId, CancellationToken ct)
         => LookupByPhone(tenantId, phoneNumberId, ct);
 
     [HttpGet("lookup/by-waba")]
-    public async Task<IActionResult> LookupByWaba([FromQuery] Guid tenantId, [FromQuery] string wabaId, CancellationToken ct)
+    public async Task<IActionResult> LookupByWaba([FromQuery] Guid? tenantId, [FromQuery] string wabaId, CancellationToken ct)
     {
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
-        if (tenantId == Guid.Empty) return BadRequest("tenantId is required.");
         if (string.IsNullOrWhiteSpace(wabaId)) return BadRequest("wabaId is required.");
 
-        var ctx = await ResolveTenantTokenAsync(tenantId, ct);
-        if (ctx is null) return NotFound("Tenant or active WABA config not found.");
+        var ctx = await ResolveLookupTokenAsync(tenantId, ct);
+        if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
 
         var wabaUrl = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{wabaId.Trim()}?fields=id,name,business_verification_status,account_review_status";
         var phonesUrl = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{wabaId.Trim()}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating,name_status,status";
 
-        var (okWaba, statusWaba, bodyWaba) = await GraphGetRawAsync(wabaUrl, ctx.Value.accessToken, ct);
+        var (okWaba, statusWaba, bodyWaba) = await GraphGetRawAsync(wabaUrl, ctx.AccessToken, ct);
         if (!okWaba) return StatusCode(statusWaba, new { error = "graph_lookup_failed", status = statusWaba, detail = bodyWaba });
 
-        var (okPhones, statusPhones, bodyPhones) = await GraphGetRawAsync(phonesUrl, ctx.Value.accessToken, ct);
+        var (okPhones, statusPhones, bodyPhones) = await GraphGetRawAsync(phonesUrl, ctx.AccessToken, ct);
         if (!okPhones) return StatusCode(statusPhones, new { error = "graph_lookup_failed", status = statusPhones, detail = bodyPhones });
 
         string wabaName = string.Empty;
@@ -263,9 +262,10 @@ public class PlatformWabaOnboardingController(
 
         return Ok(new
         {
-            tenantId = ctx.Value.tenantId,
-            tenantName = ctx.Value.tenantName,
-            tenantSlug = ctx.Value.tenantSlug,
+            tenantId = ctx.TenantId,
+            tenantName = ctx.TenantName,
+            tenantSlug = ctx.TenantSlug,
+            tokenSource = ctx.TokenSource,
             wabaId = wabaId.Trim(),
             wabaName,
             businessVerificationStatus = verification,
@@ -277,8 +277,55 @@ public class PlatformWabaOnboardingController(
     }
 
     [HttpGet("lookup/by-waba-id")]
-    public Task<IActionResult> LookupByWabaAlias([FromQuery] Guid tenantId, [FromQuery] string wabaId, CancellationToken ct)
+    public Task<IActionResult> LookupByWabaAlias([FromQuery] Guid? tenantId, [FromQuery] string wabaId, CancellationToken ct)
         => LookupByWaba(tenantId, wabaId, ct);
+
+    private async Task<LookupTokenContext?> ResolveLookupTokenAsync(Guid? tenantId, CancellationToken ct)
+    {
+        var platformToken = await ResolvePlatformTokenAsync(ct);
+        if (!string.IsNullOrWhiteSpace(platformToken))
+        {
+            if (tenantId.HasValue && tenantId.Value != Guid.Empty)
+            {
+                var tenant = await controlDb.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == tenantId.Value, ct);
+                if (tenant is not null)
+                {
+                    return new LookupTokenContext(tenant.Id, tenant.Name, tenant.Slug, platformToken, "platform");
+                }
+            }
+            return new LookupTokenContext(null, string.Empty, string.Empty, platformToken, "platform");
+        }
+
+        if (!tenantId.HasValue || tenantId.Value == Guid.Empty) return null;
+        var tenantCtx = await ResolveTenantTokenAsync(tenantId.Value, ct);
+        if (tenantCtx is null) return null;
+        return new LookupTokenContext(tenantCtx.Value.tenantId, tenantCtx.Value.tenantName, tenantCtx.Value.tenantSlug, tenantCtx.Value.accessToken, "tenant");
+    }
+
+    private async Task<string> ResolvePlatformTokenAsync(CancellationToken ct)
+    {
+        var rows = await controlDb.PlatformSettings
+            .AsNoTracking()
+            .Where(x => x.Scope == "waba-master")
+            .ToListAsync(ct);
+        if (rows.Count == 0) return string.Empty;
+
+        var values = rows.ToDictionary(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase);
+        var candidates = new[]
+        {
+            "systemUserAccessToken",
+            "accessToken",
+            "permanentAccessToken"
+        };
+
+        foreach (var key in candidates)
+        {
+            if (values.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+
+        return string.Empty;
+    }
 
     private async Task<(Guid tenantId, string tenantName, string tenantSlug, string accessToken)?> ResolveTenantTokenAsync(Guid tenantId, CancellationToken ct)
     {
@@ -356,4 +403,6 @@ public class PlatformWabaOnboardingController(
         public Guid TenantId { get; set; }
         public string Reason { get; set; } = string.Empty;
     }
+
+    private sealed record LookupTokenContext(Guid? TenantId, string TenantName, string TenantSlug, string AccessToken, string TokenSource);
 }
