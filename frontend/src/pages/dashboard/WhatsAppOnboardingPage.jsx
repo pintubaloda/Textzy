@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import {
   wabaStartOnboarding,
   wabaGetOnboardingStatus,
+  wabaGetEmbeddedConfig,
   wabaExchangeCode,
   wabaRecheckOnboarding,
 } from "@/lib/api";
@@ -44,9 +45,10 @@ export default function WhatsAppOnboardingPage() {
   const [connecting, setConnecting] = useState(false);
   const [checking, setChecking] = useState(false);
   const [status, setStatus] = useState({ state: "requested", readyToSend: false, isConnected: false });
-
-  const facebookAppId = process.env.REACT_APP_FACEBOOK_APP_ID || "";
-  const embeddedConfigId = process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "";
+  const [embeddedCfg, setEmbeddedCfg] = useState({
+    appId: process.env.REACT_APP_FACEBOOK_APP_ID || "",
+    configId: process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "",
+  });
 
   const stateLabel = useMemo(() => stateMap[status.state] || status.state || "Requested", [status.state]);
   const fmt = (v) => (v ? new Date(v).toLocaleString() : "—");
@@ -65,7 +67,38 @@ export default function WhatsAppOnboardingPage() {
 
   useEffect(() => {
     loadStatus();
+    ensureEmbeddedConfig();
   }, []);
+
+  async function ensureEmbeddedConfig() {
+    if (embeddedCfg.appId && embeddedCfg.configId) return;
+    try {
+      const cfg = await wabaGetEmbeddedConfig();
+      if (cfg?.appId || cfg?.embeddedConfigId) {
+        setEmbeddedCfg((prev) => ({
+          appId: prev.appId || (cfg.appId || ""),
+          configId: prev.configId || (cfg.embeddedConfigId || ""),
+        }));
+      }
+    } catch {
+      // Keep env-based values only.
+    }
+  }
+
+  async function resolveEmbeddedConfig() {
+    let appId = embeddedCfg.appId;
+    let configId = embeddedCfg.configId;
+    if (appId && configId) return { appId, configId };
+    try {
+      const cfg = await wabaGetEmbeddedConfig();
+      appId = appId || (cfg?.appId || "");
+      configId = configId || (cfg?.embeddedConfigId || "");
+      setEmbeddedCfg({ appId, configId });
+    } catch {
+      // noop
+    }
+    return { appId, configId };
+  }
 
   async function handleStart() {
     setStarting(true);
@@ -81,8 +114,9 @@ export default function WhatsAppOnboardingPage() {
   }
 
   async function handleEmbeddedSignup() {
+    const { appId: facebookAppId, configId: embeddedConfigId } = await resolveEmbeddedConfig();
     if (!facebookAppId || !embeddedConfigId) {
-      toast.error("Missing REACT_APP_FACEBOOK_APP_ID or REACT_APP_WABA_EMBEDDED_CONFIG_ID");
+      toast.error("Missing Facebook App ID or Embedded Config ID in Platform WABA Master Config");
       return;
     }
 

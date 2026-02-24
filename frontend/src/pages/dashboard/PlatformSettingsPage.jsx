@@ -59,7 +59,7 @@ const PlatformSettingsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "waba-master";
   const [gateway, setGateway] = useState("razorpay");
-  const [waba, setWaba] = useState({ appId: "", appSecret: "", verifyToken: "", webhookUrl: "" });
+  const [waba, setWaba] = useState({ appId: "", appSecret: "", embeddedConfigId: "", verifyToken: "", webhookUrl: "" });
   const [payment, setPayment] = useState({ provider: "razorpay", merchantId: "", keyId: "", keySecret: "", webhookSecret: "" });
   const [webhookItems, setWebhookItems] = useState([]);
   const [webhookEdit, setWebhookEdit] = useState({ provider: "razorpay", endpointUrl: "", webhookId: "", eventsCsv: "" });
@@ -126,6 +126,7 @@ const PlatformSettingsPage = () => {
           setWaba({
             appId: values.appId || "",
             appSecret: values.appSecret || "",
+            embeddedConfigId: values.embeddedConfigId || values.configId || "",
             verifyToken: values.verifyToken || "",
             webhookUrl: values.webhookUrl || "",
           });
@@ -286,6 +287,10 @@ const PlatformSettingsPage = () => {
             <div className="space-y-2">
               <Label htmlFor="app-secret">Meta App Secret</Label>
               <Input id="app-secret" type="password" placeholder="Enter app secret" value={waba.appSecret} onChange={(e) => setWaba((p) => ({ ...p, appSecret: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="embedded-config-id">Embedded Signup Config ID</Label>
+              <Input id="embedded-config-id" placeholder="Enter config id" value={waba.embeddedConfigId} onChange={(e) => setWaba((p) => ({ ...p, embeddedConfigId: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="verify-token">Webhook Verify Token</Label>

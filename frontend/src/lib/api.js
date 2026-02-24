@@ -218,6 +218,10 @@ export async function wabaExchangeCode(code) {
   return apiPost('/api/waba/embedded-signup/exchange', { code })
 }
 
+export async function wabaGetEmbeddedConfig() {
+  return apiGet('/api/waba/embedded-config')
+}
+
 export async function wabaRecheckOnboarding() {
   return apiPost('/api/waba/onboarding/recheck', {})
 }

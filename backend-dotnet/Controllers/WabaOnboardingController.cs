@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Textzy.Api.Data;
 using Textzy.Api.DTOs;
 using Textzy.Api.Services;
 using static Textzy.Api.Services.PermissionCatalog;
@@ -9,8 +11,35 @@ namespace Textzy.Api.Controllers;
 [Route("api/waba")]
 public class WabaOnboardingController(
     WhatsAppCloudService whatsapp,
-    RbacService rbac) : ControllerBase
+    RbacService rbac,
+    ControlDbContext db,
+    SecretCryptoService crypto) : ControllerBase
 {
+    [HttpGet("embedded-config")]
+    public async Task<IActionResult> EmbeddedConfig(CancellationToken ct)
+    {
+        if (!rbac.HasPermission(InboxRead)) return Forbid();
+
+        var rows = await db.PlatformSettings
+            .AsNoTracking()
+            .Where(x => x.Scope == "waba-master")
+            .ToListAsync(ct);
+
+        var values = rows.ToDictionary(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase);
+        var appId = values.TryGetValue("appId", out var aid) ? (aid ?? string.Empty).Trim() : string.Empty;
+        var embeddedConfigId =
+            values.TryGetValue("embeddedConfigId", out var ecid) ? (ecid ?? string.Empty).Trim()
+            : values.TryGetValue("configId", out var cid) ? (cid ?? string.Empty).Trim()
+            : string.Empty;
+
+        return Ok(new
+        {
+            appId,
+            embeddedConfigId,
+            available = !string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(embeddedConfigId)
+        });
+    }
+
     [HttpPost("onboarding/start")]
     public async Task<IActionResult> Start(CancellationToken ct)
     {

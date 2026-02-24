@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useEffect, useMemo, useState } from "react";
-import { apiGet, getTenantWebhookAnalytics, wabaExchangeCode, wabaGetOnboardingStatus, wabaStartOnboarding } from "@/lib/api";
+import { apiGet, getTenantWebhookAnalytics, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaStartOnboarding } from "@/lib/api";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
@@ -32,6 +32,10 @@ const DashboardOverview = () => {
   const [connectingWaba, setConnectingWaba] = useState(false);
   const [webhookAnalytics, setWebhookAnalytics] = useState(null);
   const [analyticsDays, setAnalyticsDays] = useState(7);
+  const [embeddedCfg, setEmbeddedCfg] = useState({
+    appId: process.env.REACT_APP_FACEBOOK_APP_ID || "",
+    configId: process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "",
+  });
 
   useEffect(() => {
     Promise.all([apiGet("/api/messages"), apiGet("/api/contacts"), apiGet("/api/campaigns")])
@@ -43,10 +47,38 @@ const DashboardOverview = () => {
       .catch(() => {});
     loadWabaStatus();
     loadWebhookAnalytics(7);
+    ensureEmbeddedConfig();
   }, []);
 
-  const facebookAppId = process.env.REACT_APP_FACEBOOK_APP_ID || "";
-  const embeddedConfigId = process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "";
+  const ensureEmbeddedConfig = async () => {
+    if (embeddedCfg.appId && embeddedCfg.configId) return;
+    try {
+      const cfg = await wabaGetEmbeddedConfig();
+      if (cfg?.appId || cfg?.embeddedConfigId) {
+        setEmbeddedCfg((prev) => ({
+          appId: prev.appId || (cfg.appId || ""),
+          configId: prev.configId || (cfg.embeddedConfigId || ""),
+        }));
+      }
+    } catch {
+      // Keep env-based values only.
+    }
+  };
+
+  const resolveEmbeddedConfig = async () => {
+    let appId = embeddedCfg.appId;
+    let configId = embeddedCfg.configId;
+    if (appId && configId) return { appId, configId };
+    try {
+      const cfg = await wabaGetEmbeddedConfig();
+      appId = appId || (cfg?.appId || "");
+      configId = configId || (cfg?.embeddedConfigId || "");
+      setEmbeddedCfg({ appId, configId });
+    } catch {
+      // noop
+    }
+    return { appId, configId };
+  };
 
   const loadWabaStatus = async () => {
     try {
@@ -81,8 +113,9 @@ const DashboardOverview = () => {
   });
 
   const handleEmbeddedConnect = async () => {
+    const { appId: facebookAppId, configId: embeddedConfigId } = await resolveEmbeddedConfig();
     if (!facebookAppId || !embeddedConfigId) {
-      toast.error("Missing REACT_APP_FACEBOOK_APP_ID or REACT_APP_WABA_EMBEDDED_CONFIG_ID");
+      toast.error("Missing Facebook App ID or Embedded Config ID in Platform WABA Master Config");
       return;
     }
 

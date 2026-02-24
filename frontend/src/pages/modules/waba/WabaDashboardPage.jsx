@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { apiGet, exchangeEmbeddedSignupCode, getWabaStatus } from '../../../api/client'
+import { apiGet, exchangeEmbeddedSignupCode, getEmbeddedSignupConfig, getWabaStatus } from '../../../api/client'
 import { useToast } from '../../../feedback/ToastProvider'
 import WabaShell from '../../../components/waba/WabaShell'
 
@@ -25,9 +25,10 @@ export default function WabaDashboardPage() {
   const [waba, setWaba] = useState({ isConnected: false })
   const [loadingWaba, setLoadingWaba] = useState(false)
   const [graphProbe, setGraphProbe] = useState(null)
-
-  const embeddedConfigId = import.meta.env.VITE_WABA_EMBEDDED_CONFIG_ID || ''
-  const facebookAppId = import.meta.env.VITE_FACEBOOK_APP_ID || ''
+  const [embeddedCfg, setEmbeddedCfg] = useState({
+    appId: import.meta.env.VITE_FACEBOOK_APP_ID || '',
+    configId: import.meta.env.VITE_WABA_EMBEDDED_CONFIG_ID || ''
+  })
 
   const statusText = useMemo(() => (waba.isConnected ? 'Connected' : 'Pending'), [waba.isConnected])
 
@@ -52,11 +53,43 @@ export default function WabaDashboardPage() {
     loadDashboard().catch(() => setCounts({ total: 0, sent: 0, pending: 0 }))
     loadWabaStatus()
     apiGet('/api/waba/debug/tenant-probe').then(setGraphProbe).catch(() => setGraphProbe(null))
+    ensureEmbeddedConfig()
   }, [])
 
+  async function ensureEmbeddedConfig() {
+    if (embeddedCfg.appId && embeddedCfg.configId) return
+    try {
+      const cfg = await getEmbeddedSignupConfig()
+      if (cfg?.appId || cfg?.embeddedConfigId) {
+        setEmbeddedCfg((prev) => ({
+          appId: prev.appId || (cfg.appId || ''),
+          configId: prev.configId || (cfg.embeddedConfigId || '')
+        }))
+      }
+    } catch {
+      // Keep env-based values only.
+    }
+  }
+
+  async function resolveEmbeddedConfig() {
+    let appId = embeddedCfg.appId
+    let configId = embeddedCfg.configId
+    if (appId && configId) return { appId, configId }
+    try {
+      const cfg = await getEmbeddedSignupConfig()
+      appId = appId || (cfg?.appId || '')
+      configId = configId || (cfg?.embeddedConfigId || '')
+      setEmbeddedCfg({ appId, configId })
+    } catch {
+      // noop
+    }
+    return { appId, configId }
+  }
+
   async function startEmbeddedSignup() {
+    const { appId: facebookAppId, configId: embeddedConfigId } = await resolveEmbeddedConfig()
     if (!facebookAppId || !embeddedConfigId) {
-      toast.error('Missing VITE_FACEBOOK_APP_ID or VITE_WABA_EMBEDDED_CONFIG_ID')
+      toast.error('Missing Facebook App ID or Embedded Config ID in Platform WABA Master Config')
       return
     }
 

@@ -91,3 +91,7 @@ export async function getWabaStatus() {
 export async function exchangeEmbeddedSignupCode(code) {
   return apiPost('/api/waba/embedded-signup/exchange', { code })
 }
+
+export async function getEmbeddedSignupConfig() {
+  return apiGet('/api/waba/embedded-config')
+}

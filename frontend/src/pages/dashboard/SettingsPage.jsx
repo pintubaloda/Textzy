@@ -18,7 +18,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { wabaExchangeCode, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
+import { wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
 
 const SettingsPage = () => {
   const [saving, setSaving] = useState(false);
@@ -29,9 +29,10 @@ const SettingsPage = () => {
   const [startingWaba, setStartingWaba] = useState(false);
   const [connectingWaba, setConnectingWaba] = useState(false);
   const [checkingWaba, setCheckingWaba] = useState(false);
-
-  const facebookAppId = process.env.REACT_APP_FACEBOOK_APP_ID || "";
-  const embeddedConfigId = process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "";
+  const [embeddedCfg, setEmbeddedCfg] = useState({
+    appId: process.env.REACT_APP_FACEBOOK_APP_ID || "",
+    configId: process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "",
+  });
   const fmt = (v) => (v ? new Date(v).toLocaleString() : "—");
 
   const handleSave = () => {
@@ -50,8 +51,39 @@ const SettingsPage = () => {
   useEffect(() => {
     if (activeTab === "whatsapp") {
       loadWabaStatus();
+      ensureEmbeddedConfig();
     }
   }, [activeTab]);
+
+  const ensureEmbeddedConfig = async () => {
+    if (embeddedCfg.appId && embeddedCfg.configId) return;
+    try {
+      const cfg = await wabaGetEmbeddedConfig();
+      if (cfg?.appId || cfg?.embeddedConfigId) {
+        setEmbeddedCfg((prev) => ({
+          appId: prev.appId || (cfg.appId || ""),
+          configId: prev.configId || (cfg.embeddedConfigId || ""),
+        }));
+      }
+    } catch {
+      // Keep env-based values only.
+    }
+  };
+
+  const resolveEmbeddedConfig = async () => {
+    let appId = embeddedCfg.appId;
+    let configId = embeddedCfg.configId;
+    if (appId && configId) return { appId, configId };
+    try {
+      const cfg = await wabaGetEmbeddedConfig();
+      appId = appId || (cfg?.appId || "");
+      configId = configId || (cfg?.embeddedConfigId || "");
+      setEmbeddedCfg({ appId, configId });
+    } catch {
+      // noop
+    }
+    return { appId, configId };
+  };
 
   const loadWabaStatus = async () => {
     try {
@@ -90,8 +122,9 @@ const SettingsPage = () => {
   };
 
   const handleWabaConnect = async () => {
+    const { appId: facebookAppId, configId: embeddedConfigId } = await resolveEmbeddedConfig();
     if (!facebookAppId || !embeddedConfigId) {
-      toast.error("Missing REACT_APP_FACEBOOK_APP_ID or REACT_APP_WABA_EMBEDDED_CONFIG_ID");
+      toast.error("Missing Facebook App ID or Embedded Config ID in Platform WABA Master Config");
       return;
     }
 
