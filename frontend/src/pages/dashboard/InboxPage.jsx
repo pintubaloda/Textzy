@@ -92,6 +92,8 @@ const InboxPage = () => {
     }
   });
   const selectedChatIdRef = useRef(null);
+  const meEmailRef = useRef("");
+  const playNotificationSoundRef = useRef(() => {});
   const typingTimerRef = useRef(null);
   const typingActiveRef = useRef(false);
   const fileInputRef = useRef(null);
@@ -178,6 +180,14 @@ const InboxPage = () => {
       // Ignore audio failures (autoplay policy / unsupported browser)
     }
   }, [notificationStyle]);
+
+  useEffect(() => {
+    meEmailRef.current = String(me?.email || "").toLowerCase();
+  }, [me?.email]);
+
+  useEffect(() => {
+    playNotificationSoundRef.current = playNotificationSound;
+  }, [playNotificationSound]);
 
   useEffect(() => {
     try {
@@ -357,10 +367,10 @@ const InboxPage = () => {
     if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported) return "";
     const candidates = [
       "audio/ogg;codecs=opus",
+      "audio/ogg",
       "audio/mp4",
       "audio/mpeg",
       "audio/aac",
-      "audio/wav",
     ];
     return candidates.find((m) => MediaRecorder.isTypeSupported(m)) || "";
   };
@@ -459,7 +469,7 @@ const InboxPage = () => {
     const s = getSession();
     if (!s?.tenantSlug) return;
     let disposed = false;
-    let started = false;
+    let joined = false;
     let startPromise = null;
     const runtimeConfig = typeof window !== "undefined" ? (window.__APP_CONFIG__ || {}) : {};
     const baseUrl =
@@ -488,14 +498,14 @@ const InboxPage = () => {
     });
     connection.on("message.sent", () => {
       refreshMessageViews();
-      playNotificationSound(980);
+      playNotificationSoundRef.current?.(980);
     });
     connection.on("webhook.inbound", () => {
       loadConversations();
       const activeId = activeConversationId();
       if (activeId) loadThread(activeId);
       loadSla();
-      playNotificationSound(760);
+      playNotificationSoundRef.current?.(760);
     });
     connection.on("conversation.assigned", () => loadConversations());
     connection.on("conversation.transferred", () => loadConversations());
@@ -514,7 +524,7 @@ const InboxPage = () => {
     connection.on("conversation.typing", (e) => {
       const activeId = activeConversationId();
       if (!e?.conversationId || String(e.conversationId) !== String(activeId)) return;
-      if (e.user && me?.email && String(e.user).toLowerCase() === String(me.email).toLowerCase()) return;
+      if (e.user && meEmailRef.current && String(e.user).toLowerCase() === meEmailRef.current) return;
       setTypingUsers((prev) => {
         const next = new Set(prev);
         if (e.isTyping) next.add(e.user || "Agent");
@@ -534,8 +544,9 @@ const InboxPage = () => {
     startPromise = connection.start()
       .then(() => {
         if (disposed) return connection.stop().catch(() => {});
-        started = true;
-        return joinRoom();
+        return joinRoom().then(() => {
+          joined = true;
+        });
       })
       .catch(() => {
         if (disposed) return;
@@ -545,10 +556,8 @@ const InboxPage = () => {
     return () => {
       disposed = true;
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-      if (started) {
+      if (joined) {
         connection.invoke("LeaveTenantRoom", s.tenantSlug).catch(() => {});
-        connection.stop().catch(() => {});
-        return;
       }
       Promise.resolve(startPromise).finally(() => {
         if (connection.state !== signalR.HubConnectionState.Disconnected) {
@@ -556,7 +565,7 @@ const InboxPage = () => {
         }
       });
     };
-  }, [loadConversations, loadNotes, loadSla, loadThread, me?.email, playNotificationSound]);
+  }, [loadConversations, loadNotes, loadSla, loadThread]);
 
   const emitTyping = useCallback((isTyping) => {
     if (!selectedChat?.id) return;
@@ -670,6 +679,10 @@ const InboxPage = () => {
 
   const uploadAndSendMedia = async (file, mediaType, caption = "") => {
     if (!file || !selectedChat?.phone) return;
+    if (!canReplyInSession) {
+      toast.error("24-hour session expired. Send an approved template first.");
+      return false;
+    }
     try {
       setSendBusy(true);
       const fd = new FormData();
@@ -678,8 +691,9 @@ const InboxPage = () => {
       fd.append("mediaType", mediaType);
       const replyPrefix = replyToMessage ? `↪ Reply to (${replyToMessage.sender === "agent" ? "You" : "Customer"} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
       fd.append("caption", `${replyPrefix}${caption || ""}`.trim());
-      await apiPostForm("/api/messages/upload-whatsapp-media", fd, { "Idempotency-Key": buildIdempotencyKey(mediaType) });
-      toast.success(`${mediaType[0].toUpperCase()}${mediaType.slice(1)} sent`);
+      const res = await apiPostForm("/api/messages/upload-whatsapp-media", fd, { "Idempotency-Key": buildIdempotencyKey(mediaType) });
+      const statusText = String(res?.status || "Queued").toLowerCase();
+      toast.success(`${mediaType[0].toUpperCase()}${mediaType.slice(1)} ${statusText === "queued" ? "queued" : "sent"}`);
       setReplyToMessage(null);
       await loadThread(selectedChat.id);
       await loadConversations();

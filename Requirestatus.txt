@@ -197,3 +197,16 @@ Update: 2026-02-22 (Tenant analytics + idempotency diagnostics + real Rabbit/SQS
 - Added backend package references:
   - `RabbitMQ.Client`
   - `AWSSDK.SQS`
+
+Update: 2026-02-25 (Inbox realtime stability + voice send clarity)
+- Inbox SignalR lifecycle stabilized to reduce start/stop race and reconnect churn:
+  - removed volatile dependencies from hub effect
+  - switched to refs for current user email and notification sound callback
+  - cleanup now leaves room + stops connection safely after startup promise
+- Voice/media send UX hardened:
+  - enforced 24h session gate before media send in inbox composer
+  - voice/media now show queued vs sent status from backend response instead of always showing sent
+  - recorder MIME preference updated toward WhatsApp-compatible audio (`audio/ogg;codecs=opus`, `audio/ogg`, `audio/mp4`, `audio/mpeg`, `audio/aac`)
+- Expected behavior after deploy:
+  - fewer transient "Failed to start HttpConnection before stop() was called" errors
+  - voice sends no longer look fake; user sees queued state until acceptance/status updates

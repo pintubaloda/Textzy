@@ -183,3 +183,12 @@ Pending commit:
 - Requirestatus.txt
 - github_commit.txt
 - masterrequirement.docx
+
+Summary:
+- Stabilized inbox realtime SignalR connection lifecycle and hardened voice/media send behavior.
+
+Pending commit:
+- frontend/src/pages/dashboard/InboxPage.jsx
+- Requirestatus.txt
+- github_commit.txt
+- masterrequirement.docx
