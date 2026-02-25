@@ -127,38 +127,8 @@ export default function WhatsAppOnboardingPage() {
           .then(() => wabaExchangeCode(code))
           .then(() => loadStatus())
           .then(() => toast.success("Embedded signup exchange complete"))
-          .catch(async (e) => {
-            const msg = e?.message || "Code exchange failed";
-            if (!msg.toLowerCase().includes("already linked")) {
-              toast.error(msg);
-              return;
-            }
-            try {
-              const reuse = await wabaReuseExisting(code);
-              if (!reuse?.requiresSelection) {
-                await loadStatus();
-                toast.success("Existing WABA reused for this project");
-                return;
-              }
-              const assets = reuse.assets || [];
-              if (!assets.length) {
-                toast.error("No reusable WABA assets found.");
-                return;
-              }
-              const options = assets.map((a, i) => `${i + 1}. ${a.wabaName} (${a.displayPhoneNumber || a.phoneNumberId})`).join("\n");
-              const raw = window.prompt(`Select existing WABA number:\n${options}`, "1");
-              const idx = Number(raw || "0");
-              if (!Number.isFinite(idx) || idx < 1 || idx > assets.length) {
-                toast.error("Selection cancelled.");
-                return;
-              }
-              const selected = assets[idx - 1];
-              await wabaReuseExisting(code, selected.wabaId, selected.phoneNumberId);
-              await loadStatus();
-              toast.success("Existing WABA linked successfully");
-            } catch (reuseErr) {
-              toast.error(reuseErr?.message || "Failed to reuse existing WABA");
-            }
+          .catch((e) => {
+            toast.error(e?.message || "Code exchange failed");
           })
           .finally(() => setConnecting(false));
       }, {
@@ -183,6 +153,47 @@ export default function WhatsAppOnboardingPage() {
       toast.error(e.message || "Failed to refresh checks");
     } finally {
       setChecking(false);
+    }
+  }
+
+  async function handleMapExistingWaba() {
+    const { appId: facebookAppId, configId: embeddedConfigId } = await resolveEmbeddedConfig();
+    if (!facebookAppId || !embeddedConfigId) {
+      toast.error("Missing Facebook App ID or Embedded Config ID in Platform WABA Master Config");
+      return;
+    }
+
+    setConnecting(true);
+    try {
+      const FB = await loadFacebookSdk(facebookAppId);
+      FB.login((response) => {
+        if (!response || !response.authResponse) {
+          setConnecting(false);
+          toast.error("Embedded signup cancelled");
+          return;
+        }
+        const code = response.authResponse.code;
+        if (!code) {
+          setConnecting(false);
+          toast.error("Meta did not return authorization code. Strict code-only exchange is enforced.");
+          return;
+        }
+
+        Promise.resolve()
+          .then(() => wabaReuseExisting(code))
+          .then(() => loadStatus())
+          .then(() => toast.success("Existing WABA mapped to this project"))
+          .catch((e) => toast.error(e?.message || "Failed to map existing WABA"))
+          .finally(() => setConnecting(false));
+      }, {
+        config_id: embeddedConfigId,
+        response_type: "code",
+        override_default_response_type: true,
+        scope: "business_management,whatsapp_business_management,whatsapp_business_messaging",
+      });
+    } catch {
+      setConnecting(false);
+      toast.error("Failed to load Facebook SDK");
     }
   }
 
@@ -267,10 +278,19 @@ export default function WhatsAppOnboardingPage() {
           ) : null}
 
           <div className="pt-2">
-            <Button onClick={handleEmbeddedSignup} disabled={connecting || loading} className="bg-orange-500 hover:bg-orange-600 text-white">
-              {connecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-              Continue with Facebook
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={handleEmbeddedSignup} disabled={connecting || loading} className="bg-orange-500 hover:bg-orange-600 text-white">
+                {connecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Continue with Facebook
+              </Button>
+              <Button onClick={handleMapExistingWaba} disabled={connecting || loading} className="bg-orange-500 hover:bg-orange-600 text-white">
+                {connecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Map Existing WABA
+              </Button>
+            </div>
+            <p className="text-sm text-slate-500 mt-2">
+              If this WhatsApp Business is already onboarded with your app, use <b>Map Existing WABA</b> to attach it to this project.
+            </p>
           </div>
         </CardContent>
       </Card>

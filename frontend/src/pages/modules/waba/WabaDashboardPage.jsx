@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { apiGet, exchangeEmbeddedSignupCode, getEmbeddedSignupConfig, getWabaStatus, reuseExistingEmbeddedSignup } from '../../../api/client'
+import { apiGet, exchangeEmbeddedSignupCode, getEmbeddedSignupConfig, getWabaStatus } from '../../../api/client'
 import { useToast } from '../../../feedback/ToastProvider'
 import WabaShell from '../../../components/waba/WabaShell'
 import { loadFacebookSdk } from '../../../lib/facebookSdk'
@@ -99,24 +99,9 @@ export default function WabaDashboardPage() {
             toast.success('WhatsApp business onboarding connected')
             return loadWabaStatus()
           })
-          .catch(async (err) => {
+          .catch((err) => {
             const msg = err?.message || 'Failed to exchange embedded signup code'
-            if (!msg.toLowerCase().includes('already linked')) {
-              toast.error(msg)
-              return
-            }
-            try {
-              const codeOrToken = response.authResponse.code || response.authResponse.accessToken
-              const reuse = await reuseExistingEmbeddedSignup(codeOrToken)
-              if (reuse?.requiresSelection) {
-                toast.info('Existing WABA found. Open onboarding page to select and link.')
-                return
-              }
-              await loadWabaStatus()
-              toast.success('Existing WABA reused for this project')
-            } catch {
-              toast.error('Failed to reuse existing WABA')
-            }
+            toast.error(msg)
           })
           .finally(() => setLoadingWaba(false))
       }, {

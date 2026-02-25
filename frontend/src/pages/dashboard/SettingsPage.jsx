@@ -18,7 +18,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaReuseExisting, wabaStartOnboarding } from "@/lib/api";
+import { wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
 import { loadFacebookSdk } from "@/lib/facebookSdk";
 
 const SettingsPage = () => {
@@ -149,23 +149,8 @@ const SettingsPage = () => {
           .then(() => wabaExchangeCode(code))
           .then(() => loadWabaStatus())
           .then(() => toast.success("WhatsApp connected"))
-          .catch(async (e) => {
-            const msg = e?.message || "Code exchange failed";
-            if (!msg.toLowerCase().includes("already linked")) {
-              toast.error(msg);
-              return;
-            }
-            try {
-              const reuse = await wabaReuseExisting(code);
-              if (reuse?.requiresSelection) {
-                toast.info("Existing WABA found. Open WhatsApp onboarding page to select and link.");
-                return;
-              }
-              await loadWabaStatus();
-              toast.success("Existing WABA reused for this project");
-            } catch (reuseErr) {
-              toast.error(reuseErr?.message || "Failed to reuse existing WABA");
-            }
+          .catch((e) => {
+            toast.error(e?.message || "Code exchange failed");
           })
           .finally(() => setConnectingWaba(false));
       }, {
