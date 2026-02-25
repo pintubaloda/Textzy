@@ -5,7 +5,7 @@ const API_BASE =
   runtimeConfig.API_BASE ||
   process.env.REACT_APP_API_BASE ||
   process.env.VITE_API_BASE ||
-  'https://textzy.onrender.com'
+  'https://textzy-backend-production.up.railway.app'
 const STORAGE_KEY = 'textzy.session'
 const WABA_STATUS_CACHE_PREFIX = 'textzy.wabaStatus'
 const ONE_DAY_MS = 24 * 60 * 60 * 1000

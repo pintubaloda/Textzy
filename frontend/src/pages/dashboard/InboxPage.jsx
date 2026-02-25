@@ -288,7 +288,12 @@ const InboxPage = () => {
   useEffect(() => {
     const s = getSession();
     if (!s?.tenantSlug) return;
-    const baseUrl = process.env.REACT_APP_API_BASE || "https://textzy.onrender.com";
+    const runtimeConfig = typeof window !== "undefined" ? (window.__APP_CONFIG__ || {}) : {};
+    const baseUrl =
+      runtimeConfig.API_BASE ||
+      process.env.REACT_APP_API_BASE ||
+      process.env.VITE_API_BASE ||
+      "https://textzy-backend-production.up.railway.app";
     const connection = new signalR.HubConnectionBuilder()
       .withUrl(`${baseUrl}/hubs/inbox?tenantSlug=${encodeURIComponent(s.tenantSlug)}`, {
         withCredentials: true,
