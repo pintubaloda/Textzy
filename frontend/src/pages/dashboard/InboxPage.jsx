@@ -63,6 +63,7 @@ const InboxPage = () => {
   const [newNote, setNewNote] = useState("");
   const [sla, setSla] = useState({ breachedCount: 0, items: [] });
   const [typingUsers, setTypingUsers] = useState([]);
+  const [showEmojiTray, setShowEmojiTray] = useState(false);
   const [notificationStyle, setNotificationStyle] = useState(() => {
     try {
       return localStorage.getItem(NOTIFICATION_STYLE_KEY) || "classic";
@@ -73,6 +74,8 @@ const InboxPage = () => {
   const selectedChatIdRef = useRef(null);
   const typingTimerRef = useRef(null);
   const typingActiveRef = useRef(false);
+  const fileInputRef = useRef(null);
+  const endMessageRef = useRef(null);
 
   const mapConversation = (x) => ({
     id: x.id,
@@ -80,7 +83,7 @@ const InboxPage = () => {
     phone: x.customerPhone,
     lastMessage: x.status || "Conversation",
     time: x.lastMessageAtUtc || x.createdAtUtc || null,
-    unread: 0,
+    unread: Number(x.unreadCount || 0),
     starred: false,
     channel: "whatsapp",
     avatar: (x.customerName || x.customerPhone || "U").slice(0, 2).toUpperCase(),
@@ -223,6 +226,7 @@ const InboxPage = () => {
     assignedUserName: "",
   };
   const canReplyInSession = !!selectedChat.canReply;
+  const isStarred = (selectedChat.labels || []).some((x) => String(x).toLowerCase() === "starred");
   const selectedContact = contacts.find((x) => x.phone === selectedChat.phone);
   const selectedTemplate = templates.find((x) => String(x.id) === selectedTemplateId) || templates[0];
   const templateParamIndexes = useMemo(() => {
@@ -240,6 +244,11 @@ const InboxPage = () => {
     loadThread(selectedChat.id);
     loadNotes(selectedChat.id);
   }, [selectedChat?.id, loadNotes, loadThread]);
+
+  useEffect(() => {
+    if (!endMessageRef.current) return;
+    endMessageRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, selectedChat?.id]);
 
   const handleSendMessage = () => {
     if (!canReplyInSession) {
@@ -472,6 +481,65 @@ const InboxPage = () => {
     }
   };
 
+  const handleToggleStar = async () => {
+    if (!selectedChat?.id) return;
+    try {
+      const current = selectedChat.labels || [];
+      const has = current.some((x) => String(x).toLowerCase() === "starred");
+      const labels = has ? current.filter((x) => String(x).toLowerCase() !== "starred") : [...current, "starred"];
+      const updated = await apiPost(`/api/inbox/conversations/${selectedChat.id}/labels`, { labels });
+      const nextLabels = (updated.labelsCsv || "").split(",").map((z) => z.trim()).filter(Boolean);
+      setConversations((prev) => prev.map((x) => (x.id === selectedChat.id ? { ...x, labels: nextLabels } : x)));
+      toast.success(has ? "Star removed" : "Conversation starred");
+    } catch {
+      toast.error("Failed to update star");
+    }
+  };
+
+  const handleCall = () => {
+    const digits = String(selectedChat?.phone || "").replace(/[^\d]/g, "");
+    if (!digits) return toast.error("Phone not available");
+    window.location.href = `tel:+${digits}`;
+  };
+
+  const handleVideoCall = () => {
+    const digits = String(selectedChat?.phone || "").replace(/[^\d]/g, "");
+    if (!digits) return toast.error("Phone not available");
+    window.open(`https://wa.me/${digits}`, "_blank", "noopener,noreferrer");
+  };
+
+  const handlePickAttachment = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAttachmentSelected = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !selectedChat?.phone) return;
+    try {
+      await apiPost("/api/messages/send", {
+        recipient: selectedChat.phone,
+        body: `[Attachment] ${file.name}`,
+        channel: 2,
+        idempotencyKey: buildIdempotencyKey("attach"),
+      });
+      toast.success(`Attachment queued: ${file.name}`);
+      loadThread(selectedChat.id);
+      loadConversations();
+    } catch {
+      toast.error("Attachment send failed");
+    }
+  };
+
+  const handleInsertEmoji = (emoji) => {
+    setMessage((prev) => `${prev}${emoji}`);
+    setShowEmojiTray(false);
+  };
+
+  const handleVoiceNote = () => {
+    toast.info("Voice recording will be enabled in next update. Text/attachment is active.");
+  };
+
   const handleAddNote = async () => {
     const body = newNote.trim();
     if (!body || !selectedChat?.id) return;
@@ -551,6 +619,7 @@ const InboxPage = () => {
                   <p className="text-sm text-slate-500 truncate">{conversation.lastMessage}</p>
                   <div className="flex items-center justify-between mt-1">
                     <span className="text-xs text-slate-400">{conversation.phone} {conversation.assignedUserName ? `• ${conversation.assignedUserName}` : "• Unassigned"}</span>
+                    {conversation.unread > 0 ? <Badge className="bg-orange-500 text-white border-0">{conversation.unread}</Badge> : null}
                   </div>
                 </div>
               </div>
@@ -619,13 +688,13 @@ const InboxPage = () => {
               <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="rounded-xl h-9 px-3 border-slate-200 bg-white text-slate-800 hover:bg-slate-50">Transfer</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">{teamMembers.length === 0 ? <DropdownMenuItem disabled>No members</DropdownMenuItem> : teamMembers.map((member) => <DropdownMenuItem key={member.id} onClick={() => handleTransfer(member)}>{member.name} ({member.role})</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
-            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700"><Phone className="w-4 h-4" /></Button>
-            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700"><Video className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700" onClick={handleCall}><Phone className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700" onClick={handleVideoCall}><Video className="w-4 h-4" /></Button>
             <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700"><Info className="w-4 h-4" /></Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700"><MoreVertical className="w-4 h-4" /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem><Star className="w-4 h-4 mr-2" /> Star conversation</DropdownMenuItem>
+                <DropdownMenuItem onClick={handleToggleStar}><Star className="w-4 h-4 mr-2" /> {isStarred ? "Unstar conversation" : "Star conversation"}</DropdownMenuItem>
                 <DropdownMenuItem><UserPlus className="w-4 h-4 mr-2" /> Assign to agent</DropdownMenuItem>
                 <DropdownMenuItem><Tag className="w-4 h-4 mr-2" /> Add label</DropdownMenuItem>
                 <DropdownMenuSeparator />
@@ -641,15 +710,17 @@ const InboxPage = () => {
             <div className="flex items-center justify-center"><span className="px-3 py-1 bg-white text-xs text-slate-500 rounded-full border border-slate-200">Today</span></div>
             {messages.length === 0 ? <div className="h-[60vh] flex items-center justify-center"><div className="text-center max-w-sm"><div className="w-16 h-16 rounded-2xl mx-auto bg-orange-100 text-orange-600 flex items-center justify-center mb-4"><MessageCircle className="w-8 h-8" /></div><h3 className="text-xl font-semibold text-slate-900">No messages yet</h3><p className="text-slate-500 mt-1">Start conversation with a customer to see messages and actions here.</p></div></div> : null}
             {messages.map((msg) => <div key={msg.id} className={`flex ${msg.sender === "agent" ? "justify-end" : "justify-start"}`}><div className={`max-w-[70%] ${msg.sender === "agent" ? "chat-bubble-sent text-slate-900" : "chat-bubble-received text-slate-900"} px-4 py-3`}><p className="text-sm">{msg.text}</p><div className={`flex items-center gap-1 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}><span className="text-xs text-slate-500">{msg.time}</span>{msg.sender === "agent" && getStatusIcon(msg.status)}</div>{msg.sender === "agent" && msg.status === "failed" ? <p className="text-[11px] text-red-600 mt-1">{msg.lastError || "Send failed"}</p> : null}{msg.sender === "agent" && msg.status === "retryscheduled" && msg.nextRetryAtUtc ? <p className="text-[11px] text-amber-700 mt-1">Retry at {new Date(msg.nextRetryAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p> : null}</div></div>)}
+            <div ref={endMessageRef} />
           </div>
         </ScrollArea>
 
         <div className="p-4 border-t border-slate-200 bg-white">
           <div className="flex items-end gap-3">
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" className="text-slate-500"><Paperclip className="w-5 h-5" /></Button>
+              <Button variant="ghost" size="icon" className="text-slate-500" onClick={handlePickAttachment}><Paperclip className="w-5 h-5" /></Button>
               <Button variant="ghost" size="icon" className="text-slate-500"><Image className="w-5 h-5" /></Button>
               <Button variant="ghost" size="icon" className="text-slate-500"><FileText className="w-5 h-5" /></Button>
+              <input ref={fileInputRef} type="file" className="hidden" onChange={handleAttachmentSelected} />
             </div>
             <div className="flex-1 relative rounded-2xl border border-slate-200 bg-white">
               <Textarea
@@ -671,10 +742,17 @@ const InboxPage = () => {
                   }
                 }}
               />
-              <Button variant="ghost" size="icon" className="absolute right-2 bottom-3 text-slate-500"><Smile className="w-5 h-5" /></Button>
+              <Button variant="ghost" size="icon" className="absolute right-2 bottom-3 text-slate-500" onClick={() => setShowEmojiTray((v) => !v)}><Smile className="w-5 h-5" /></Button>
+              {showEmojiTray ? (
+                <div className="absolute right-3 bottom-14 z-20 rounded-xl border border-slate-200 bg-white shadow-lg p-2 flex gap-1">
+                  {["😀", "👍", "🙏", "✅", "🔥"].map((e) => (
+                    <button key={e} className="w-8 h-8 rounded hover:bg-slate-100" onClick={() => handleInsertEmoji(e)}>{e}</button>
+                  ))}
+                </div>
+              ) : null}
             </div>
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" className="text-slate-500"><Mic className="w-5 h-5" /></Button>
+              <Button variant="ghost" size="icon" className="text-slate-500" onClick={handleVoiceNote}><Mic className="w-5 h-5" /></Button>
               <Button className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-xl h-12 w-14 shadow-md shadow-orange-500/30" onClick={handleSendMessage} disabled={!canReplyInSession}><Send className="w-5 h-5" /></Button>
             </div>
           </div>

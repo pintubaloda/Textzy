@@ -41,7 +41,7 @@ import {
   GitBranch,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { authProjects, clearSession, getSession, initializeMe, switchProject } from "@/lib/api";
+import { apiGet, authProjects, clearSession, getSession, initializeMe, switchProject } from "@/lib/api";
 import { isNotificationAudioUnlocked, isNotificationSoundEnabled, unlockNotificationAudio } from "@/lib/notificationAudio";
 
 const DashboardLayout = () => {
@@ -52,6 +52,7 @@ const DashboardLayout = () => {
   const [darkMode, setDarkMode] = useState(false);
   const [projects, setProjects] = useState([]);
   const [switchingProject, setSwitchingProject] = useState("");
+  const [inboxUnreadCount, setInboxUnreadCount] = useState(0);
   const [ownerMode, setOwnerMode] = useState(() => {
     try {
       return localStorage.getItem("textzy_owner_mode") || "self";
@@ -85,6 +86,22 @@ const DashboardLayout = () => {
     authProjects().then((res) => setProjects(Array.isArray(res) ? res : [])).catch(() => setProjects([]));
   }, []);
   useEffect(() => {
+    let active = true;
+    apiGet("/api/inbox/conversations")
+      .then((rows) => {
+        if (!active) return;
+        const unread = (rows || []).reduce((sum, x) => sum + Number(x?.unreadCount || 0), 0);
+        setInboxUnreadCount(unread);
+      })
+      .catch(() => {
+        if (!active) return;
+        setInboxUnreadCount(0);
+      });
+    return () => {
+      active = false;
+    };
+  }, [session.tenantSlug]);
+  useEffect(() => {
     if (!session?.email) return;
     setShowNotificationPrompt(isNotificationSoundEnabled() && !isNotificationAudioUnlocked());
   }, [session?.email]);
@@ -108,7 +125,7 @@ const DashboardLayout = () => {
 
   const tenantNavigation = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-    { name: "Inbox", href: "/dashboard/inbox", icon: Inbox, badge: "12" },
+    { name: "Inbox", href: "/dashboard/inbox", icon: Inbox, badge: inboxUnreadCount > 0 ? String(inboxUnreadCount) : "" },
     { name: "Contacts", href: "/dashboard/contacts", icon: Users },
     { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
     { name: "Automations", href: "/dashboard/automations", icon: Zap },
