@@ -10,6 +10,7 @@ public class WabaWebhookWorker(
     WabaWebhookQueueService queue,
     IServiceScopeFactory scopeFactory,
     IHubContext<InboxHub> hub,
+    TenantSchemaGuardService schemaGuard,
     SensitiveDataRedactor redactor,
     ILogger<WabaWebhookWorker> logger) : BackgroundService
 {
@@ -161,6 +162,7 @@ public class WabaWebhookWorker(
                     continue;
                 }
 
+                await schemaGuard.EnsureContactEncryptionColumnsAsync(resolved.TenantId, resolved.DataConnectionString, stoppingToken);
                 using var tenantDb = SeedData.CreateTenantDbContext(resolved.DataConnectionString);
                 var cfg = await tenantDb.Set<TenantWabaConfig>()
                     .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.IsActive && x.PhoneNumberId == parse.PhoneNumberId, stoppingToken);

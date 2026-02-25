@@ -7,7 +7,7 @@ public class TenantMiddleware(RequestDelegate next)
 {
     private readonly RequestDelegate _next = next;
 
-    public async Task Invoke(HttpContext context, ControlDbContext db, TenancyContext tenancy)
+    public async Task Invoke(HttpContext context, ControlDbContext db, TenancyContext tenancy, TenantSchemaGuardService schemaGuard)
     {
         if (HttpMethods.IsOptions(context.Request.Method))
         {
@@ -51,6 +51,16 @@ public class TenantMiddleware(RequestDelegate next)
         }
 
         tenancy.SetTenant(tenant.Id, tenant.Slug, tenant.DataConnectionString);
+        try
+        {
+            await schemaGuard.EnsureContactEncryptionColumnsAsync(tenant.Id, tenant.DataConnectionString, context.RequestAborted);
+        }
+        catch
+        {
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            await context.Response.WriteAsync("Tenant schema initialization failed.");
+            return;
+        }
         await _next(context);
     }
 }

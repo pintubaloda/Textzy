@@ -127,6 +127,7 @@ builder.Services.AddSignalR();
 builder.Services.AddScoped<WhatsAppCloudService>();
 builder.Services.AddScoped<WabaTenantResolver>();
 builder.Services.AddScoped<TenantProvisioningService>();
+builder.Services.AddSingleton<TenantSchemaGuardService>();
 builder.Services.AddSingleton<BroadcastQueueService>();
 builder.Services.AddSingleton<OutboundMessageQueueService>();
 builder.Services.AddSingleton<WabaWebhookQueueService>();
