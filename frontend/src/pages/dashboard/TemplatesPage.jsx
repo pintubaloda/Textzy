@@ -32,6 +32,13 @@ const initialDraft = {
   buttonsJson: "",
 };
 
+function normalizeListPayload(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
 const categoryGuide = {
   MARKETING: {
     title: "Marketing",
@@ -142,15 +149,20 @@ const TemplatesPage = () => {
         apiGet("/api/templates"),
         listSmsSenders().catch(() => []),
       ]);
-      setTemplates(tpl || []);
+      setTemplates(normalizeListPayload(tpl));
       setSmsSenders(senders || []);
       try {
         const lib = await apiGet("/api/templates/library");
-        setLibraryItems(lib || []);
+        setLibraryItems(normalizeListPayload(lib));
         setLibraryError("");
       } catch (e) {
         setLibraryItems([]);
-        setLibraryError(e?.message || "Library fetch failed");
+        const message = e?.message || "";
+        if (message.toLowerCase().includes("unexpected end of json input")) {
+          setLibraryError("");
+        } else {
+          setLibraryError(message || "Library fetch failed");
+        }
       }
     } catch (e) {
       setTemplates([]);
