@@ -35,10 +35,13 @@ import {
   Image,
   FileText,
   Mic,
+  Bell,
 } from "lucide-react";
 import { apiGet, apiPost, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
 import { toast } from "sonner";
+
+const NOTIFICATION_STYLE_KEY = "textzy.inbox.notificationStyle";
 
 const InboxPage = () => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
@@ -59,6 +62,13 @@ const InboxPage = () => {
   const [newNote, setNewNote] = useState("");
   const [sla, setSla] = useState({ breachedCount: 0, items: [] });
   const [typingUsers, setTypingUsers] = useState([]);
+  const [notificationStyle, setNotificationStyle] = useState(() => {
+    try {
+      return localStorage.getItem(NOTIFICATION_STYLE_KEY) || "classic";
+    } catch {
+      return "classic";
+    }
+  });
   const selectedChatIdRef = useRef(null);
   const typingTimerRef = useRef(null);
   const typingActiveRef = useRef(false);
@@ -81,17 +91,22 @@ const InboxPage = () => {
     canReply: !!x.canReply,
     hoursSinceInbound: Number(x.hoursSinceInbound || 999),
   });
-  const mapMessage = (x) => ({
+  const mapMessage = (x) => {
+    const rawStatus = String(x.status || "").toLowerCase();
+    const sender = rawStatus === "received" ? "customer" : "agent";
+    const normalizedStatus = sender === "agent" ? (rawStatus || "sent") : "received";
+    return {
     id: x.id,
-    sender: String(x.status || "").toLowerCase() === "received" ? "customer" : "agent",
+    sender,
     text: x.body,
     time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
     retryCount: Number(x.retryCount || 0),
     nextRetryAtUtc: x.nextRetryAtUtc || null,
     lastError: x.lastError || "",
     queueProvider: x.queueProvider || "memory",
-    status: String(x.status || "").toLowerCase() === "received" ? "received" : String(x.status || "").toLowerCase(),
-  });
+    status: normalizedStatus,
+  };
+  };
 
   const loadConversations = useCallback(
     () => apiGet("/api/inbox/conversations").then((c) => setConversations((c || []).map(mapConversation))).catch(() => {}),
@@ -114,27 +129,56 @@ const InboxPage = () => {
 
   const playNotificationSound = useCallback((frequency = 880) => {
     try {
+      if (notificationStyle === "off") return;
       if (!audioUnlockedRef.current) return;
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return;
-      const ctx = audioCtxRef.current || new Ctx();
-      audioCtxRef.current = ctx;
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(frequency, ctx.currentTime);
-      gain.gain.setValueAtTime(0.001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.06, ctx.currentTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.16);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.18);
+      const ctx = audioCtxRef.current;
+      if (!ctx || ctx.state !== "running") return;
+
+      const playTone = (freq, startAt, duration = 0.16, gainValue = 0.06) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, startAt);
+        gain.gain.setValueAtTime(0.001, startAt);
+        gain.gain.exponentialRampToValueAtTime(gainValue, startAt + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, startAt + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startAt);
+        osc.stop(startAt + duration + 0.02);
+      };
+
+      const now = ctx.currentTime;
+      switch (notificationStyle) {
+        case "soft":
+          playTone(frequency, now, 0.12, 0.03);
+          break;
+        case "double":
+          playTone(frequency - 90, now, 0.11, 0.05);
+          playTone(frequency + 30, now + 0.15, 0.11, 0.05);
+          break;
+        case "chime":
+          playTone(frequency - 130, now, 0.12, 0.045);
+          playTone(frequency, now + 0.12, 0.12, 0.045);
+          playTone(frequency + 120, now + 0.24, 0.14, 0.045);
+          break;
+        case "classic":
+        default:
+          playTone(frequency, now, 0.16, 0.06);
+          break;
+      }
     } catch {
       // Ignore audio failures (autoplay policy / unsupported browser)
     }
-  }, []);
+  }, [notificationStyle]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NOTIFICATION_STYLE_KEY, notificationStyle);
+    } catch {
+      // ignore storage issues
+    }
+  }, [notificationStyle]);
 
   useEffect(() => {
     const unlockAudio = () => {
@@ -142,8 +186,14 @@ const InboxPage = () => {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         if (!Ctx) return;
         if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
-        audioCtxRef.current.resume().catch(() => {});
-        audioUnlockedRef.current = true;
+        audioCtxRef.current
+          .resume()
+          .then(() => {
+            audioUnlockedRef.current = audioCtxRef.current?.state === "running";
+          })
+          .catch(() => {
+            audioUnlockedRef.current = false;
+          });
         window.removeEventListener("pointerdown", unlockAudio);
         window.removeEventListener("keydown", unlockAudio);
         window.removeEventListener("touchstart", unlockAudio);
@@ -318,6 +368,7 @@ const InboxPage = () => {
     if (!s?.tenantSlug) return;
     let disposed = false;
     let started = false;
+    let startPromise = null;
     const runtimeConfig = typeof window !== "undefined" ? (window.__APP_CONFIG__ || {}) : {};
     const baseUrl =
       runtimeConfig.API_BASE ||
@@ -388,7 +439,7 @@ const InboxPage = () => {
       setTypingUsers([]);
     });
 
-    connection.start()
+    startPromise = connection.start()
       .then(() => {
         if (disposed) return connection.stop().catch(() => {});
         started = true;
@@ -402,8 +453,16 @@ const InboxPage = () => {
     return () => {
       disposed = true;
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-      if (started) connection.invoke("LeaveTenantRoom", s.tenantSlug).catch(() => {});
-      connection.stop().catch(() => {});
+      if (started) {
+        connection.invoke("LeaveTenantRoom", s.tenantSlug).catch(() => {});
+        connection.stop().catch(() => {});
+        return;
+      }
+      Promise.resolve(startPromise).finally(() => {
+        if (connection.state !== signalR.HubConnectionState.Disconnected) {
+          connection.stop().catch(() => {});
+        }
+      });
     };
   }, [loadConversations, loadNotes, loadSla, loadThread, me?.email, playNotificationSound]);
 
@@ -502,6 +561,7 @@ const InboxPage = () => {
         return <CheckCheck className="w-4 h-4 text-slate-400" />;
       case "sent":
       case "acceptedbymeta":
+      case "accepted":
         return <Check className="w-4 h-4 text-slate-400" />;
       case "queued":
       case "processing":
@@ -605,6 +665,20 @@ const InboxPage = () => {
             </div>
           ) : null}
           <div className="flex items-center gap-1.5 shrink-0">
+            <div className="hidden 2xl:flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-2 h-9">
+              <Bell className="w-4 h-4 text-slate-500" />
+              <select
+                className="h-7 bg-transparent text-xs text-slate-700 outline-none"
+                value={notificationStyle}
+                onChange={(e) => setNotificationStyle(e.target.value)}
+              >
+                <option value="classic">Classic</option>
+                <option value="soft">Soft</option>
+                <option value="double">Double</option>
+                <option value="chime">Chime</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="rounded-xl h-9 px-3 border-slate-200 bg-white text-slate-800 hover:bg-slate-50"><UserPlus className="w-4 h-4 mr-1.5" />Assign</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">{teamMembers.length === 0 ? <DropdownMenuItem disabled>No members</DropdownMenuItem> : teamMembers.map((member) => <DropdownMenuItem key={member.id} onClick={() => handleAssign(member)}>{member.name} ({member.role})</DropdownMenuItem>)}</DropdownMenuContent>
