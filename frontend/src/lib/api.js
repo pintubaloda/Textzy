@@ -123,7 +123,13 @@ export async function apiRequest(path, options = {}) {
 export async function apiGet(path) {
   const res = await apiRequest(path)
   if (!res.ok) throw new Error(`GET ${path} failed (${res.status})`)
-  return res.json()
+  const text = await res.text()
+  if (!text || !text.trim()) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`GET ${path} returned invalid JSON`)
+  }
 }
 
 export async function apiPost(path, body) {
