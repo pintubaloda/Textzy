@@ -13,7 +13,8 @@ public class WabaOnboardingController(
     WhatsAppCloudService whatsapp,
     RbacService rbac,
     ControlDbContext db,
-    SecretCryptoService crypto) : ControllerBase
+    SecretCryptoService crypto,
+    AuthContext auth) : ControllerBase
 {
     [HttpGet("embedded-config")]
     public async Task<IActionResult> EmbeddedConfig(CancellationToken ct)
@@ -102,6 +103,41 @@ public class WabaOnboardingController(
         try
         {
             var result = await whatsapp.ReuseExistingFromCodeAsync(request.Code, request.WabaId, request.PhoneNumberId, ct);
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    [HttpPost("onboarding/map-existing")]
+    public async Task<IActionResult> MapExisting([FromBody] WabaMapExistingRequest request, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(InboxWrite)) return Forbid();
+
+        var targetTenantId = request.TenantId ?? auth.TenantId;
+        if (targetTenantId == Guid.Empty) return BadRequest("Project is required.");
+
+        var isSuperAdmin = await db.Users
+            .Where(u => u.Id == auth.UserId)
+            .Select(u => u.IsSuperAdmin)
+            .FirstOrDefaultAsync(ct);
+        if (!isSuperAdmin)
+        {
+            var hasMembership = await db.TenantUsers
+                .AnyAsync(x => x.UserId == auth.UserId && x.TenantId == targetTenantId, ct);
+            if (!hasMembership) return Forbid();
+        }
+
+        try
+        {
+            var result = await whatsapp.MapExistingWabaAsync(
+                targetTenantId,
+                request.WabaId,
+                request.PhoneNumberId,
+                request.AccessToken,
+                ct);
             return Ok(result);
         }
         catch (InvalidOperationException ex)

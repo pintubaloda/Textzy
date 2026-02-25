@@ -20,10 +20,19 @@ import {
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useEffect, useMemo, useState } from "react";
-import { apiGet, getTenantWebhookAnalytics, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaReuseExisting, wabaStartOnboarding } from "@/lib/api";
+import { apiGet, authProjects, getSession, getTenantWebhookAnalytics, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaMapExisting, wabaStartOnboarding } from "@/lib/api";
 import { loadFacebookSdk } from "@/lib/facebookSdk";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const DashboardOverview = () => {
   const [messages, setMessages] = useState([]);
@@ -32,6 +41,14 @@ const DashboardOverview = () => {
   const [wabaStatus, setWabaStatus] = useState({ state: "requested", isConnected: false, businessName: "", phone: "" });
   const [connectingWaba, setConnectingWaba] = useState(false);
   const [reusingWaba, setReusingWaba] = useState(false);
+  const [mapDialogOpen, setMapDialogOpen] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [mapForm, setMapForm] = useState({
+    tenantId: "",
+    wabaId: "",
+    phoneNumberId: "",
+    accessToken: "",
+  });
   const [webhookAnalytics, setWebhookAnalytics] = useState(null);
   const [analyticsDays, setAnalyticsDays] = useState(7);
   const [embeddedCfg, setEmbeddedCfg] = useState({
@@ -146,48 +163,51 @@ const DashboardOverview = () => {
   };
 
   const handleMapExistingWaba = async () => {
-    const { appId: facebookAppId, configId: embeddedConfigId } = await resolveEmbeddedConfig();
-    if (!facebookAppId || !embeddedConfigId) {
-      toast.error("Missing Facebook App ID or Embedded Config ID in Platform WABA Master Config");
+    setReusingWaba(true);
+    try {
+      const list = await authProjects();
+      const rows = Array.isArray(list) ? list : [];
+      const session = getSession();
+      const selected = rows.find((x) => x.slug === session?.tenantSlug) || rows[0];
+      setProjects(rows);
+      setMapForm((prev) => ({
+        ...prev,
+        tenantId: selected?.id || prev.tenantId || "",
+      }));
+      setMapDialogOpen(true);
+    } catch (e) {
+      toast.error(e?.message || "Failed to load projects");
+    } finally {
+      setReusingWaba(false);
+    }
+  };
+
+  const submitMapExisting = async () => {
+    if (!mapForm.tenantId) {
+      toast.error("Select project");
+      return;
+    }
+    if (!mapForm.wabaId.trim() || !mapForm.phoneNumberId.trim() || !mapForm.accessToken.trim()) {
+      toast.error("Project, WABA ID, Phone Number ID and Access Token are required");
       return;
     }
 
     setReusingWaba(true);
     try {
-      const FB = await loadFacebookSdk(facebookAppId);
-      FB.login((response) => {
-        if (!response || !response.authResponse) {
-          setReusingWaba(false);
-          toast.error("Embedded signup cancelled");
-          return;
-        }
-
-        const code = response.authResponse.code;
-        if (!code) {
-          setReusingWaba(false);
-          toast.error("Meta did not return authorization code");
-          return;
-        }
-
-        Promise.resolve()
-          .then(() => wabaReuseExisting(code))
-          .then(async () => {
-            await loadWabaStatus();
-            toast.success("Existing WABA mapped to this project");
-          })
-          .catch((e) => {
-            toast.error(e?.message || "Failed to map existing WABA");
-          })
-          .finally(() => setReusingWaba(false));
-      }, {
-        config_id: embeddedConfigId,
-        response_type: "code",
-        override_default_response_type: true,
-        scope: "business_management,whatsapp_business_management,whatsapp_business_messaging",
+      await wabaMapExisting({
+        tenantId: mapForm.tenantId,
+        wabaId: mapForm.wabaId.trim(),
+        phoneNumberId: mapForm.phoneNumberId.trim(),
+        accessToken: mapForm.accessToken.trim(),
       });
+      setMapDialogOpen(false);
+      setMapForm((prev) => ({ ...prev, wabaId: "", phoneNumberId: "", accessToken: "" }));
+      await loadWabaStatus();
+      toast.success("Existing WABA mapped to selected project");
     } catch (e) {
+      toast.error(e?.message || "Failed to map existing WABA");
+    } finally {
       setReusingWaba(false);
-      toast.error(e?.message || "Unable to start map flow");
     }
   };
 
@@ -549,6 +569,71 @@ const DashboardOverview = () => {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={mapDialogOpen} onOpenChange={setMapDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Map Existing WABA</DialogTitle>
+            <DialogDescription>
+              Enter existing WhatsApp Cloud credentials and map them to a project.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-sm font-medium text-slate-700">Select Project</label>
+              <select
+                className="mt-1 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+                value={mapForm.tenantId}
+                onChange={(e) => setMapForm((prev) => ({ ...prev, tenantId: e.target.value }))}
+              >
+                <option value="">Select project</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700">WABA ID</label>
+              <Input
+                placeholder="Enter WABA ID"
+                value={mapForm.wabaId}
+                onChange={(e) => setMapForm((prev) => ({ ...prev, wabaId: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700">Phone Number ID</label>
+              <Input
+                placeholder="Enter Phone Number ID"
+                value={mapForm.phoneNumberId}
+                onChange={(e) => setMapForm((prev) => ({ ...prev, phoneNumberId: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700">Access Token</label>
+              <Input
+                type="password"
+                placeholder="Enter Access Token"
+                value={mapForm.accessToken}
+                onChange={(e) => setMapForm((prev) => ({ ...prev, accessToken: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMapDialogOpen(false)} disabled={reusingWaba}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-orange-500 hover:bg-orange-600 text-white"
+              onClick={submitMapExisting}
+              disabled={reusingWaba}
+            >
+              {reusingWaba ? "Mapping..." : "Map Existing WABA"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

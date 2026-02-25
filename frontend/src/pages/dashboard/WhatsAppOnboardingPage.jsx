@@ -5,13 +5,24 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { CheckCircle2, AlertCircle, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   wabaStartOnboarding,
   wabaGetOnboardingStatus,
   wabaGetEmbeddedConfig,
   wabaExchangeCode,
-  wabaReuseExisting,
+  wabaMapExisting,
   wabaRecheckOnboarding,
+  authProjects,
+  getSession,
 } from "@/lib/api";
 import { loadFacebookSdk } from "@/lib/facebookSdk";
 
@@ -30,6 +41,15 @@ export default function WhatsAppOnboardingPage() {
   const [starting, setStarting] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [mappingExisting, setMappingExisting] = useState(false);
+  const [mapDialogOpen, setMapDialogOpen] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [mapForm, setMapForm] = useState({
+    tenantId: "",
+    wabaId: "",
+    phoneNumberId: "",
+    accessToken: "",
+  });
   const [status, setStatus] = useState({ state: "requested", readyToSend: false, isConnected: false });
   const [embeddedCfg, setEmbeddedCfg] = useState({
     appId: process.env.REACT_APP_FACEBOOK_APP_ID || "",
@@ -157,43 +177,48 @@ export default function WhatsAppOnboardingPage() {
   }
 
   async function handleMapExistingWaba() {
-    const { appId: facebookAppId, configId: embeddedConfigId } = await resolveEmbeddedConfig();
-    if (!facebookAppId || !embeddedConfigId) {
-      toast.error("Missing Facebook App ID or Embedded Config ID in Platform WABA Master Config");
+    try {
+      const list = await authProjects();
+      const projectRows = Array.isArray(list) ? list : [];
+      const session = getSession();
+      const selected = projectRows.find((x) => x.slug === session?.tenantSlug) || projectRows[0];
+      setProjects(projectRows);
+      setMapForm((prev) => ({
+        ...prev,
+        tenantId: selected?.id || prev.tenantId || "",
+      }));
+      setMapDialogOpen(true);
+    } catch (e) {
+      toast.error(e?.message || "Failed to load projects");
+    }
+  }
+
+  async function submitMapExisting() {
+    if (!mapForm.tenantId) {
+      toast.error("Select project");
+      return;
+    }
+    if (!mapForm.wabaId.trim() || !mapForm.phoneNumberId.trim() || !mapForm.accessToken.trim()) {
+      toast.error("Project, WABA ID, Phone Number ID and Access Token are required");
       return;
     }
 
-    setConnecting(true);
+    setMappingExisting(true);
     try {
-      const FB = await loadFacebookSdk(facebookAppId);
-      FB.login((response) => {
-        if (!response || !response.authResponse) {
-          setConnecting(false);
-          toast.error("Embedded signup cancelled");
-          return;
-        }
-        const code = response.authResponse.code;
-        if (!code) {
-          setConnecting(false);
-          toast.error("Meta did not return authorization code. Strict code-only exchange is enforced.");
-          return;
-        }
-
-        Promise.resolve()
-          .then(() => wabaReuseExisting(code))
-          .then(() => loadStatus())
-          .then(() => toast.success("Existing WABA mapped to this project"))
-          .catch((e) => toast.error(e?.message || "Failed to map existing WABA"))
-          .finally(() => setConnecting(false));
-      }, {
-        config_id: embeddedConfigId,
-        response_type: "code",
-        override_default_response_type: true,
-        scope: "business_management,whatsapp_business_management,whatsapp_business_messaging",
+      await wabaMapExisting({
+        tenantId: mapForm.tenantId,
+        wabaId: mapForm.wabaId.trim(),
+        phoneNumberId: mapForm.phoneNumberId.trim(),
+        accessToken: mapForm.accessToken.trim(),
       });
-    } catch {
-      setConnecting(false);
-      toast.error("Failed to load Facebook SDK");
+      setMapDialogOpen(false);
+      setMapForm((prev) => ({ ...prev, wabaId: "", phoneNumberId: "", accessToken: "" }));
+      await loadStatus();
+      toast.success("Existing WABA mapped to selected project");
+    } catch (e) {
+      toast.error(e?.message || "Failed to map existing WABA");
+    } finally {
+      setMappingExisting(false);
     }
   }
 
@@ -294,6 +319,72 @@ export default function WhatsAppOnboardingPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={mapDialogOpen} onOpenChange={setMapDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Map Existing WABA</DialogTitle>
+            <DialogDescription>
+              Enter existing WhatsApp Cloud credentials and map them to a project.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-sm font-medium text-slate-700">Select Project</label>
+              <select
+                className="mt-1 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+                value={mapForm.tenantId}
+                onChange={(e) => setMapForm((prev) => ({ ...prev, tenantId: e.target.value }))}
+              >
+                <option value="">Select project</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700">WABA ID</label>
+              <Input
+                placeholder="Enter WABA ID"
+                value={mapForm.wabaId}
+                onChange={(e) => setMapForm((prev) => ({ ...prev, wabaId: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700">Phone Number ID</label>
+              <Input
+                placeholder="Enter Phone Number ID"
+                value={mapForm.phoneNumberId}
+                onChange={(e) => setMapForm((prev) => ({ ...prev, phoneNumberId: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700">Access Token</label>
+              <Input
+                type="password"
+                placeholder="Enter Access Token"
+                value={mapForm.accessToken}
+                onChange={(e) => setMapForm((prev) => ({ ...prev, accessToken: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMapDialogOpen(false)} disabled={mappingExisting}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-orange-500 hover:bg-orange-600 text-white"
+              onClick={submitMapExisting}
+              disabled={mappingExisting}
+            >
+              {mappingExisting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              Map Existing WABA
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

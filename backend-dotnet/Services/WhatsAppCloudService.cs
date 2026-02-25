@@ -346,6 +346,154 @@ public class WhatsAppCloudService(
         };
     }
 
+    public async Task<object> MapExistingWabaAsync(Guid targetTenantId, string wabaId, string phoneNumberId, string accessToken, CancellationToken ct = default)
+    {
+        var normalizedWabaId = (wabaId ?? string.Empty).Trim();
+        var normalizedPhoneId = (phoneNumberId ?? string.Empty).Trim();
+        var normalizedToken = (accessToken ?? string.Empty).Trim();
+
+        if (targetTenantId == Guid.Empty) throw new InvalidOperationException("Project is required.");
+        if (string.IsNullOrWhiteSpace(normalizedWabaId)) throw new InvalidOperationException("WABA ID is required.");
+        if (string.IsNullOrWhiteSpace(normalizedPhoneId)) throw new InvalidOperationException("Phone Number ID is required.");
+        if (string.IsNullOrWhiteSpace(normalizedToken)) throw new InvalidOperationException("Access token is required.");
+
+        var targetTenant = await controlDb.Tenants.FirstOrDefaultAsync(x => x.Id == targetTenantId, ct)
+            ?? throw new InvalidOperationException("Project not found.");
+
+        var wabaUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{normalizedWabaId}?fields=id,name,business_verification_status,account_review_status";
+        var phoneUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{normalizedPhoneId}?fields=id,display_phone_number,verified_name,quality_rating,name_status,status";
+        var phonesForWabaUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{normalizedWabaId}/phone_numbers?fields=id,display_phone_number,verified_name";
+
+        var wabaRaw = await GraphGetRawAsync(wabaUrl, normalizedToken, ct);
+        if (!wabaRaw.Ok)
+            throw new InvalidOperationException($"Unable to validate WABA ID. Graph status={wabaRaw.StatusCode} payload={wabaRaw.Body}");
+        var phoneRaw = await GraphGetRawAsync(phoneUrl, normalizedToken, ct);
+        if (!phoneRaw.Ok)
+            throw new InvalidOperationException($"Unable to validate Phone Number ID. Graph status={phoneRaw.StatusCode} payload={phoneRaw.Body}");
+        var wabaPhonesRaw = await GraphGetRawAsync(phonesForWabaUrl, normalizedToken, ct);
+        if (!wabaPhonesRaw.Ok)
+            throw new InvalidOperationException($"Unable to validate WABA phone list. Graph status={wabaPhonesRaw.StatusCode} payload={wabaPhonesRaw.Body}");
+
+        string wabaName = string.Empty;
+        string businessVerificationStatus = string.Empty;
+        using (var wabaDoc = JsonDocument.Parse(wabaRaw.Body))
+        {
+            wabaName = TryGetString(wabaDoc.RootElement, "name");
+            businessVerificationStatus = TryGetString(wabaDoc.RootElement, "business_verification_status");
+        }
+
+        string displayPhoneNumber = string.Empty;
+        string verifiedName = string.Empty;
+        string phoneQualityRating = string.Empty;
+        string phoneNameStatus = string.Empty;
+        using (var phoneDoc = JsonDocument.Parse(phoneRaw.Body))
+        {
+            displayPhoneNumber = TryGetString(phoneDoc.RootElement, "display_phone_number");
+            verifiedName = TryGetString(phoneDoc.RootElement, "verified_name");
+            phoneQualityRating = TryGetString(phoneDoc.RootElement, "quality_rating");
+            phoneNameStatus = TryGetString(phoneDoc.RootElement, "name_status");
+        }
+
+        var phoneBelongsToWaba = false;
+        using (var wabaPhonesDoc = JsonDocument.Parse(wabaPhonesRaw.Body))
+        {
+            if (wabaPhonesDoc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var row in data.EnumerateArray())
+                {
+                    var id = TryGetString(row, "id");
+                    if (!string.Equals(id, normalizedPhoneId, StringComparison.OrdinalIgnoreCase)) continue;
+                    phoneBelongsToWaba = true;
+                    if (string.IsNullOrWhiteSpace(displayPhoneNumber))
+                        displayPhoneNumber = TryGetString(row, "display_phone_number");
+                    if (string.IsNullOrWhiteSpace(verifiedName))
+                        verifiedName = TryGetString(row, "verified_name");
+                    break;
+                }
+            }
+        }
+
+        if (!phoneBelongsToWaba)
+            throw new InvalidOperationException("Phone Number ID does not belong to the provided WABA ID.");
+
+        var conflict = await FindTenantBindingConflictAsync(normalizedWabaId, normalizedPhoneId, ct, targetTenantId);
+        if (conflict is not null)
+        {
+            throw new InvalidOperationException($"This WhatsApp account/number is already linked to another project ({conflict.Value.TenantName} / {conflict.Value.TenantSlug}).");
+        }
+
+        using var targetTenantDb = SeedData.CreateTenantDbContext(targetTenant.DataConnectionString);
+        var config = await targetTenantDb.Set<TenantWabaConfig>()
+            .Where(x => x.TenantId == targetTenantId)
+            .OrderByDescending(x => x.IsActive)
+            .ThenByDescending(x => x.ConnectedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (config is null)
+        {
+            config = new TenantWabaConfig
+            {
+                Id = Guid.NewGuid(),
+                TenantId = targetTenantId
+            };
+            targetTenantDb.Set<TenantWabaConfig>().Add(config);
+        }
+
+        config.AccessToken = ProtectToken(normalizedToken);
+        config.TokenSource = "manual_map";
+        config.IsActive = true;
+        config.BusinessAccountName = string.IsNullOrWhiteSpace(wabaName) ? (verifiedName ?? string.Empty) : wabaName;
+        config.WabaId = normalizedWabaId;
+        config.PhoneNumberId = normalizedPhoneId;
+        config.DisplayPhoneNumber = displayPhoneNumber;
+        config.BusinessVerificationStatus = businessVerificationStatus;
+        config.PhoneQualityRating = phoneQualityRating;
+        config.PhoneNameStatus = phoneNameStatus;
+        config.OnboardingState = "assets_linked";
+        config.OnboardingStartedAtUtc ??= DateTime.UtcNow;
+        config.CodeReceivedAtUtc ??= DateTime.UtcNow;
+        config.ExchangedAtUtc = DateTime.UtcNow;
+        config.AssetsLinkedAtUtc = DateTime.UtcNow;
+        config.ConnectedAtUtc = DateTime.UtcNow;
+        config.LastError = string.Empty;
+        config.LastGraphError = string.Empty;
+
+        var webhookOk = await EnsureWebhookSubscriptionAsync(config, normalizedToken, ct);
+        config.WebhookSubscribedAtUtc = webhookOk ? DateTime.UtcNow : null;
+        config.OnboardingState = webhookOk ? "webhook_subscribed" : "assets_linked";
+
+        var audit = await RunPostOnboardingChecksAsync(config, normalizedToken, ct);
+        config.PermissionAuditPassed = audit.PermissionAuditPassed;
+        if (!string.IsNullOrWhiteSpace(audit.BusinessVerificationStatus))
+            config.BusinessVerificationStatus = audit.BusinessVerificationStatus;
+        if (!string.IsNullOrWhiteSpace(audit.PhoneQualityRating))
+            config.PhoneQualityRating = audit.PhoneQualityRating;
+        if (!string.IsNullOrWhiteSpace(audit.PhoneNameStatus))
+            config.PhoneNameStatus = audit.PhoneNameStatus;
+        if (audit.Warnings.Count > 0)
+            config.LastError = string.Join(" | ", audit.Warnings);
+        if (webhookOk && audit.PermissionAuditPassed)
+            config.OnboardingState = "ready";
+
+        await targetTenantDb.SaveChangesAsync(ct);
+        await tenantResolver.InvalidateAsync(normalizedPhoneId, ct);
+        if (targetTenantId == tenancy.TenantId)
+            await BootstrapMessageTemplatesAsync(config, normalizedToken, ct);
+
+        return new
+        {
+            linked = true,
+            tenantId = targetTenant.Id,
+            tenantName = targetTenant.Name,
+            tenantSlug = targetTenant.Slug,
+            wabaId = config.WabaId,
+            phoneNumberId = config.PhoneNumberId,
+            businessName = config.BusinessAccountName,
+            phone = config.DisplayPhoneNumber,
+            state = config.OnboardingState,
+            readyToSend = config.OnboardingState == "ready"
+        };
+    }
+
     private async Task BootstrapMessageTemplatesAsync(TenantWabaConfig config, string accessToken, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(config.WabaId) || string.IsNullOrWhiteSpace(accessToken)) return;
@@ -1151,13 +1299,14 @@ public class WhatsAppCloudService(
         return config;
     }
 
-    private async Task<(Guid TenantId, string TenantSlug, string TenantName)?> FindTenantBindingConflictAsync(string wabaId, string phoneNumberId, CancellationToken ct)
+    private async Task<(Guid TenantId, string TenantSlug, string TenantName)?> FindTenantBindingConflictAsync(string wabaId, string phoneNumberId, CancellationToken ct, Guid? currentTenantId = null)
     {
         if (string.IsNullOrWhiteSpace(wabaId) && string.IsNullOrWhiteSpace(phoneNumberId)) return null;
+        var tenantToSkip = currentTenantId ?? tenancy.TenantId;
         var tenants = await controlDb.Tenants.ToListAsync(ct);
         foreach (var tenant in tenants)
         {
-            if (tenant.Id == tenancy.TenantId) continue;
+            if (tenant.Id == tenantToSkip) continue;
             try
             {
                 using var otherDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);

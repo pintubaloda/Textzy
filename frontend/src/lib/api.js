@@ -227,6 +227,10 @@ export async function wabaReuseExisting(code) {
   return apiPost('/api/waba/onboarding/reuse-existing', { code })
 }
 
+export async function wabaMapExisting(payload) {
+  return apiPost('/api/waba/onboarding/map-existing', payload || {})
+}
+
 export async function getPlatformSettings(scope) {
   return apiGet(`/api/platform/settings/${scope}`)
 }
