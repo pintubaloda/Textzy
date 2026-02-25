@@ -263,7 +263,7 @@ const TemplatesPage = () => {
     }
   };
 
-  const useLibraryTemplate = (item) => {
+  const applyLibraryTemplate = (item) => {
     setDraft((p) => ({
       ...p,
       name: `${item.name}_custom`,
@@ -625,7 +625,7 @@ const TemplatesPage = () => {
                     </div>
                     <div className="text-xs text-slate-500 mt-1 line-clamp-2">{item.body}</div>
                     <div className="mt-3 flex justify-end">
-                      <Button size="sm" variant="outline" onClick={() => useLibraryTemplate(item)}>Use template</Button>
+                      <Button size="sm" variant="outline" onClick={() => applyLibraryTemplate(item)}>Use template</Button>
                     </div>
                   </div>
                 ))}
