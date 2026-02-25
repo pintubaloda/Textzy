@@ -65,6 +65,9 @@ const InboxPage = () => {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [templateVars, setTemplateVars] = useState({});
+  const [templatePresetTokens, setTemplatePresetTokens] = useState([]);
+  const [templatePresetSuggested, setTemplatePresetSuggested] = useState({});
+  const [templatePresetBusy, setTemplatePresetBusy] = useState(false);
   const [notes, setNotes] = useState([]);
   const [newNote, setNewNote] = useState("");
   const [faqs, setFaqs] = useState([]);
@@ -293,6 +296,15 @@ const InboxPage = () => {
     return Array.from(new Set(matches)).sort((a, b) => a - b);
   }, [selectedTemplate]);
 
+  const tokenValueMap = useMemo(() => {
+    const map = {};
+    for (const t of templatePresetTokens || []) {
+      if (!t?.key) continue;
+      map[String(t.key).toLowerCase()] = t.value || "";
+    }
+    return map;
+  }, [templatePresetTokens]);
+
   useEffect(() => {
     selectedChatIdRef.current = selectedChat?.id || null;
     if (!selectedChat?.id) {
@@ -464,6 +476,61 @@ const InboxPage = () => {
   useEffect(() => {
     setTemplateVars({});
   }, [selectedTemplateId]);
+
+  const loadTemplatePresets = useCallback(async () => {
+    if (!selectedTemplate?.id || !selectedChat?.phone) {
+      setTemplatePresetTokens([]);
+      setTemplatePresetSuggested({});
+      return;
+    }
+    try {
+      setTemplatePresetBusy(true);
+      const query = encodeURIComponent(selectedChat.phone);
+      const res = await apiGet(`/api/templates/${selectedTemplate.id}/presets?recipient=${query}`);
+      const tokens = Array.isArray(res?.tokens) ? res.tokens : [];
+      const suggested = res?.suggestedByIndex && typeof res.suggestedByIndex === "object" ? res.suggestedByIndex : {};
+      setTemplatePresetTokens(tokens);
+      setTemplatePresetSuggested(suggested);
+    } catch {
+      setTemplatePresetTokens([]);
+      setTemplatePresetSuggested({});
+    } finally {
+      setTemplatePresetBusy(false);
+    }
+  }, [selectedTemplate?.id, selectedChat?.phone]);
+
+  useEffect(() => {
+    loadTemplatePresets();
+  }, [loadTemplatePresets]);
+
+  const applySuggestedTemplateVars = () => {
+    if (!templatePresetSuggested || Object.keys(templatePresetSuggested).length === 0) {
+      toast.error("No system presets available for this contact.");
+      return;
+    }
+    setTemplateVars((prev) => {
+      const next = { ...prev };
+      for (const idx of templateParamIndexes) {
+        const v = templatePresetSuggested[String(idx)];
+        if (v) next[idx] = v;
+      }
+      return next;
+    });
+    toast.success("System variables auto-filled");
+  };
+
+  const previewTemplateBody = useMemo(() => {
+    const body = selectedTemplate?.body || "";
+    return body.replace(/\{\{(\d+)\}\}/g, (_, i) => {
+      const raw = templateVars[Number(i)] || `{{${i}}}`;
+      const marker = String(raw || "").trim();
+      if (marker.startsWith("{{") && marker.endsWith("}}")) {
+        const token = marker.slice(2, -2).trim().toLowerCase();
+        return tokenValueMap[token] || marker;
+      }
+      return raw;
+    });
+  }, [selectedTemplate?.body, templateVars, tokenValueMap]);
 
   useEffect(() => {
     const s = getSession();
@@ -917,7 +984,7 @@ const InboxPage = () => {
               ))}
               {selectedTemplate ? (
                 <div className="hidden 2xl:block text-[11px] text-slate-500 max-w-[220px] truncate">
-                  Preview: {(selectedTemplate.body || "").replace(/\{\{(\d+)\}\}/g, (_, i) => templateVars[Number(i)] || `{{${i}}}`)}
+                  Preview: {previewTemplateBody}
                 </div>
               ) : null}
               <Button size="sm" className="h-8 bg-orange-500 hover:bg-orange-600 text-white" onClick={handleSendTemplateFallback}>Send Template</Button>
@@ -1057,11 +1124,53 @@ const InboxPage = () => {
                     </select>
                     <Button size="sm" className="h-9 bg-orange-500 hover:bg-orange-600 text-white" onClick={handleSendTemplateFallback} disabled={sendBusy || !selectedTemplate}>Send Template</Button>
                   </div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs"
+                      onClick={applySuggestedTemplateVars}
+                      disabled={templatePresetBusy}
+                    >
+                      {templatePresetBusy ? "Loading presets..." : "Auto-fill system variables"}
+                    </Button>
+                    <span className="text-[11px] text-slate-500">{templatePresetTokens.length} presets</span>
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     {templateParamIndexes.map((idx) => (
-                      <Input key={idx} className="h-8 text-xs" placeholder={`Var ${idx}`} value={templateVars[idx] || ""} onChange={(e) => setTemplateVars((prev) => ({ ...prev, [idx]: e.target.value }))} />
+                      <div key={idx} className="space-y-1">
+                        <Input
+                          className="h-8 text-xs"
+                          placeholder={`Var ${idx}`}
+                          value={templateVars[idx] || ""}
+                          onChange={(e) => setTemplateVars((prev) => ({ ...prev, [idx]: e.target.value }))}
+                        />
+                        <select
+                          className="h-7 w-full rounded border border-slate-200 bg-white px-2 text-[11px] text-slate-600"
+                          value=""
+                          onChange={(e) => {
+                            const token = e.target.value;
+                            if (!token) return;
+                            setTemplateVars((prev) => ({ ...prev, [idx]: `{{${token}}}` }));
+                            e.target.value = "";
+                          }}
+                        >
+                          <option value="">Use system variable...</option>
+                          {templatePresetTokens.map((token) => (
+                            <option key={`${idx}-${token.key}`} value={token.key}>
+                              {token.label} ({token.value})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     ))}
                   </div>
+                  {selectedTemplate ? (
+                    <div className="mt-2 rounded border border-slate-100 bg-slate-50 px-2 py-1 text-[11px] text-slate-600 line-clamp-3">
+                      {previewTemplateBody}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {showFaqAttach ? (

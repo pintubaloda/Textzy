@@ -249,7 +249,6 @@ public class WhatsAppCloudService(
         await tenantResolver.InvalidateAsync(config.PhoneNumberId, ct);
 
         await tenantDb.SaveChangesAsync(ct);
-        await BootstrapMessageTemplatesAsync(config, effectiveToken, ct);
         return config;
     }
 
@@ -338,7 +337,6 @@ public class WhatsAppCloudService(
         await tenantResolver.InvalidateAsync(config.PhoneNumberId, ct);
 
         await tenantDb.SaveChangesAsync(ct);
-        await BootstrapMessageTemplatesAsync(config, effectiveToken, ct);
 
         return new
         {
@@ -486,8 +484,6 @@ public class WhatsAppCloudService(
 
         await targetTenantDb.SaveChangesAsync(ct);
         await tenantResolver.InvalidateAsync(normalizedPhoneId, ct);
-        if (targetTenantId == tenancy.TenantId)
-            await BootstrapMessageTemplatesAsync(config, normalizedToken, ct);
 
         return new
         {
@@ -724,6 +720,44 @@ public class WhatsAppCloudService(
             graphTemplateId,
             graphStatus,
             responseStatus = post.StatusCode
+        };
+    }
+
+    public async Task<object> DeleteTemplateFromMetaAndDbAsync(Guid templateId, CancellationToken ct = default)
+    {
+        var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
+        if (string.IsNullOrWhiteSpace(cfg.WabaId)) throw new InvalidOperationException("WABA ID missing.");
+        var token = UnprotectToken(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("WABA access token missing.");
+
+        var template = await tenantDb.Templates.FirstOrDefaultAsync(x => x.Id == templateId && x.TenantId == tenancy.TenantId, ct);
+        if (template is null) throw new InvalidOperationException("Template not found.");
+        if (template.Channel != ChannelType.WhatsApp) throw new InvalidOperationException("Only WhatsApp templates can be deleted from Meta.");
+
+        var name = template.Name?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("Template name is missing.");
+
+        var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{cfg.WabaId}/message_templates?name={Uri.EscapeDataString(name)}";
+        var del = await GraphDeleteRawAsync(url, token, ct);
+        if (!del.Ok)
+        {
+            var body = del.Body ?? string.Empty;
+            var maybeGone = del.StatusCode == 404 ||
+                            body.Contains("does not exist", StringComparison.OrdinalIgnoreCase) ||
+                            body.Contains("not found", StringComparison.OrdinalIgnoreCase);
+            if (!maybeGone)
+                throw new InvalidOperationException($"Graph template delete failed ({del.StatusCode}): {body}");
+        }
+
+        tenantDb.Templates.Remove(template);
+        await tenantDb.SaveChangesAsync(ct);
+
+        return new
+        {
+            deleted = true,
+            deletedFromMeta = del.Ok,
+            templateId,
+            templateName = name
         };
     }
 
@@ -1247,6 +1281,18 @@ public class WhatsAppCloudService(
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
             logger.LogWarning("Graph POST failed: {Url} status={Status} body={Body}", url, (int)resp.StatusCode, redactor.RedactText(body));
+        return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
+    }
+
+    private async Task<(bool Ok, int StatusCode, string Body)> GraphDeleteRawAsync(string url, string accessToken, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient();
+        using var req = new HttpRequestMessage(HttpMethod.Delete, url);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        var resp = await client.SendAsync(req, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode)
+            logger.LogWarning("Graph DELETE failed: {Url} status={Status} body={Body}", url, (int)resp.StatusCode, redactor.RedactText(body));
         return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
     }
 

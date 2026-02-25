@@ -121,6 +121,7 @@ builder.Services.AddScoped<BillingGuardService>();
 builder.Services.AddScoped<SecurityControlService>();
 builder.Services.AddScoped<IMessageProvider, MockMessageProvider>();
 builder.Services.AddScoped<MessagingService>();
+builder.Services.AddScoped<TemplateVariableResolverService>();
 builder.Services.Configure<WhatsAppOptions>(builder.Configuration.GetSection("WhatsApp"));
 builder.Services.AddHttpClient();
 builder.Services.AddSignalR();

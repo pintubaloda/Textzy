@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, Plus, Filter, MoreVertical, FileText, CheckCircle, XCircle, Clock, AlertCircle, Trash2, MessageSquare, Send } from "lucide-react";
 import { apiDelete, apiGet, apiPost, listSmsSenders } from "@/lib/api";
@@ -38,6 +39,8 @@ const TemplatesPage = () => {
   const [draft, setDraft] = useState(initialDraft);
   const isSms = draft.channel === "sms";
   const [uploading, setUploading] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   useEffect(() => {
     loadAll();
@@ -167,9 +170,19 @@ const TemplatesPage = () => {
     }
   };
 
-  const removeTemplate = async (id) => {
-    await apiDelete(`/api/templates/${id}`);
-    setTemplates((prev) => prev.filter((x) => x.id !== id));
+  const removeTemplate = async () => {
+    if (!deleteTarget?.id || deleteBusy) return;
+    try {
+      setDeleteBusy(true);
+      await apiDelete(`/api/templates/${deleteTarget.id}`);
+      setTemplates((prev) => prev.filter((x) => x.id !== deleteTarget.id));
+      toast.success("Template deleted");
+      setDeleteTarget(null);
+    } catch (e) {
+      toast.error(e?.message || "Delete failed");
+    } finally {
+      setDeleteBusy(false);
+    }
   };
 
   const syncWhatsAppTemplates = async () => {
@@ -209,8 +222,9 @@ const TemplatesPage = () => {
   };
 
   return (
-    <div className="space-y-6" data-testid="templates-page">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <>
+      <div className="space-y-6" data-testid="templates-page">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-heading font-bold text-slate-900">Templates</h1>
           <p className="text-slate-600">WhatsApp + SMS(DLT) compliant template management.</p>
@@ -352,7 +366,7 @@ const TemplatesPage = () => {
         </Dialog>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {stats.map((stat, index) => (
           <Card key={index} className={`border-slate-200 ${index === 0 ? "border-orange-500" : ""}`}>
             <CardContent className="pt-6">
@@ -363,7 +377,7 @@ const TemplatesPage = () => {
         ))}
       </div>
 
-      <Card className="border-slate-200">
+        <Card className="border-slate-200">
         <CardHeader>
           {tab === "sms" && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 mb-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -437,7 +451,7 @@ const TemplatesPage = () => {
                           </DropdownMenuItem>
                         )}
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-red-600" onClick={() => removeTemplate(template.id)}>
+                        <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(template)}>
                           <Trash2 className="w-4 h-4 mr-2" />
                           Delete
                         </DropdownMenuItem>
@@ -450,8 +464,27 @@ const TemplatesPage = () => {
             </TableBody>
           </Table>
         </CardContent>
-      </Card>
-    </div>
+        </Card>
+      </div>
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete template?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {Number(deleteTarget?.channel) === 2
+                ? "This will delete the WhatsApp template from Meta and from your project database. This action cannot be undone."
+                : "This will delete the SMS template from your project database. This action cannot be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={removeTemplate} disabled={deleteBusy}>
+              {deleteBusy ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 };
 

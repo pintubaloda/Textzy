@@ -210,3 +210,20 @@ Update: 2026-02-25 (Inbox realtime stability + voice send clarity)
 - Expected behavior after deploy:
   - fewer transient "Failed to start HttpConnection before stop() was called" errors
   - voice sends no longer look fake; user sees queued state until acceptance/status updates
+
+Update: 2026-02-25 (Template lifecycle + system variable presets)
+- Removed automatic WhatsApp template sync during onboarding/reuse/map flows. Templates remain DB-only unless user clicks `Sync Meta`.
+- WhatsApp template delete now calls Meta first and then deletes local DB record.
+- Added server-side template system variable resolver for send pipeline:
+  - supports tokens like `{{customer_name}}`, `{{company_name}}`, `{{agent_name}}`, `{{customer_phone}}`, `{{current_date}}`.
+  - resolves at API layer before enqueue/send.
+- Added template preset API: `GET /api/templates/{id}/presets?recipient=...` for token values + suggested variable mapping.
+- Locked WhatsApp lifecycle to Meta source of truth:
+  - local `approve/reject` endpoints now blocked for WhatsApp templates (use Sync).
+- Frontend templates UI:
+  - added warning confirmation dialog before delete.
+  - warning explicitly states WhatsApp delete removes from Meta + DB.
+- Frontend inbox template composer:
+  - added auto-fill system variables button.
+  - added per-variable system token picker.
+  - preview resolves token markers using preset values.

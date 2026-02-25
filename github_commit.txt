@@ -192,3 +192,19 @@ Pending commit:
 - Requirestatus.txt
 - github_commit.txt
 - masterrequirement.docx
+
+Pending commit:
+- backend-dotnet/Services/TemplateVariableResolverService.cs
+- backend-dotnet/Services/WhatsAppCloudService.cs
+- backend-dotnet/Services/MessagingService.cs
+- backend-dotnet/Controllers/TemplatesController.cs
+- backend-dotnet/Controllers/TemplateLifecycleController.cs
+- backend-dotnet/Program.cs
+- frontend/src/pages/dashboard/TemplatesPage.jsx
+- frontend/src/pages/dashboard/InboxPage.jsx
+- Requirestatus.txt
+- github_commit.txt
+- masterrequirement.docx
+
+Summary:
+- Implemented DB-only onboarding template lifecycle, Meta+DB delete for WhatsApp templates, and end-to-end system variable presets/resolution.

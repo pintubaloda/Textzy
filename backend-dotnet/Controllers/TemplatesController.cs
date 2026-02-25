@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Textzy.Api.Data;
@@ -11,7 +12,12 @@ namespace Textzy.Api.Controllers;
 
 [ApiController]
 [Route("api/templates")]
-public class TemplatesController(TenantDbContext db, TenancyContext tenancy, RbacService rbac) : ControllerBase
+public class TemplatesController(
+    TenantDbContext db,
+    TenancyContext tenancy,
+    RbacService rbac,
+    WhatsAppCloudService whatsapp,
+    TemplateVariableResolverService templateVariables) : ControllerBase
 {
     private static readonly HashSet<string> AllowedCategories = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -217,8 +223,69 @@ public class TemplatesController(TenantDbContext db, TenancyContext tenancy, Rba
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
         var item = db.Templates.FirstOrDefault(x => x.Id == id && x.TenantId == tenancy.TenantId);
         if (item is null) return NotFound();
+
+        if (item.Channel == ChannelType.WhatsApp)
+        {
+            try
+            {
+                var result = await whatsapp.DeleteTemplateFromMetaAndDbAsync(id, ct);
+                return Ok(result);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+        }
+
         db.Templates.Remove(item);
         await db.SaveChangesAsync(ct);
         return NoContent();
+    }
+
+    [HttpGet("{id:guid}/presets")]
+    public async Task<IActionResult> Presets(Guid id, [FromQuery] string recipient, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(TemplatesRead)) return Forbid();
+        var template = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
+        if (template is null) return NotFound();
+        if (template.Channel != ChannelType.WhatsApp) return BadRequest("Presets are supported only for WhatsApp templates.");
+
+        var to = (recipient ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(to)) return BadRequest("Recipient is required.");
+
+        var indexes = Regex.Matches(template.Body ?? string.Empty, @"\{\{(\d+)\}\}")
+            .Select(m => int.TryParse(m.Groups[1].Value, out var n) ? n : 0)
+            .Where(n => n > 0)
+            .Distinct()
+            .OrderBy(n => n)
+            .ToArray();
+
+        var (tokenValues, suggestedValues) = await templateVariables.BuildAsync(to, ct);
+        var suggestedByIndex = new Dictionary<string, string>();
+        foreach (var idx in indexes)
+        {
+            if (suggestedValues.TryGetValue(idx, out var value) && !string.IsNullOrWhiteSpace(value))
+                suggestedByIndex[idx.ToString()] = value;
+        }
+
+        var tokenList = tokenValues
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Value))
+            .OrderBy(kv => kv.Key)
+            .Select(kv => new
+            {
+                key = kv.Key,
+                label = kv.Key.Replace("_", " "),
+                value = kv.Value
+            })
+            .ToList();
+
+        return Ok(new
+        {
+            templateId = template.Id,
+            templateName = template.Name,
+            recipient = to,
+            tokens = tokenList,
+            suggestedByIndex
+        });
     }
 }

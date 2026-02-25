@@ -13,7 +13,8 @@ public class MessagingService(
     OutboundMessageQueueService queue,
     BillingGuardService billingGuard,
     SecurityControlService security,
-    ContactPiiService contactPii)
+    ContactPiiService contactPii,
+    TemplateVariableResolverService templateVariables)
 {
     public async Task<Message> EnqueueAsync(SendMessageRequest request, CancellationToken ct = default)
     {
@@ -70,8 +71,42 @@ public class MessagingService(
             {
                 if (int.TryParse(m.Groups[1].Value, out var idx) && idx > requiredParams) requiredParams = idx;
             }
-            if (requiredParams > 0 && (request.TemplateParameters?.Count ?? 0) < requiredParams)
-                throw new InvalidOperationException($"Template requires {requiredParams} variables but only {(request.TemplateParameters?.Count ?? 0)} provided.");
+
+            var suppliedParams = (request.TemplateParameters ?? []).Select(x => (x ?? string.Empty).Trim()).ToList();
+            var (tokenValues, suggestedValues) = await templateVariables.BuildAsync(request.Recipient, ct);
+
+            // Auto-fill missing indices from system presets when available.
+            if (requiredParams > suppliedParams.Count)
+            {
+                for (var idx = suppliedParams.Count + 1; idx <= requiredParams; idx++)
+                {
+                    suppliedParams.Add(suggestedValues.TryGetValue(idx, out var suggested) ? suggested : string.Empty);
+                }
+            }
+
+            if (requiredParams > 0 && suppliedParams.Count < requiredParams)
+                throw new InvalidOperationException($"Template requires {requiredParams} variables but only {suppliedParams.Count} provided.");
+
+            for (var i = 0; i < suppliedParams.Count; i++)
+            {
+                var current = suppliedParams[i];
+                if (TemplateVariableResolverService.TryResolveSystemToken(current, tokenValues, out var resolved))
+                {
+                    suppliedParams[i] = resolved;
+                    continue;
+                }
+
+                if (current.StartsWith("{{", StringComparison.Ordinal) && current.EndsWith("}}", StringComparison.Ordinal))
+                {
+                    var tokenName = current[2..^2].Trim();
+                    throw new InvalidOperationException($"Unknown system variable token: {tokenName}");
+                }
+
+                if (string.IsNullOrWhiteSpace(current))
+                    throw new InvalidOperationException($"Template variable {i + 1} is required.");
+            }
+
+            request.TemplateParameters = suppliedParams;
         }
 
         var rpmOverride = await security.GetRatePerMinuteOverrideAsync(tenancy.TenantId, ct);

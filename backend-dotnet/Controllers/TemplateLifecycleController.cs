@@ -61,6 +61,8 @@ public class TemplateLifecycleController(
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
         var t = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
         if (t is null) return NotFound();
+        if (t.Channel == ChannelType.WhatsApp)
+            return BadRequest("WhatsApp template lifecycle is managed by Meta. Use Sync to refresh status.");
         t.LifecycleStatus = "approved";
         await db.SaveChangesAsync(ct);
         return Ok(t);
@@ -72,6 +74,8 @@ public class TemplateLifecycleController(
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
         var t = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
         if (t is null) return NotFound();
+        if (t.Channel == ChannelType.WhatsApp)
+            return BadRequest("WhatsApp template lifecycle is managed by Meta. Use Sync to refresh status.");
         t.LifecycleStatus = "rejected";
         await db.SaveChangesAsync(ct);
         return Ok(t);
