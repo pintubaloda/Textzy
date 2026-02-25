@@ -39,6 +39,16 @@ function normalizeListPayload(payload) {
   return [];
 }
 
+function channelValue(x) {
+  const raw = x?.channel;
+  if (typeof raw === "number") return raw;
+  const text = String(raw || "").trim().toLowerCase();
+  if (text === "whatsapp") return 2;
+  if (text === "sms") return 1;
+  const num = Number(raw);
+  return Number.isFinite(num) ? num : 0;
+}
+
 const categoryGuide = {
   MARKETING: {
     title: "Marketing",
@@ -173,10 +183,10 @@ const TemplatesPage = () => {
   };
 
   const stats = [
-    { title: "Total Templates", value: String(templates.filter((t) => (tab === "sms" ? Number(t.channel) === 1 : Number(t.channel) === 2)).length) },
-    { title: "Approved", value: String(templates.filter((t) => (tab === "sms" ? Number(t.channel) === 1 : Number(t.channel) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "approved").length) },
-    { title: "Pending", value: String(templates.filter((t) => (tab === "sms" ? Number(t.channel) === 1 : Number(t.channel) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "pending").length) },
-    { title: "Rejected", value: String(templates.filter((t) => (tab === "sms" ? Number(t.channel) === 1 : Number(t.channel) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "rejected").length) },
+    { title: "Total Templates", value: String(templates.filter((t) => (tab === "sms" ? channelValue(t) === 1 : channelValue(t) === 2)).length) },
+    { title: "Approved", value: String(templates.filter((t) => (tab === "sms" ? channelValue(t) === 1 : channelValue(t) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "approved").length) },
+    { title: "Pending", value: String(templates.filter((t) => (tab === "sms" ? channelValue(t) === 1 : channelValue(t) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "pending").length) },
+    { title: "Rejected", value: String(templates.filter((t) => (tab === "sms" ? channelValue(t) === 1 : channelValue(t) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "rejected").length) },
   ];
 
   const templateVars = useMemo(() => {
@@ -187,7 +197,7 @@ const TemplatesPage = () => {
   const filteredTemplates = useMemo(() => {
     const q = tableSearch.trim().toLowerCase();
     return templates.filter((template) => {
-      const inTab = tab === "sms" ? Number(template.channel) === 1 : Number(template.channel) === 2;
+      const inTab = tab === "sms" ? channelValue(template) === 1 : channelValue(template) === 2;
       if (!inTab) return false;
       if (!q) return true;
       return String(template.name || "").toLowerCase().includes(q) || String(template.body || "").toLowerCase().includes(q);
@@ -708,7 +718,7 @@ const TemplatesPage = () => {
                     </TableCell>
                     <TableCell>{getCategoryBadge(template.category)}</TableCell>
                     <TableCell>
-                      {Number(template.channel) === 2 ? (
+                      {channelValue(template) === 2 ? (
                         <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200"><MessageSquare className="w-3 h-3 mr-1" />WhatsApp</Badge>
                       ) : (
                         <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200"><Send className="w-3 h-3 mr-1" />SMS</Badge>
@@ -731,7 +741,7 @@ const TemplatesPage = () => {
                           <DropdownMenuItem onClick={() => { setPreviewTemplate(template); setShowPreviewDialog(true); }}>
                             <FileText className="w-4 h-4 mr-2" />Preview
                           </DropdownMenuItem>
-                          {Number(template.channel) === 2 && (
+                          {channelValue(template) === 2 && (
                             <DropdownMenuItem onClick={() => submitTemplateToMeta(template.id)}>
                               <Send className="w-4 h-4 mr-2" />Submit to Meta
                             </DropdownMenuItem>
