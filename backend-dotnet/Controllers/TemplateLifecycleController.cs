@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
+using Textzy.Api.Models;
 using Textzy.Api.Services;
 using static Textzy.Api.Services.PermissionCatalog;
 
@@ -8,15 +9,48 @@ namespace Textzy.Api.Controllers;
 
 [ApiController]
 [Route("api/template-lifecycle")]
-public class TemplateLifecycleController(TenantDbContext db, TenancyContext tenancy, RbacService rbac) : ControllerBase
+public class TemplateLifecycleController(
+    TenantDbContext db,
+    TenancyContext tenancy,
+    RbacService rbac,
+    WhatsAppCloudService whatsapp) : ControllerBase
 {
+    [HttpPost("sync")]
+    public async Task<IActionResult> Sync(CancellationToken ct)
+    {
+        if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
+        try
+        {
+            var result = await whatsapp.SyncMessageTemplatesAsync(ct);
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
     [HttpPost("{id:guid}/submit")]
     public async Task<IActionResult> Submit(Guid id, CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
         var t = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
         if (t is null) return NotFound();
+        if (t.Channel == ChannelType.WhatsApp)
+        {
+            try
+            {
+                var result = await whatsapp.SubmitTemplateForApprovalAsync(id, ct);
+                return Ok(result);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
         t.LifecycleStatus = "submitted";
+        t.Status = "Pending";
         await db.SaveChangesAsync(ct);
         return Ok(t);
     }

@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Textzy.Api.Data;
 using Textzy.Api.DTOs;
 using Textzy.Api.Models;
@@ -21,6 +23,13 @@ public class TemplatesController(TenantDbContext db, TenancyContext tenancy, Rba
         "none", "text", "image", "video", "document"
     };
 
+    private static readonly HashSet<string> AllowedButtonTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "quick_reply", "quickreply", "url", "cta_url", "phone", "phone_number", "call"
+    };
+
+    private static readonly Regex WhatsAppTemplateNameRegex = new("^[a-z0-9_]+$", RegexOptions.Compiled);
+
     private static string? ValidateRequest(UpsertTemplateRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name)) return "Template name is required.";
@@ -40,6 +49,36 @@ public class TemplatesController(TenantDbContext db, TenancyContext tenancy, Rba
             if (vars[i] != i + 1) return "Template variables must be sequential: {{1}}, {{2}}, {{3}} ...";
         }
 
+        if (request.Channel == ChannelType.WhatsApp)
+        {
+            var normalizedName = request.Name.Trim();
+            if (normalizedName.Length > 512) return "WhatsApp template name is too long.";
+            if (!WhatsAppTemplateNameRegex.IsMatch(normalizedName))
+                return "WhatsApp template name must contain only lowercase letters, numbers, and underscore.";
+
+            var headerType = (request.HeaderType ?? "none").Trim().ToLowerInvariant();
+            if (headerType == "text")
+            {
+                if (string.IsNullOrWhiteSpace(request.HeaderText)) return "Header text is required when header type is text.";
+                if (request.HeaderText.Trim().Length > 60) return "WhatsApp header text cannot exceed 60 characters.";
+            }
+            else if (headerType is "image" or "video" or "document")
+            {
+                if (!string.IsNullOrWhiteSpace(request.HeaderText))
+                    return "Header text must be empty for media header types.";
+            }
+            else if (headerType == "none" && !string.IsNullOrWhiteSpace(request.HeaderText))
+            {
+                return "Header text is allowed only when header type is text.";
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.FooterText) && request.FooterText.Trim().Length > 60)
+                return "WhatsApp footer text cannot exceed 60 characters.";
+
+            var buttonError = ValidateButtonsJson(request.ButtonsJson);
+            if (buttonError is not null) return buttonError;
+        }
+
         if (request.Channel == ChannelType.Sms)
         {
             if (string.IsNullOrWhiteSpace(request.DltEntityId)) return "SMS template requires DLT Entity ID.";
@@ -49,6 +88,61 @@ public class TemplatesController(TenantDbContext db, TenancyContext tenancy, Rba
         }
 
         return null;
+    }
+
+    private static string? ValidateButtonsJson(string? buttonsJson)
+    {
+        if (string.IsNullOrWhiteSpace(buttonsJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(buttonsJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return "Buttons JSON must be an array.";
+
+            var total = 0;
+            var quickReplies = 0;
+            var ctaButtons = 0;
+            foreach (var row in doc.RootElement.EnumerateArray())
+            {
+                total++;
+                if (total > 10) return "WhatsApp supports up to 10 buttons.";
+
+                var type = row.TryGetProperty("type", out var typeNode) ? (typeNode.GetString() ?? string.Empty).Trim().ToLowerInvariant() : string.Empty;
+                var text = row.TryGetProperty("text", out var textNode) ? (textNode.GetString() ?? string.Empty).Trim() : string.Empty;
+                if (string.IsNullOrWhiteSpace(type) || !AllowedButtonTypes.Contains(type))
+                    return "Invalid button type. Use quick_reply, url, or phone_number.";
+                if (string.IsNullOrWhiteSpace(text) || text.Length > 25)
+                    return "Button text is required and must be <= 25 characters.";
+
+                if (type is "quick_reply" or "quickreply")
+                {
+                    quickReplies++;
+                    continue;
+                }
+
+                ctaButtons++;
+                if (ctaButtons > 2) return "WhatsApp supports up to 2 CTA buttons (URL/phone).";
+
+                if (type is "url" or "cta_url")
+                {
+                    var url = row.TryGetProperty("url", out var urlNode) ? (urlNode.GetString() ?? string.Empty).Trim() : string.Empty;
+                    if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed) || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+                        return "CTA URL button requires a valid http/https URL.";
+                }
+                else
+                {
+                    var phone = row.TryGetProperty("phone_number", out var phoneNode) ? (phoneNode.GetString() ?? string.Empty).Trim() : string.Empty;
+                    if (!Regex.IsMatch(phone, @"^\+?[0-9]{7,15}$"))
+                        return "Phone button requires valid E.164 style number.";
+                }
+            }
+
+            if (quickReplies > 10) return "WhatsApp supports up to 10 quick-reply buttons.";
+            return null;
+        }
+        catch
+        {
+            return "Buttons JSON is invalid.";
+        }
     }
 
     [HttpGet]
@@ -68,11 +162,12 @@ public class TemplatesController(TenantDbContext db, TenancyContext tenancy, Rba
         {
             Id = Guid.NewGuid(),
             TenantId = tenancy.TenantId,
-            Name = request.Name,
+            Name = request.Name.Trim(),
             Channel = request.Channel,
             Category = request.Category.ToUpperInvariant(),
             Language = request.Language,
             Body = request.Body,
+            LifecycleStatus = request.Channel == ChannelType.WhatsApp ? "draft" : "approved",
             DltEntityId = request.DltEntityId ?? string.Empty,
             DltTemplateId = request.DltTemplateId ?? string.Empty,
             SmsSenderId = request.SmsSenderId ?? string.Empty,
@@ -80,7 +175,7 @@ public class TemplatesController(TenantDbContext db, TenancyContext tenancy, Rba
             HeaderText = request.HeaderText ?? string.Empty,
             FooterText = request.FooterText ?? string.Empty,
             ButtonsJson = request.ButtonsJson ?? string.Empty,
-            Status = "Approved"
+            Status = request.Channel == ChannelType.WhatsApp ? "Draft" : "Approved"
         };
         db.Templates.Add(item);
         await db.SaveChangesAsync(ct);
@@ -95,7 +190,7 @@ public class TemplatesController(TenantDbContext db, TenancyContext tenancy, Rba
         if (error is not null) return BadRequest(error);
         var item = db.Templates.FirstOrDefault(x => x.Id == id && x.TenantId == tenancy.TenantId);
         if (item is null) return NotFound();
-        item.Name = request.Name;
+        item.Name = request.Name.Trim();
         item.Channel = request.Channel;
         item.Category = request.Category.ToUpperInvariant();
         item.Language = request.Language;
@@ -107,6 +202,11 @@ public class TemplatesController(TenantDbContext db, TenancyContext tenancy, Rba
         item.HeaderText = request.HeaderText ?? string.Empty;
         item.FooterText = request.FooterText ?? string.Empty;
         item.ButtonsJson = request.ButtonsJson ?? string.Empty;
+        if (item.Channel == ChannelType.WhatsApp && !string.Equals(item.LifecycleStatus, "approved", StringComparison.OrdinalIgnoreCase))
+        {
+            item.LifecycleStatus = "draft";
+            item.Status = "Draft";
+        }
         await db.SaveChangesAsync(ct);
         return Ok(item);
     }

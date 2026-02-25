@@ -3,6 +3,7 @@ using Textzy.Api.DTOs;
 using Textzy.Api.Models;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Textzy.Api.Services;
 
@@ -40,6 +41,37 @@ public class MessagingService(
         else if (!request.UseTemplate)
         {
             request.Body = InputGuardService.RequireTrimmed(request.Body, "Message body", 4096);
+        }
+        if (request.UseTemplate && request.Channel == ChannelType.WhatsApp)
+        {
+            request.TemplateName = InputGuardService.RequireTrimmed(request.TemplateName, "Template name", 128);
+            var normalizedLang = string.IsNullOrWhiteSpace(request.TemplateLanguageCode)
+                ? "en"
+                : request.TemplateLanguageCode.Trim().ToLowerInvariant();
+            request.TemplateLanguageCode = normalizedLang;
+
+            var approvedTemplate = await db.Templates
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x =>
+                    x.TenantId == tenancy.TenantId &&
+                    x.Channel == ChannelType.WhatsApp &&
+                    x.Name == request.TemplateName &&
+                    x.Language == normalizedLang, ct);
+
+            if (approvedTemplate is null)
+                throw new InvalidOperationException($"Approved WhatsApp template '{request.TemplateName}' ({normalizedLang}) not found.");
+            var approved = string.Equals(approvedTemplate.Status, "approved", StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(approvedTemplate.LifecycleStatus, "approved", StringComparison.OrdinalIgnoreCase);
+            if (!approved)
+                throw new InvalidOperationException($"Template '{request.TemplateName}' is not approved in WhatsApp yet.");
+
+            var requiredParams = 0;
+            foreach (Match m in Regex.Matches(approvedTemplate.Body ?? string.Empty, @"\{\{(\d+)\}\}"))
+            {
+                if (int.TryParse(m.Groups[1].Value, out var idx) && idx > requiredParams) requiredParams = idx;
+            }
+            if (requiredParams > 0 && (request.TemplateParameters?.Count ?? 0) < requiredParams)
+                throw new InvalidOperationException($"Template requires {requiredParams} variables but only {(request.TemplateParameters?.Count ?? 0)} provided.");
         }
 
         var rpmOverride = await security.GetRatePerMinuteOverrideAsync(tenancy.TenantId, ct);

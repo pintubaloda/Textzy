@@ -172,6 +172,26 @@ const TemplatesPage = () => {
     setTemplates((prev) => prev.filter((x) => x.id !== id));
   };
 
+  const syncWhatsAppTemplates = async () => {
+    try {
+      await apiPost("/api/template-lifecycle/sync", {});
+      toast.success("WhatsApp templates synced from Meta.");
+      await loadAll();
+    } catch (e) {
+      toast.error(e?.message || "Sync failed.");
+    }
+  };
+
+  const submitTemplateToMeta = async (id) => {
+    try {
+      await apiPost(`/api/template-lifecycle/${id}/submit`, {});
+      toast.success("Template submitted to Meta.");
+      await loadAll();
+    } catch (e) {
+      toast.error(e?.message || "Submit failed.");
+    }
+  };
+
   const getStatusBadge = (statusRaw) => {
     const status = String(statusRaw || "").toLowerCase();
     if (status === "approved") return <Badge className="bg-green-100 text-green-700 hover:bg-green-100 gap-1"><CheckCircle className="w-3 h-3" />Approved</Badge>;
@@ -198,6 +218,9 @@ const TemplatesPage = () => {
         <div className="flex items-center gap-2">
           <Button variant={tab === "whatsapp" ? "default" : "outline"} className={tab === "whatsapp" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setSearchParams({ tab: "whatsapp" })}>WhatsApp</Button>
           <Button variant={tab === "sms" ? "default" : "outline"} className={tab === "sms" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setSearchParams({ tab: "sms" })}>SMS</Button>
+          {tab === "whatsapp" && (
+            <Button variant="outline" onClick={syncWhatsAppTemplates}>Sync Meta</Button>
+          )}
         </div>
         <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
           <DialogTrigger asChild>
@@ -407,6 +430,12 @@ const TemplatesPage = () => {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem disabled><FileText className="w-4 h-4 mr-2" />Preview</DropdownMenuItem>
+                        {Number(template.channel) === 2 && (
+                          <DropdownMenuItem onClick={() => submitTemplateToMeta(template.id)}>
+                            <Send className="w-4 h-4 mr-2" />
+                            Submit to Meta
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem className="text-red-600" onClick={() => removeTemplate(template.id)}>
                           <Trash2 className="w-4 h-4 mr-2" />

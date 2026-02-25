@@ -81,8 +81,23 @@ public class OutboundMessageWorker(
                         if (useTemplate)
                         {
                             var name = ExtractTemplateName(message.Body);
+                            var languageCode = ExtractTemplateLanguage(message.Body);
                             var bodyParams = ExtractTemplateParams(message.Body);
-                            providerId = await SendWhatsAppTemplateAsync(httpClientFactory, waOptions, wabaCfg.PhoneNumberId, accessToken, message.Recipient, name, "en", bodyParams, stoppingToken);
+                            var template = await tenantDb.Templates
+                                .AsNoTracking()
+                                .FirstOrDefaultAsync(x =>
+                                    x.TenantId == tenant.Id &&
+                                    x.Channel == ChannelType.WhatsApp &&
+                                    x.Name == name &&
+                                    x.Language == languageCode, stoppingToken);
+                            if (template is null)
+                                throw new InvalidOperationException($"Template '{name}' ({languageCode}) not found.");
+                            var approved = string.Equals(template.Status, "approved", StringComparison.OrdinalIgnoreCase) ||
+                                           string.Equals(template.LifecycleStatus, "approved", StringComparison.OrdinalIgnoreCase);
+                            if (!approved)
+                                throw new InvalidOperationException($"Template '{name}' is not approved.");
+
+                            providerId = await SendWhatsAppTemplateAsync(httpClientFactory, waOptions, wabaCfg.PhoneNumberId, accessToken, message.Recipient, name, languageCode, bodyParams, stoppingToken);
                         }
                         else if (message.MessageType.StartsWith("media:", StringComparison.OrdinalIgnoreCase))
                         {
@@ -233,7 +248,7 @@ public class OutboundMessageWorker(
             }
         }
 
-        if (msg.Contains("invalid oauth") || msg.Contains("(401)") || msg.Contains("(403)") || msg.Contains("permission") || msg.Contains("policy") || msg.Contains("session closed") || msg.Contains("recipient not valid"))
+        if (msg.Contains("invalid oauth") || msg.Contains("(401)") || msg.Contains("(403)") || msg.Contains("permission") || msg.Contains("policy") || msg.Contains("session closed") || msg.Contains("recipient not valid") || msg.Contains("template") && msg.Contains("not approved"))
         {
             reason = "non_retryable_auth_or_policy";
             return false;
@@ -290,6 +305,13 @@ public class OutboundMessageWorker(
         var split = (payload ?? string.Empty).Split('|', 3);
         if (split.Length < 2 || string.IsNullOrWhiteSpace(split[1])) return [];
         return split[1].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
+    private static string ExtractTemplateLanguage(string payload)
+    {
+        var split = (payload ?? string.Empty).Split('|', 3);
+        if (split.Length < 3 || string.IsNullOrWhiteSpace(split[2])) return "en";
+        return split[2].Trim().ToLowerInvariant();
     }
 
     private static (string mediaId, string caption) ParseMediaPayload(string payload)

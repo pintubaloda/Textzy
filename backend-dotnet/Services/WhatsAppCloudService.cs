@@ -646,6 +646,178 @@ public class WhatsAppCloudService(
         }
     }
 
+    public async Task<object> SyncMessageTemplatesAsync(CancellationToken ct = default)
+    {
+        var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
+        if (string.IsNullOrWhiteSpace(cfg.WabaId)) throw new InvalidOperationException("WABA ID missing.");
+        var token = UnprotectToken(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("WABA access token missing.");
+
+        await BootstrapMessageTemplatesAsync(cfg, token, ct);
+        var total = await tenantDb.Templates.CountAsync(x => x.TenantId == tenancy.TenantId && x.Channel == ChannelType.WhatsApp, ct);
+        var approved = await tenantDb.Templates.CountAsync(x =>
+            x.TenantId == tenancy.TenantId &&
+            x.Channel == ChannelType.WhatsApp &&
+            string.Equals(x.Status, "approved", StringComparison.OrdinalIgnoreCase), ct);
+
+        return new
+        {
+            synced = true,
+            wabaId = cfg.WabaId,
+            total,
+            approved
+        };
+    }
+
+    public async Task<object> SubmitTemplateForApprovalAsync(Guid templateId, CancellationToken ct = default)
+    {
+        var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
+        if (string.IsNullOrWhiteSpace(cfg.WabaId)) throw new InvalidOperationException("WABA ID missing.");
+        var token = UnprotectToken(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("WABA access token missing.");
+
+        var template = await tenantDb.Templates.FirstOrDefaultAsync(x => x.Id == templateId && x.TenantId == tenancy.TenantId, ct);
+        if (template is null) throw new InvalidOperationException("Template not found.");
+        if (template.Channel != ChannelType.WhatsApp) throw new InvalidOperationException("Only WhatsApp templates can be submitted to Meta.");
+
+        var components = BuildGraphTemplateComponents(template);
+        var payload = JsonSerializer.Serialize(new
+        {
+            name = template.Name,
+            category = (template.Category ?? "UTILITY").ToUpperInvariant(),
+            language = (template.Language ?? "en").ToLowerInvariant(),
+            components
+        });
+
+        var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{cfg.WabaId}/message_templates";
+        var post = await GraphPostRawAsync(url, token, payload, ct);
+        if (!post.Ok)
+        {
+            template.LifecycleStatus = "rejected";
+            template.Status = "Rejected";
+            await tenantDb.SaveChangesAsync(ct);
+            throw new InvalidOperationException($"Graph template submit failed ({post.StatusCode}): {post.Body}");
+        }
+
+        var graphStatus = "PENDING";
+        string graphTemplateId = string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(post.Body);
+            graphStatus = TryGetString(doc.RootElement, "status");
+            if (string.IsNullOrWhiteSpace(graphStatus)) graphStatus = "PENDING";
+            graphTemplateId = TryGetString(doc.RootElement, "id");
+        }
+        catch
+        {
+            graphStatus = "PENDING";
+        }
+
+        template.LifecycleStatus = "submitted";
+        template.Status = graphStatus;
+        await tenantDb.SaveChangesAsync(ct);
+
+        return new
+        {
+            submitted = true,
+            templateId = template.Id,
+            graphTemplateId,
+            graphStatus,
+            responseStatus = post.StatusCode
+        };
+    }
+
+    private static object[] BuildGraphTemplateComponents(Template template)
+    {
+        var components = new List<object>();
+        var headerType = (template.HeaderType ?? "none").Trim().ToLowerInvariant();
+        if (headerType == "text" && !string.IsNullOrWhiteSpace(template.HeaderText))
+        {
+            components.Add(new
+            {
+                type = "HEADER",
+                format = "TEXT",
+                text = template.HeaderText.Trim()
+            });
+        }
+        else if (headerType is "image" or "video" or "document")
+        {
+            components.Add(new
+            {
+                type = "HEADER",
+                format = headerType.ToUpperInvariant()
+            });
+        }
+
+        components.Add(new
+        {
+            type = "BODY",
+            text = template.Body ?? string.Empty
+        });
+
+        if (!string.IsNullOrWhiteSpace(template.FooterText))
+        {
+            components.Add(new
+            {
+                type = "FOOTER",
+                text = template.FooterText.Trim()
+            });
+        }
+
+        var buttons = ParseGraphButtons(template.ButtonsJson);
+        if (buttons.Count > 0)
+        {
+            components.Add(new
+            {
+                type = "BUTTONS",
+                buttons
+            });
+        }
+
+        return components.ToArray();
+    }
+
+    private static List<object> ParseGraphButtons(string buttonsJson)
+    {
+        var result = new List<object>();
+        if (string.IsNullOrWhiteSpace(buttonsJson)) return result;
+        try
+        {
+            using var doc = JsonDocument.Parse(buttonsJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return result;
+            foreach (var b in doc.RootElement.EnumerateArray())
+            {
+                var type = TryGetString(b, "type").Trim().ToLowerInvariant();
+                var text = TryGetString(b, "text").Trim();
+                if (string.IsNullOrWhiteSpace(type) || string.IsNullOrWhiteSpace(text)) continue;
+                if (type is "quick_reply" or "quickreply")
+                {
+                    result.Add(new { type = "QUICK_REPLY", text });
+                    continue;
+                }
+                if (type is "url" or "cta_url")
+                {
+                    var url = TryGetString(b, "url").Trim();
+                    if (!string.IsNullOrWhiteSpace(url))
+                        result.Add(new { type = "URL", text, url });
+                    continue;
+                }
+                if (type is "phone" or "phone_number" or "call")
+                {
+                    var phone = TryGetString(b, "phone_number").Trim();
+                    if (!string.IsNullOrWhiteSpace(phone))
+                        result.Add(new { type = "PHONE_NUMBER", text, phone_number = phone });
+                }
+            }
+        }
+        catch
+        {
+            return result;
+        }
+
+        return result;
+    }
+
     public async Task<object> GetOnboardingStatusAsync(CancellationToken ct = default)
     {
         var config = await GetTenantConfigRowAsync(onlyActive: false, ct);
