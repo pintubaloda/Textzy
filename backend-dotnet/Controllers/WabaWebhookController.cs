@@ -59,7 +59,7 @@ public class WabaWebhookController(
         var rawBody = await reader.ReadToEndAsync(ct);
 
         var sig = Request.Headers["X-Hub-Signature-256"].ToString();
-        if (!whatsapp.VerifyWebhookSignature(rawBody, sig))
+        if (!await whatsapp.VerifyWebhookSignatureAsync(rawBody, sig, ct))
         {
             logger.LogWarning("WABA webhook signature validation failed. signatureHash={SignatureHash}", ComputeEventKey(sig));
             controlDb.AuditLogs.Add(new AuditLog

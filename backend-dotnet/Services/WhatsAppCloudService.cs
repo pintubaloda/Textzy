@@ -92,13 +92,36 @@ public class WhatsAppCloudService(
         => await GetTenantConfigRowAsync(onlyActive: true, ct);
 
     public bool VerifyWebhookSignature(string body, string signatureHeader)
+        => VerifyWebhookSignatureWithSecret(body, signatureHeader, _options.AppSecret);
+
+    public async Task<bool> VerifyWebhookSignatureAsync(string body, string signatureHeader, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(_options.AppSecret) || string.IsNullOrWhiteSpace(signatureHeader)) return false;
+        var platformSecret = string.Empty;
+        try
+        {
+            var row = await controlDb.PlatformSettings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Scope == "waba-master" && x.Key == "appSecret", ct);
+            if (row is not null && !string.IsNullOrWhiteSpace(row.ValueEncrypted))
+                platformSecret = crypto.Decrypt(row.ValueEncrypted);
+        }
+        catch
+        {
+            // Keep validation resilient and fallback to configured secret.
+        }
+
+        var activeSecret = string.IsNullOrWhiteSpace(platformSecret) ? _options.AppSecret : platformSecret;
+        return VerifyWebhookSignatureWithSecret(body, signatureHeader, activeSecret);
+    }
+
+    private static bool VerifyWebhookSignatureWithSecret(string body, string signatureHeader, string appSecret)
+    {
+        if (string.IsNullOrWhiteSpace(appSecret) || string.IsNullOrWhiteSpace(signatureHeader)) return false;
         const string prefix = "sha256=";
         if (!signatureHeader.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
 
         var expected = signatureHeader[prefix.Length..].Trim();
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_options.AppSecret));
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(appSecret));
         var computed = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(body))).ToLowerInvariant();
         return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(computed));
     }

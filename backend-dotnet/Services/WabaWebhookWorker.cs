@@ -30,6 +30,13 @@ public class WabaWebhookWorker(
         public string ListReplyId { get; init; } = string.Empty;
         public string ListReplyTitle { get; init; } = string.Empty;
         public string LocationSummary { get; init; } = string.Empty;
+        public string ContextMessageId { get; init; } = string.Empty;
+        public string ReferralSourceUrl { get; init; } = string.Empty;
+        public string ReferralHeadline { get; init; } = string.Empty;
+        public string ReactionEmoji { get; init; } = string.Empty;
+        public string ReactionMessageId { get; init; } = string.Empty;
+        public string OrderSummary { get; init; } = string.Empty;
+        public string ContactsSummary { get; init; } = string.Empty;
         public string RawJson { get; init; } = "{}";
     }
 
@@ -294,13 +301,14 @@ public class WabaWebhookWorker(
                         .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.ProviderMessageId == inboundProviderId, stoppingToken);
                     if (existingInbound is null)
                     {
+                        var normalizedInboundBody = ComposeInboundBody(inbound);
                         tenantDb.Set<Message>().Add(new Message
                         {
                             Id = Guid.NewGuid(),
                             TenantId = resolved.TenantId,
                             Channel = ChannelType.WhatsApp,
                             Recipient = inbound.From,
-                            Body = string.IsNullOrWhiteSpace(inbound.Body) ? (!string.IsNullOrWhiteSpace(inbound.LocationSummary) ? inbound.LocationSummary : "[Inbound message]") : inbound.Body,
+                            Body = normalizedInboundBody,
                             MessageType = "session",
                             Status = "Received",
                             ProviderMessageId = inboundProviderId,
@@ -546,6 +554,44 @@ public class WabaWebhookWorker(
                             var lng = locNode.TryGetProperty("longitude", out var lngNode) ? lngNode.ToString() : string.Empty;
                             locationSummary = $"Location: {nameText} {addr} ({lat},{lng})".Trim();
                         }
+                        var contextMessageId = string.Empty;
+                        if (msg.TryGetProperty("context", out var contextNode))
+                        {
+                            contextMessageId = contextNode.TryGetProperty("id", out var ctxId) ? ctxId.GetString() ?? string.Empty : string.Empty;
+                        }
+
+                        var referralSourceUrl = string.Empty;
+                        var referralHeadline = string.Empty;
+                        if (msg.TryGetProperty("referral", out var referralNode))
+                        {
+                            referralSourceUrl = referralNode.TryGetProperty("source_url", out var rUrl) ? rUrl.GetString() ?? string.Empty : string.Empty;
+                            referralHeadline = referralNode.TryGetProperty("headline", out var rHead) ? rHead.GetString() ?? string.Empty : string.Empty;
+                        }
+
+                        var reactionEmoji = string.Empty;
+                        var reactionMessageId = string.Empty;
+                        if (msg.TryGetProperty("reaction", out var reactionNode))
+                        {
+                            reactionEmoji = reactionNode.TryGetProperty("emoji", out var rEmoji) ? rEmoji.GetString() ?? string.Empty : string.Empty;
+                            reactionMessageId = reactionNode.TryGetProperty("message_id", out var rMid) ? rMid.GetString() ?? string.Empty : string.Empty;
+                        }
+
+                        var orderSummary = string.Empty;
+                        if (msg.TryGetProperty("order", out var orderNode))
+                        {
+                            var catalogId = orderNode.TryGetProperty("catalog_id", out var cId) ? cId.GetString() ?? string.Empty : string.Empty;
+                            var text = orderNode.TryGetProperty("text", out var oText) ? oText.GetString() ?? string.Empty : string.Empty;
+                            var productCount = orderNode.TryGetProperty("product_items", out var itemsNode) && itemsNode.ValueKind == JsonValueKind.Array
+                                ? itemsNode.GetArrayLength()
+                                : 0;
+                            orderSummary = $"Order: catalog={catalogId}; items={productCount}; text={text}".Trim();
+                        }
+
+                        var contactsSummary = string.Empty;
+                        if (msg.TryGetProperty("contacts", out var msgContactsNode) && msgContactsNode.ValueKind == JsonValueKind.Array)
+                        {
+                            contactsSummary = $"Shared contacts: {msgContactsNode.GetArrayLength()}";
+                        }
                         var name = value.TryGetProperty("contacts", out var contactsNode)
                             && contactsNode.ValueKind == JsonValueKind.Array
                             && contactsNode.GetArrayLength() > 0
@@ -571,6 +617,13 @@ public class WabaWebhookWorker(
                             ListReplyId = listReplyId,
                             ListReplyTitle = listReplyTitle,
                             LocationSummary = locationSummary,
+                            ContextMessageId = contextMessageId,
+                            ReferralSourceUrl = referralSourceUrl,
+                            ReferralHeadline = referralHeadline,
+                            ReactionEmoji = reactionEmoji,
+                            ReactionMessageId = reactionMessageId,
+                            OrderSummary = orderSummary,
+                            ContactsSummary = contactsSummary,
                             RawJson = msg.GetRawText()
                         });
                     }
@@ -583,6 +636,20 @@ public class WabaWebhookWorker(
         {
             return (false, ex.GetType().Name, string.Empty, inbound, statuses);
         }
+    }
+
+    private static string ComposeInboundBody(InboundItem inbound)
+    {
+        if (!string.IsNullOrWhiteSpace(inbound.Body)) return inbound.Body;
+        if (!string.IsNullOrWhiteSpace(inbound.ButtonText)) return $"Button reply: {inbound.ButtonText}";
+        if (!string.IsNullOrWhiteSpace(inbound.ListReplyTitle)) return $"Interactive reply: {inbound.ListReplyTitle}";
+        if (!string.IsNullOrWhiteSpace(inbound.ReactionEmoji)) return $"Reaction: {inbound.ReactionEmoji}";
+        if (!string.IsNullOrWhiteSpace(inbound.OrderSummary)) return inbound.OrderSummary;
+        if (!string.IsNullOrWhiteSpace(inbound.LocationSummary)) return inbound.LocationSummary;
+        if (!string.IsNullOrWhiteSpace(inbound.ContactsSummary)) return inbound.ContactsSummary;
+        if (!string.IsNullOrWhiteSpace(inbound.ReferralHeadline)) return $"Referral: {inbound.ReferralHeadline}";
+        if (!string.IsNullOrWhiteSpace(inbound.MessageType)) return $"Inbound {inbound.MessageType} message";
+        return "[Inbound message]";
     }
 
     private static void ApplyStatusTransition(Message msg, StatusItem incoming, ControlDbContext controlDb)

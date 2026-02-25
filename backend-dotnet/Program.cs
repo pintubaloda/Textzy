@@ -25,18 +25,24 @@ if (builder.Environment.IsProduction())
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+var allowedOrigins = builder.Configuration["AllowedOrigins"]?
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Select(o => (o ?? string.Empty).Trim().TrimEnd('/'))
+    .Where(o => !string.IsNullOrWhiteSpace(o))
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToArray() ?? Array.Empty<string>();
+
+if (builder.Environment.IsProduction() && allowedOrigins.Length == 0)
+{
+    throw new InvalidOperationException("AllowedOrigins is required in Production and must include frontend origin(s).");
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("frontend", policy =>
     {
-        var origins = builder.Configuration["AllowedOrigins"]?
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var normalized = origins?
-            .Select(o => (o ?? string.Empty).Trim().TrimEnd('/'))
-            .Where(o => !string.IsNullOrWhiteSpace(o))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (normalized is { Length: > 0 }) policy.WithOrigins(normalized).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
+        if (allowedOrigins.Length > 0) policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
         else policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
     });
 });
