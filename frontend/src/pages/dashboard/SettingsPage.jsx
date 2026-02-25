@@ -86,9 +86,9 @@ const SettingsPage = () => {
     return { appId, configId };
   };
 
-  const loadWabaStatus = async () => {
+  const loadWabaStatus = async (force = false) => {
     try {
-      const data = await wabaGetOnboardingStatus();
+      const data = await wabaGetOnboardingStatus({ force });
       setWhatsappStatus(data || {});
     } catch {
       setWhatsappStatus({ state: "requested", readyToSend: false, isConnected: false });
@@ -100,7 +100,7 @@ const SettingsPage = () => {
     setStartingWaba(true);
     try {
       await wabaStartOnboarding();
-      await loadWabaStatus();
+      await loadWabaStatus(true);
       toast.success("Onboarding started");
     } catch (e) {
       toast.error(e.message || "Failed to start onboarding");
@@ -147,7 +147,7 @@ const SettingsPage = () => {
         }
         Promise.resolve()
           .then(() => wabaExchangeCode(code))
-          .then(() => loadWabaStatus())
+          .then(() => loadWabaStatus(true))
           .then(() => toast.success("WhatsApp connected"))
           .catch((e) => {
             toast.error(e?.message || "Code exchange failed");

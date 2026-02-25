@@ -99,9 +99,9 @@ const DashboardOverview = () => {
     return { appId, configId };
   };
 
-  const loadWabaStatus = async () => {
+  const loadWabaStatus = async (force = false) => {
     try {
-      const data = await wabaGetOnboardingStatus();
+      const data = await wabaGetOnboardingStatus({ force });
       setWabaStatus(data || { state: "requested", isConnected: false, businessName: "", phone: "" });
     } catch {
       setWabaStatus({ state: "requested", isConnected: false, businessName: "", phone: "" });
@@ -144,7 +144,7 @@ const DashboardOverview = () => {
 
         Promise.resolve()
           .then(() => wabaExchangeCode(code))
-          .then(() => loadWabaStatus())
+          .then(() => loadWabaStatus(true))
           .then(() => toast.success("WhatsApp onboarding connected"))
           .catch((e) => {
             toast.error(e?.message || "Failed to exchange embedded signup code");
@@ -202,7 +202,7 @@ const DashboardOverview = () => {
       });
       setMapDialogOpen(false);
       setMapForm((prev) => ({ ...prev, wabaId: "", phoneNumberId: "", accessToken: "" }));
-      await loadWabaStatus();
+      await loadWabaStatus(true);
       toast.success("Existing WABA mapped to selected project");
     } catch (e) {
       toast.error(e?.message || "Failed to map existing WABA");

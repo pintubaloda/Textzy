@@ -7,6 +7,8 @@ const API_BASE =
   process.env.VITE_API_BASE ||
   'https://textzy.onrender.com'
 const STORAGE_KEY = 'textzy.session'
+const WABA_STATUS_CACHE_PREFIX = 'textzy.wabaStatus'
+const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
 export function getSession() {
   try {
@@ -34,6 +36,44 @@ export function setSession(next) {
 
 export function clearSession() {
   localStorage.removeItem(STORAGE_KEY)
+}
+
+function getWabaStatusCacheKey() {
+  const s = getSession()
+  const slug = (s.tenantSlug || '').trim().toLowerCase()
+  return `${WABA_STATUS_CACHE_PREFIX}:${slug || 'default'}`
+}
+
+function readWabaStatusCache() {
+  try {
+    const raw = localStorage.getItem(getWabaStatusCacheKey())
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || !parsed.data) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writeWabaStatusCache(data) {
+  try {
+    const payload = {
+      fetchedAt: Date.now(),
+      data
+    }
+    localStorage.setItem(getWabaStatusCacheKey(), JSON.stringify(payload))
+  } catch {
+    // ignore storage failures
+  }
+}
+
+export function invalidateWabaStatusCache() {
+  try {
+    localStorage.removeItem(getWabaStatusCacheKey())
+  } catch {
+    // ignore storage failures
+  }
 }
 
 async function baseFetch(path, options = {}, useAuth = true) {
@@ -183,6 +223,7 @@ export async function createProject(name) {
     projectName: data?.name || '',
     role: data?.role || 'owner'
   })
+  invalidateWabaStatusCache()
   return data
 }
 
@@ -193,6 +234,7 @@ export async function switchProject(slug) {
     projectName: data?.projectName || '',
     role: data?.role || ''
   })
+  invalidateWabaStatusCache()
   return data
 }
 
@@ -210,15 +252,34 @@ export function notifyApiError(message) {
 }
 
 export async function wabaStartOnboarding() {
-  return apiPost('/api/waba/onboarding/start', {})
+  const out = await apiPost('/api/waba/onboarding/start', {})
+  invalidateWabaStatusCache()
+  return out
 }
 
-export async function wabaGetOnboardingStatus() {
-  return apiGet('/api/waba/onboarding/status')
+export async function wabaGetOnboardingStatus(options = {}) {
+  const force = !!options.force
+  const cache = readWabaStatusCache()
+  if (!force && cache?.data) {
+    const age = Date.now() - Number(cache.fetchedAt || 0)
+    const isConnected = !!cache.data?.isConnected || !!cache.data?.readyToSend || String(cache.data?.state || '').toLowerCase() === 'ready'
+    if (isConnected && age < ONE_DAY_MS) {
+      return cache.data
+    }
+    if (!isConnected) {
+      // Pending/disconnected: keep last known status until user manually refreshes.
+      return cache.data
+    }
+  }
+  const data = await apiGet('/api/waba/onboarding/status')
+  writeWabaStatusCache(data)
+  return data
 }
 
 export async function wabaExchangeCode(code) {
-  return apiPost('/api/waba/embedded-signup/exchange', { code })
+  const out = await apiPost('/api/waba/embedded-signup/exchange', { code })
+  invalidateWabaStatusCache()
+  return out
 }
 
 export async function wabaGetEmbeddedConfig() {
@@ -226,7 +287,9 @@ export async function wabaGetEmbeddedConfig() {
 }
 
 export async function wabaRecheckOnboarding() {
-  return apiPost('/api/waba/onboarding/recheck', {})
+  const out = await apiPost('/api/waba/onboarding/recheck', {})
+  invalidateWabaStatusCache()
+  return out
 }
 
 export async function wabaReuseExisting(code) {
@@ -234,7 +297,9 @@ export async function wabaReuseExisting(code) {
 }
 
 export async function wabaMapExisting(payload) {
-  return apiPost('/api/waba/onboarding/map-existing', payload || {})
+  const out = await apiPost('/api/waba/onboarding/map-existing', payload || {})
+  invalidateWabaStatusCache()
+  return out
 }
 
 export async function getPlatformSettings(scope) {

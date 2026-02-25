@@ -59,10 +59,10 @@ export default function WhatsAppOnboardingPage() {
   const stateLabel = useMemo(() => stateMap[status.state] || status.state || "Requested", [status.state]);
   const fmt = (v) => (v ? new Date(v).toLocaleString() : "—");
 
-  async function loadStatus() {
+  async function loadStatus(force = false) {
     setLoading(true);
     try {
-      const payload = await wabaGetOnboardingStatus();
+      const payload = await wabaGetOnboardingStatus({ force });
       setStatus(payload || {});
     } catch (e) {
       toast.error(e.message || "Failed to load onboarding status");
@@ -72,7 +72,7 @@ export default function WhatsAppOnboardingPage() {
   }
 
   useEffect(() => {
-    loadStatus();
+    loadStatus(false);
     ensureEmbeddedConfig();
   }, []);
 
@@ -110,7 +110,7 @@ export default function WhatsAppOnboardingPage() {
     setStarting(true);
     try {
       await wabaStartOnboarding();
-      await loadStatus();
+      await loadStatus(true);
       toast.success("Onboarding started");
     } catch (e) {
       toast.error(e.message || "Failed to start onboarding");
@@ -145,7 +145,7 @@ export default function WhatsAppOnboardingPage() {
 
         Promise.resolve()
           .then(() => wabaExchangeCode(code))
-          .then(() => loadStatus())
+          .then(() => loadStatus(true))
           .then(() => toast.success("Embedded signup exchange complete"))
           .catch((e) => {
             toast.error(e?.message || "Code exchange failed");
@@ -213,7 +213,7 @@ export default function WhatsAppOnboardingPage() {
       });
       setMapDialogOpen(false);
       setMapForm((prev) => ({ ...prev, wabaId: "", phoneNumberId: "", accessToken: "" }));
-      await loadStatus();
+      await loadStatus(true);
       toast.success("Existing WABA mapped to selected project");
     } catch (e) {
       toast.error(e?.message || "Failed to map existing WABA");

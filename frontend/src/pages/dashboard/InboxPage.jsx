@@ -162,31 +162,6 @@ const InboxPage = () => {
       });
   }, [loadSla]);
 
-  useEffect(() => {
-    let mounted = true;
-
-    const refreshWaba = async () => {
-      try {
-        const waba = await wabaGetOnboardingStatus();
-        if (mounted) setWabaDetails(waba || null);
-      } catch {
-        // keep current view; transient errors should not wipe UI
-      }
-    };
-
-    const timer = setInterval(refreshWaba, 15000);
-    const onFocus = () => refreshWaba();
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onFocus);
-
-    return () => {
-      mounted = false;
-      clearInterval(timer);
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onFocus);
-    };
-  }, []);
-
   const formatAgo = (value) => {
     if (!value) return "just now";
     const dt = new Date(value);
