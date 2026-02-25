@@ -140,6 +140,39 @@ public class MessagesController(
         }
     }
 
+    [HttpPost("upload-whatsapp-asset")]
+    [RequestSizeLimit(25_000_000)]
+    public async Task<IActionResult> UploadWhatsAppAsset(
+        [FromForm] IFormFile file,
+        [FromForm] string? mediaType,
+        CancellationToken ct)
+    {
+        if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
+        if (file is null || file.Length <= 0) return BadRequest(new { error = "File is required." });
+        try
+        {
+            var resolvedType = ResolveMediaType(mediaType, file.ContentType, file.FileName);
+            if (resolvedType is null) return BadRequest(new { error = "Unsupported media type. Use image, video, audio, or document." });
+
+            var wabaCfg = await db.Set<TenantWabaConfig>()
+                .Where(x => x.TenantId == tenancy.TenantId && x.IsActive)
+                .OrderByDescending(x => x.ConnectedAtUtc)
+                .FirstOrDefaultAsync(ct);
+            if (wabaCfg is null) return BadRequest(new { error = "WABA config not connected." });
+            if (string.IsNullOrWhiteSpace(wabaCfg.PhoneNumberId)) return BadRequest(new { error = "Phone number ID missing." });
+            var accessToken = UnprotectToken(wabaCfg.AccessToken);
+            if (string.IsNullOrWhiteSpace(accessToken)) return BadRequest(new { error = "WABA access token missing." });
+
+            var options = configuration.GetSection("WhatsApp").Get<WhatsAppOptions>() ?? new WhatsAppOptions();
+            var mediaId = await UploadMediaToWhatsAppAsync(options, wabaCfg.PhoneNumberId, accessToken, file, ct);
+            return Ok(new { mediaId, mediaType = resolvedType, fileName = file.FileName });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
     [HttpGet]
     public IActionResult List()
     {

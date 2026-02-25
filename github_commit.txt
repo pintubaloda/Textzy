@@ -208,3 +208,19 @@ Pending commit:
 
 Summary:
 - Implemented DB-only onboarding template lifecycle, Meta+DB delete for WhatsApp templates, and end-to-end system variable presets/resolution.
+Pending commit:
+- backend-dotnet/Models/TemplateLibraryItem.cs
+- backend-dotnet/Data/ControlDbContext.cs
+- backend-dotnet/Models/Template.cs
+- backend-dotnet/DTOs/UpsertTemplateRequest.cs
+- backend-dotnet/Program.cs
+- backend-dotnet/Controllers/TemplatesController.cs
+- backend-dotnet/Controllers/TemplateLifecycleController.cs
+- backend-dotnet/Controllers/MessagesController.cs
+- backend-dotnet/Services/WhatsAppCloudService.cs
+- frontend/src/pages/dashboard/TemplatesPage.jsx
+- Requirestatus.txt
+- github_commit.txt
+
+Summary:
+- Implemented live template preview, media-header upload flow, category guidance/validation, and DB-backed shared template library sync/list/use.

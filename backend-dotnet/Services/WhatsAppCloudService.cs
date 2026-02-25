@@ -606,6 +606,8 @@ public class WhatsAppCloudService(
                                 Status = statusText,
                                 HeaderType = headerType,
                                 HeaderText = headerText,
+                                HeaderMediaId = string.Empty,
+                                HeaderMediaName = string.Empty,
                                 FooterText = footerText,
                                 ButtonsJson = buttonsJson,
                                 CreatedAtUtc = DateTime.UtcNow
@@ -618,6 +620,8 @@ public class WhatsAppCloudService(
                             existing.Status = statusText;
                             existing.HeaderType = headerType;
                             existing.HeaderText = headerText;
+                            existing.HeaderMediaId = string.Empty;
+                            existing.HeaderMediaName = string.Empty;
                             existing.FooterText = footerText;
                             existing.ButtonsJson = buttonsJson;
                         }
@@ -776,11 +780,19 @@ public class WhatsAppCloudService(
         }
         else if (headerType is "image" or "video" or "document")
         {
-            components.Add(new
-            {
-                type = "HEADER",
-                format = headerType.ToUpperInvariant()
-            });
+            var mediaId = (template.HeaderMediaId ?? string.Empty).Trim();
+            components.Add(string.IsNullOrWhiteSpace(mediaId)
+                ? new
+                {
+                    type = "HEADER",
+                    format = headerType.ToUpperInvariant()
+                }
+                : new
+                {
+                    type = "HEADER",
+                    format = headerType.ToUpperInvariant(),
+                    example = new { header_handle = new[] { mediaId } }
+                });
         }
 
         components.Add(new

@@ -17,6 +17,8 @@ public class UpsertTemplateRequest
     public string SmsSenderId { get; set; } = string.Empty;
     public string HeaderType { get; set; } = "none";
     public string HeaderText { get; set; } = string.Empty;
+    public string HeaderMediaId { get; set; } = string.Empty;
+    public string HeaderMediaName { get; set; } = string.Empty;
     public string FooterText { get; set; } = string.Empty;
     public string ButtonsJson { get; set; } = string.Empty;
 }

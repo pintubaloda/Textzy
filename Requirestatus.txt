@@ -227,3 +227,15 @@ Update: 2026-02-25 (Template lifecycle + system variable presets)
   - added auto-fill system variables button.
   - added per-variable system token picker.
   - preview resolves token markers using preset values.
+Update: 2026-02-25 (Template UX + shared library + media header)
+- Templates UI now has live WhatsApp-style preview (create dialog + list-row preview action).
+- Added media header support in template creation:
+  - Header type image/video/document now shows upload control.
+  - Upload API added: POST /api/messages/upload-whatsapp-asset (uploads to WhatsApp, returns mediaId).
+  - Template stores HeaderMediaId/HeaderMediaName.
+- Added category guidance + stricter validation hints (especially Authentication category).
+- Added shared template library (DB-backed, visible across projects/users):
+  - GET /api/templates/library
+  - POST /api/templates/library/sync (sync from Meta/account templates into shared DB library)
+  - Library UI with search/filter and "Use template" prefill flow.
+- Meta template submit composer now carries media header example handle when HeaderMediaId is set.
