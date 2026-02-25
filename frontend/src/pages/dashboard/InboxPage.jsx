@@ -40,7 +40,7 @@ import {
 } from "lucide-react";
 import { apiGet, apiPost, apiPostForm, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
-import { playNotificationTone } from "@/lib/notificationAudio";
+import { playNotificationTone, isNotificationAudioUnlocked, unlockNotificationAudio } from "@/lib/notificationAudio";
 import { toast } from "sonner";
 
 const NOTIFICATION_STYLE_KEY = "textzy.inbox.notificationStyle";
@@ -83,6 +83,7 @@ const InboxPage = () => {
   const [pendingVoiceFile, setPendingVoiceFile] = useState(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [voiceMimeType, setVoiceMimeType] = useState("");
+  const [audioUnlocked, setAudioUnlocked] = useState(() => isNotificationAudioUnlocked());
   const [notificationStyle, setNotificationStyle] = useState(() => {
     try {
       return localStorage.getItem(NOTIFICATION_STYLE_KEY) || "classic";
@@ -347,23 +348,44 @@ const InboxPage = () => {
     });
   };
 
+  const isWhatsAppAudioMimeSupported = (mimeType) => {
+    const m = String(mimeType || "").toLowerCase();
+    return m.includes("ogg") || m.includes("mpeg") || m.includes("mp4") || m.includes("aac") || m.includes("wav") || m.includes("amr");
+  };
+
   const pickRecorderMimeType = () => {
     if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported) return "";
     const candidates = [
       "audio/ogg;codecs=opus",
-      "audio/webm;codecs=opus",
       "audio/mp4",
       "audio/mpeg",
-      "audio/webm",
+      "audio/aac",
+      "audio/wav",
     ];
     return candidates.find((m) => MediaRecorder.isTypeSupported(m)) || "";
   };
 
+  const requestBrowserNotificationAndSound = async () => {
+    try {
+      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+        await Notification.requestPermission();
+      }
+      const ok = await unlockNotificationAudio();
+      setAudioUnlocked(ok || isNotificationAudioUnlocked());
+      if (ok) toast.success("Notification sounds enabled");
+      else toast.error("Could not enable sound. Click once again and allow browser permissions.");
+    } catch {
+      toast.error("Unable to enable notification sounds");
+    }
+  };
+
   const handleSendMessage = async () => {
     if (pendingVoiceFile) {
-      await uploadAndSendMedia(pendingVoiceFile, "audio");
-      setPendingVoiceFile(null);
-      setVoiceMimeType("");
+      const ok = await uploadAndSendMedia(pendingVoiceFile, "audio");
+      if (ok) {
+        setPendingVoiceFile(null);
+        setVoiceMimeType("");
+      }
       return;
     }
     if (!canReplyInSession) {
@@ -661,8 +683,10 @@ const InboxPage = () => {
       setReplyToMessage(null);
       await loadThread(selectedChat.id);
       await loadConversations();
+      return true;
     } catch (e) {
       toast.error(e?.message || `${mediaType} send failed`);
+      return false;
     } finally {
       setSendBusy(false);
     }
@@ -691,7 +715,7 @@ const InboxPage = () => {
       try {
         const mimeType = pickRecorderMimeType();
         if (!mimeType) {
-          toast.error("Voice recording format not supported in this browser.");
+          toast.error("Voice recording not supported for WhatsApp in this browser. Use Chrome/Edge or upload audio file.");
           return;
         }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -707,9 +731,20 @@ const InboxPage = () => {
         };
         recorder.onstop = () => {
           if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
-          const blob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || mimeType || "audio/webm" });
+          const blob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || mimeType || "audio/ogg" });
           if (!blob.size) {
             toast.error("No voice captured. Try again.");
+            return;
+          }
+          if (!isWhatsAppAudioMimeSupported(blob.type || mimeType)) {
+            setPendingVoiceFile(null);
+            setVoiceMimeType("");
+            toast.error("Recorded format is not WhatsApp-supported. Please upload .ogg/.mp3/.m4a audio file.");
+            try {
+              voiceStreamRef.current?.getTracks?.().forEach((t) => t.stop());
+            } catch {
+              // ignore
+            }
             return;
           }
           const ext = blob.type.includes("ogg")
@@ -719,7 +754,7 @@ const InboxPage = () => {
               : blob.type.includes("mpeg")
                 ? "mp3"
                 : "webm";
-          const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type || mimeType || "audio/webm" });
+          const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type || mimeType || "audio/ogg" });
           setPendingVoiceFile(file);
           toast.success("Voice ready. Click Send to deliver.");
           try {
@@ -875,6 +910,16 @@ const InboxPage = () => {
             </div>
           ) : null}
           <div className="flex items-center gap-1.5 shrink-0">
+            {!audioUnlocked ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-xl h-9 px-3 border-orange-200 text-orange-700 hover:bg-orange-50"
+                onClick={requestBrowserNotificationAndSound}
+              >
+                Enable notification sounds
+              </Button>
+            ) : null}
             <div className="hidden 2xl:flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-2 h-9">
               <Bell className="w-4 h-4 text-slate-500" />
               <select
