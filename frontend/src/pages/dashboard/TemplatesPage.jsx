@@ -114,6 +114,7 @@ const TemplatesPage = () => {
 
   const [templates, setTemplates] = useState([]);
   const [libraryItems, setLibraryItems] = useState([]);
+  const [libraryError, setLibraryError] = useState("");
   const [librarySearch, setLibrarySearch] = useState("");
   const [libraryCategory, setLibraryCategory] = useState("ALL");
   const [smsSenders, setSmsSenders] = useState([]);
@@ -137,18 +138,25 @@ const TemplatesPage = () => {
 
   const loadAll = async () => {
     try {
-      const [tpl, senders, lib] = await Promise.all([
+      const [tpl, senders] = await Promise.all([
         apiGet("/api/templates"),
         listSmsSenders().catch(() => []),
-        apiGet("/api/templates/library").catch(() => []),
       ]);
       setTemplates(tpl || []);
       setSmsSenders(senders || []);
-      setLibraryItems(lib || []);
-    } catch {
+      try {
+        const lib = await apiGet("/api/templates/library");
+        setLibraryItems(lib || []);
+        setLibraryError("");
+      } catch (e) {
+        setLibraryItems([]);
+        setLibraryError(e?.message || "Library fetch failed");
+      }
+    } catch (e) {
       setTemplates([]);
       setSmsSenders([]);
       setLibraryItems([]);
+      setLibraryError(e?.message || "Data load failed");
     }
   };
 
@@ -284,8 +292,8 @@ const TemplatesPage = () => {
   const syncLibrary = async () => {
     try {
       setSyncingLibrary(true);
-      await apiPost("/api/templates/library/sync", {});
-      toast.success("Template library synced and shared.");
+      const out = await apiPost("/api/templates/library/sync", {});
+      toast.success(`Template library synced. Meta templates: ${out?.sourceCount ?? 0}, upserted: ${out?.upserted ?? 0}`);
       await loadAll();
     } catch (e) {
       toast.error(e?.message || "Library sync failed.");
@@ -616,8 +624,18 @@ const TemplatesPage = () => {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                {filteredLibraryItems.slice(0, 12).map((item) => (
+              {libraryError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {libraryError}
+                </div>
+              ) : null}
+              {filteredLibraryItems.length === 0 ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  No templates in shared library yet. Click <b>Sync Library</b> to fetch from Meta and save to DB.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {filteredLibraryItems.slice(0, 12).map((item) => (
                   <div key={item.id} className="rounded-xl border border-slate-200 p-3 bg-white">
                     <div className="flex items-center justify-between gap-2">
                       <div className="font-medium text-slate-900 truncate">{item.name}</div>
@@ -628,8 +646,9 @@ const TemplatesPage = () => {
                       <Button size="sm" variant="outline" onClick={() => applyLibraryTemplate(item)}>Use template</Button>
                     </div>
                   </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         )}

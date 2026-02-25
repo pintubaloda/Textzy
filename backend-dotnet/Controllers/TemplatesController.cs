@@ -371,6 +371,11 @@ public class TemplatesController(
         }
 
         await controlDb.SaveChangesAsync(ct);
-        return Ok(new { synced = true, upserted });
+        return Ok(new
+        {
+            synced = true,
+            sourceCount = templates.Count,
+            upserted
+        });
     }
 }
