@@ -281,7 +281,8 @@ public class PlatformWabaOnboardingController(
         var ctx = await ResolveLookupTokenAsync(tenantId, ct);
         if (ctx is null) return NotFound("No lookup token configured. Add System User Access Token in Platform Settings > Waba Master Config.");
 
-        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{phoneNumberId.Trim()}?fields=id,display_phone_number,verified_name,quality_rating,name_status,whatsapp_business_account{{id,name}}";
+        var normalizedPhoneId = phoneNumberId.Trim();
+        var url = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{normalizedPhoneId}?fields=id,display_phone_number,verified_name,quality_rating,name_status,status";
         var (ok, status, body) = await GraphGetRawAsync(url, ctx.AccessToken, ct);
         if (!ok) return StatusCode(status, new { error = "graph_lookup_failed", status, detail = body });
 
@@ -291,6 +292,7 @@ public class PlatformWabaOnboardingController(
         string verifiedName = string.Empty;
         string quality = string.Empty;
         string nameStatus = string.Empty;
+        string phoneStatus = string.Empty;
 
         using (var doc = JsonDocument.Parse(body))
         {
@@ -299,10 +301,32 @@ public class PlatformWabaOnboardingController(
             verifiedName = TryGetString(root, "verified_name");
             quality = TryGetString(root, "quality_rating");
             nameStatus = TryGetString(root, "name_status");
+            phoneStatus = TryGetString(root, "status");
             if (root.TryGetProperty("whatsapp_business_account", out var wabaNode))
             {
                 wabaId = TryGetString(wabaNode, "id");
                 wabaName = TryGetString(wabaNode, "name");
+            }
+        }
+
+        // Some Graph versions do not include whatsapp_business_account in phone fields.
+        if (string.IsNullOrWhiteSpace(wabaId))
+        {
+            var wabaEdgeUrl = $"{_waOptions.GraphApiBase}/{_waOptions.ApiVersion}/{normalizedPhoneId}/whatsapp_business_account?fields=id,name";
+            var (okEdge, _, edgeBody) = await GraphGetRawAsync(wabaEdgeUrl, ctx.AccessToken, ct);
+            if (okEdge && !string.IsNullOrWhiteSpace(edgeBody))
+            {
+                try
+                {
+                    using var edgeDoc = JsonDocument.Parse(edgeBody);
+                    var root = edgeDoc.RootElement;
+                    wabaId = TryGetString(root, "id");
+                    wabaName = TryGetString(root, "name");
+                }
+                catch
+                {
+                    // keep lookup resilient; return phone details even if edge parse fails
+                }
             }
         }
 
@@ -312,11 +336,12 @@ public class PlatformWabaOnboardingController(
             tenantName = ctx.TenantName,
             tenantSlug = ctx.TenantSlug,
             tokenSource = ctx.TokenSource,
-            phoneNumberId = phoneNumberId.Trim(),
+            phoneNumberId = normalizedPhoneId,
             displayPhoneNumber = display,
             verifiedName,
             qualityRating = quality,
             nameStatus,
+            phoneStatus,
             wabaId,
             wabaName,
             raw = body
