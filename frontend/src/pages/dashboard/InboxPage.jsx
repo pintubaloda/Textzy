@@ -70,6 +70,7 @@ const InboxPage = () => {
   const [faqs, setFaqs] = useState([]);
   const [sla, setSla] = useState({ breachedCount: 0, items: [] });
   const [typingUsers, setTypingUsers] = useState([]);
+  const [replyToMessage, setReplyToMessage] = useState(null);
   const [showEmojiTray, setShowEmojiTray] = useState(false);
   const [showTemplateAttach, setShowTemplateAttach] = useState(false);
   const [showFaqAttach, setShowFaqAttach] = useState(false);
@@ -285,8 +286,10 @@ const InboxPage = () => {
     selectedChatIdRef.current = selectedChat?.id || null;
     if (!selectedChat?.id) {
       setMessages([]);
+      setReplyToMessage(null);
       return;
     }
+    setReplyToMessage(null);
     loadThread(selectedChat.id);
     loadNotes(selectedChat.id);
   }, [selectedChat?.id, loadNotes, loadThread]);
@@ -314,6 +317,18 @@ const InboxPage = () => {
       return next;
     });
     setShowFaqAttach(false);
+  };
+
+  const setReplyTarget = (msg) => {
+    if (!msg) return;
+    const preview = String(msg.text || "").trim();
+    setReplyToMessage({
+      id: msg.id,
+      sender: msg.sender,
+      text: preview.length > 140 ? `${preview.slice(0, 140)}...` : preview,
+      time: msg.time,
+    });
+    toast.success("Reply target selected");
   };
 
   const toggleTemplatePanel = () => {
@@ -359,13 +374,15 @@ const InboxPage = () => {
     try {
       setSendBusy(true);
       stopTyping();
+      const replyPrefix = replyToMessage ? `↪ Reply to (${replyToMessage.sender === "agent" ? "You" : "Customer"} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
       await apiPost("/api/messages/send", {
         recipient: selectedChat.phone || "+910000000000",
-        body: message,
+        body: `${replyPrefix}${message}`,
         channel: 2,
         idempotencyKey: buildIdempotencyKey("inbox"),
       });
       setMessage("");
+      setReplyToMessage(null);
       await loadThread(selectedChat.id);
       await loadConversations();
     } catch (e) {
@@ -389,9 +406,10 @@ const InboxPage = () => {
         return;
       }
       setSendBusy(true);
+      const replyPrefix = replyToMessage ? `↪ Reply to (${replyToMessage.sender === "agent" ? "You" : "Customer"} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
       await apiPost("/api/messages/send", {
         recipient: selectedChat.phone,
-        body: tpl.body || "Template message",
+        body: `${replyPrefix}${tpl.body || "Template message"}`,
         channel: 2,
         useTemplate: true,
         templateName: tpl.name,
@@ -400,6 +418,7 @@ const InboxPage = () => {
         idempotencyKey: buildIdempotencyKey("tpl"),
       });
       toast.success(`Template sent: ${tpl.name}`);
+      setReplyToMessage(null);
       await loadThread(selectedChat.id);
       await loadConversations();
       setShowTemplateAttach(false);
@@ -635,9 +654,11 @@ const InboxPage = () => {
       fd.append("recipient", selectedChat.phone);
       fd.append("file", file);
       fd.append("mediaType", mediaType);
-      fd.append("caption", caption);
+      const replyPrefix = replyToMessage ? `↪ Reply to (${replyToMessage.sender === "agent" ? "You" : "Customer"} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
+      fd.append("caption", `${replyPrefix}${caption || ""}`.trim());
       await apiPostForm("/api/messages/upload-whatsapp-media", fd, { "Idempotency-Key": buildIdempotencyKey(mediaType) });
       toast.success(`${mediaType[0].toUpperCase()}${mediaType.slice(1)} sent`);
+      setReplyToMessage(null);
       await loadThread(selectedChat.id);
       await loadConversations();
     } catch (e) {
@@ -897,12 +918,23 @@ const InboxPage = () => {
           <div className="space-y-4 max-w-3xl mx-auto">
             <div className="flex items-center justify-center"><span className="px-3 py-1 bg-white text-xs text-slate-500 rounded-full border border-slate-200">Today</span></div>
             {messages.length === 0 ? <div className="h-[60vh] flex items-center justify-center"><div className="text-center max-w-sm"><div className="w-16 h-16 rounded-2xl mx-auto bg-orange-100 text-orange-600 flex items-center justify-center mb-4"><MessageCircle className="w-8 h-8" /></div><h3 className="text-xl font-semibold text-slate-900">No messages yet</h3><p className="text-slate-500 mt-1">Start conversation with a customer to see messages and actions here.</p></div></div> : null}
-            {messages.map((msg) => <div key={msg.id} className={`flex ${msg.sender === "agent" ? "justify-end" : "justify-start"}`}><div className={`max-w-[70%] ${msg.sender === "agent" ? "chat-bubble-sent text-slate-900" : "chat-bubble-received text-slate-900"} px-4 py-3`}><p className="text-sm">{msg.text}</p><div className={`flex items-center gap-1 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}><span className="text-xs text-slate-500">{msg.time}</span>{msg.sender === "agent" && getStatusIcon(msg.status)}</div>{msg.sender === "agent" && msg.status === "failed" ? <p className="text-[11px] text-red-600 mt-1">{msg.lastError || "Send failed"}</p> : null}{msg.sender === "agent" && msg.status === "retryscheduled" && msg.nextRetryAtUtc ? <p className="text-[11px] text-amber-700 mt-1">Retry at {new Date(msg.nextRetryAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p> : null}</div></div>)}
+            {messages.map((msg) => <div key={msg.id} className={`flex ${msg.sender === "agent" ? "justify-end" : "justify-start"}`}><div className={`group max-w-[70%] ${msg.sender === "agent" ? "chat-bubble-sent text-slate-900" : "chat-bubble-received text-slate-900"} px-4 py-3`} onDoubleClick={() => setReplyTarget(msg)}><p className="text-sm">{msg.text}</p><div className={`flex items-center gap-2 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}><span className="text-xs text-slate-500">{msg.time}</span>{msg.sender === "agent" && getStatusIcon(msg.status)}<button type="button" className="text-[11px] text-slate-400 hover:text-orange-600 opacity-0 group-hover:opacity-100 transition" onClick={() => setReplyTarget(msg)}>Reply</button></div>{msg.sender === "agent" && msg.status === "failed" ? <p className="text-[11px] text-red-600 mt-1">{msg.lastError || "Send failed"}</p> : null}{msg.sender === "agent" && msg.status === "retryscheduled" && msg.nextRetryAtUtc ? <p className="text-[11px] text-amber-700 mt-1">Retry at {new Date(msg.nextRetryAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p> : null}</div></div>)}
             <div ref={endMessageRef} />
           </div>
         </ScrollArea>
 
         <div className="p-4 border-t border-slate-200 bg-white">
+          {replyToMessage ? (
+            <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50/60 px-3 py-2 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-orange-700">Replying to {replyToMessage.sender === "agent" ? "your message" : "customer message"}</div>
+                <div className="text-xs text-slate-600 truncate">{replyToMessage.text || "Message"}</div>
+              </div>
+              <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-slate-500" onClick={() => setReplyToMessage(null)}>
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          ) : null}
           <div className="flex items-end gap-3">
             <div className="flex items-center gap-1">
               <Button variant="ghost" size="icon" className="text-slate-500" onClick={handlePickAttachment}><Paperclip className="w-5 h-5" /></Button>
