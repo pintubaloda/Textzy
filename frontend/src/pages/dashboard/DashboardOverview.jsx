@@ -301,6 +301,18 @@ const DashboardOverview = () => {
       .map((k) => ({ name: k, count: Number(map[k] || 0) }));
   }, [webhookAnalytics]);
 
+  const wabaChatLink = useMemo(() => {
+    const raw = (wabaStatus?.phone || "").trim();
+    const digits = raw.replace(/[^\d]/g, "");
+    if (!digits) return "";
+    return `https://wa.me/${digits}`;
+  }, [wabaStatus?.phone]);
+
+  const wabaQrUrl = useMemo(() => {
+    if (!wabaChatLink) return "";
+    return `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(wabaChatLink)}`;
+  }, [wabaChatLink]);
+
   const getStatusBadge = (status) => {
     switch (status) {
       case "completed":
@@ -380,14 +392,24 @@ const DashboardOverview = () => {
 
           <div className="grid lg:grid-cols-3 gap-4">
             <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="text-3xl font-heading font-semibold leading-tight mb-4 text-slate-900">Setup FREE WhatsApp Business Account</h3>
-              <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-white to-orange-50 p-4 mb-5 text-base text-slate-700">Apply for WhatsApp Business API</div>
-              <p className="text-slate-600 mb-2 text-lg leading-snug">Click on Continue with Facebook to apply for WhatsApp Business API</p>
-              <p className="text-slate-600 text-lg leading-snug">Requirement: Registered Business & Working Website.</p>
+              <h3 className="text-3xl font-heading font-semibold leading-tight mb-4 text-slate-900">
+                {wabaStatus?.readyToSend ? "WhatsApp Business Account Connected" : "Setup FREE WhatsApp Business Account"}
+              </h3>
+              <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-white to-orange-50 p-4 mb-5 text-base text-slate-700">
+                {wabaStatus?.readyToSend ? "Connection is active for this project." : "Apply for WhatsApp Business API"}
+              </div>
+              <p className="text-slate-600 mb-2 text-lg leading-snug">
+                {wabaStatus?.readyToSend
+                  ? "Your WhatsApp Cloud API onboarding is complete. You can now send and receive messages."
+                  : "Click on Continue with Facebook to apply for WhatsApp Business API"}
+              </p>
+              <p className="text-slate-600 text-lg leading-snug">
+                {wabaStatus?.readyToSend ? "Use Map Existing WABA only when you want to replace current mapping." : "Requirement: Registered Business & Working Website."}
+              </p>
               <div className="mt-4 flex flex-wrap gap-3">
                 <Button variant="outline" className="border-slate-300 text-slate-700 bg-white hover:bg-slate-100 text-base px-7">Schedule Meeting</Button>
                 <Button className="bg-orange-500 hover:bg-orange-600 text-white text-base px-7 shadow-md shadow-orange-500/25" onClick={handleEmbeddedConnect} disabled={connectingWaba}>
-                  {connectingWaba ? "Connecting..." : "Continue with Facebook"}
+                  {connectingWaba ? "Connecting..." : (wabaStatus?.readyToSend ? "Reconnect with Facebook" : "Continue with Facebook")}
                 </Button>
               </div>
               <div className="mt-3">
@@ -405,8 +427,12 @@ const DashboardOverview = () => {
               </div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
-              <div className="w-36 h-36 mx-auto mb-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center">
-                <QrCode className="w-24 h-24 text-slate-700" />
+              <div className="w-36 h-36 mx-auto mb-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center overflow-hidden">
+                {wabaQrUrl ? (
+                  <img src={wabaQrUrl} alt="WhatsApp QR" className="h-full w-full object-cover" />
+                ) : (
+                  <QrCode className="w-24 h-24 text-slate-700" />
+                )}
               </div>
               <p className="text-3xl font-semibold leading-tight">{wabaStatus.businessName || "Project Business Name"}</p>
               <p className="text-slate-600 mt-2 text-xl">{wabaStatus.phone || "+91 72496 30121"}</p>
