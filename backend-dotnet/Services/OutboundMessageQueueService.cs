@@ -37,9 +37,10 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
     {
         try
         {
-            return string.IsNullOrWhiteSpace(_redisConn)
+            var conn = config["OutboundQueue:RedisConnection"] ?? config["REDIS_URL"] ?? string.Empty;
+            return string.IsNullOrWhiteSpace(conn)
                 ? null
-                : ConnectionMultiplexer.Connect(_redisConn);
+                : ConnectionMultiplexer.Connect(conn);
         }
         catch
         {
@@ -50,8 +51,13 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(_rabbitConn)) return null;
-            return BuildRabbitConnection(_rabbitConn, _rabbitVhost, _rabbitUser, _rabbitPass, _rabbitUseTls);
+            var conn = config["OutboundQueue:RabbitMq:ConnectionString"] ?? config["RABBITMQ_URL"] ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(conn)) return null;
+            var vhost = config["OutboundQueue:RabbitMq:VHost"] ?? string.Empty;
+            var user = config["OutboundQueue:RabbitMq:Username"] ?? string.Empty;
+            var pass = config["OutboundQueue:RabbitMq:Password"] ?? string.Empty;
+            var useTls = bool.TryParse(config["OutboundQueue:RabbitMq:UseTls"], out var tlsFlag) ? tlsFlag : true;
+            return BuildRabbitConnection(conn, vhost, user, pass, useTls);
         }
         catch
         {

@@ -40,9 +40,10 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
     {
         try
         {
-            return string.IsNullOrWhiteSpace(_redisConn)
+            var conn = config["WebhookQueue:RedisConnection"] ?? config["REDIS_URL"] ?? string.Empty;
+            return string.IsNullOrWhiteSpace(conn)
                 ? null
-                : ConnectionMultiplexer.Connect(_redisConn);
+                : ConnectionMultiplexer.Connect(conn);
         }
         catch
         {
@@ -53,8 +54,13 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(_rabbitConn)) return null;
-            return BuildRabbitConnection(_rabbitConn, _rabbitVhost, _rabbitUser, _rabbitPass, _rabbitUseTls);
+            var conn = config["WebhookQueue:RabbitMq:ConnectionString"] ?? config["RABBITMQ_URL"] ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(conn)) return null;
+            var vhost = config["WebhookQueue:RabbitMq:VHost"] ?? string.Empty;
+            var user = config["WebhookQueue:RabbitMq:Username"] ?? string.Empty;
+            var pass = config["WebhookQueue:RabbitMq:Password"] ?? string.Empty;
+            var useTls = bool.TryParse(config["WebhookQueue:RabbitMq:UseTls"], out var tlsFlag) ? tlsFlag : true;
+            return BuildRabbitConnection(conn, vhost, user, pass, useTls);
         }
         catch
         {
