@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as signalR from "@microsoft/signalr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,7 +41,7 @@ import { getSession } from "@/lib/api";
 import { toast } from "sonner";
 
 const InboxPage = () => {
-  const [selectedConversation, setSelectedConversation] = useState(0);
+  const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [message, setMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
@@ -59,6 +59,10 @@ const InboxPage = () => {
   const [newNote, setNewNote] = useState("");
   const [sla, setSla] = useState({ breachedCount: 0, items: [] });
   const [typingUsers, setTypingUsers] = useState([]);
+  const selectedChatIdRef = useRef(null);
+  const typingTimerRef = useRef(null);
+  const typingActiveRef = useRef(false);
+  const audioCtxRef = useRef(null);
 
   const mapConversation = (x) => ({
     id: x.id,
@@ -88,14 +92,46 @@ const InboxPage = () => {
     status: String(x.status || "").toLowerCase() === "received" ? "received" : String(x.status || "").toLowerCase(),
   });
 
-  const loadConversations = () =>
-    apiGet("/api/inbox/conversations").then((c) => setConversations((c || []).map(mapConversation))).catch(() => {});
-  const loadThread = (conversationId) =>
-    apiGet(`/api/inbox/conversations/${conversationId}/messages`).then((rows) => setMessages((rows || []).map(mapMessage))).catch(() => setMessages([]));
-  const loadNotes = (conversationId) =>
-    apiGet(`/api/inbox/conversations/${conversationId}/notes`).then((rows) => setNotes(rows || [])).catch(() => setNotes([]));
-  const loadSla = () =>
-    apiGet("/api/inbox/sla?thresholdMinutes=15").then((x) => setSla(x || { breachedCount: 0, items: [] })).catch(() => {});
+  const loadConversations = useCallback(
+    () => apiGet("/api/inbox/conversations").then((c) => setConversations((c || []).map(mapConversation))).catch(() => {}),
+    []
+  );
+  const loadThread = useCallback(
+    (conversationId) =>
+      apiGet(`/api/inbox/conversations/${conversationId}/messages`).then((rows) => setMessages((rows || []).map(mapMessage))).catch(() => setMessages([])),
+    []
+  );
+  const loadNotes = useCallback(
+    (conversationId) =>
+      apiGet(`/api/inbox/conversations/${conversationId}/notes`).then((rows) => setNotes(rows || [])).catch(() => setNotes([])),
+    []
+  );
+  const loadSla = useCallback(
+    () => apiGet("/api/inbox/sla?thresholdMinutes=15").then((x) => setSla(x || { breachedCount: 0, items: [] })).catch(() => {}),
+    []
+  );
+
+  const playNotificationSound = useCallback((frequency = 880) => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = audioCtxRef.current || new Ctx();
+      audioCtxRef.current = ctx;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(frequency, ctx.currentTime);
+      gain.gain.setValueAtTime(0.001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.06, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.16);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.18);
+    } catch {
+      // Ignore audio failures (autoplay policy / unsupported browser)
+    }
+  }, []);
 
   useEffect(() => {
     Promise.all([
@@ -107,7 +143,9 @@ const InboxPage = () => {
       wabaGetOnboardingStatus().catch(() => null),
     ])
       .then(([c, ct, tm, meData, tpl, waba]) => {
-        setConversations((c || []).map(mapConversation));
+        const mapped = (c || []).map(mapConversation);
+        setConversations(mapped);
+        setSelectedConversationId((prev) => prev || mapped[0]?.id || null);
         setMessages([]);
         setContacts(ct || []);
         setTeamMembers(tm || []);
@@ -122,7 +160,7 @@ const InboxPage = () => {
         setConversations([]);
         setMessages([]);
       });
-  }, []);
+  }, [loadSla]);
 
   useEffect(() => {
     let mounted = true;
@@ -182,7 +220,16 @@ const InboxPage = () => {
     [conversations, me]
   );
 
-  const selectedChat = filteredConversations[selectedConversation] || {
+  useEffect(() => {
+    if (filteredConversations.length === 0) {
+      setSelectedConversationId(null);
+      return;
+    }
+    const exists = filteredConversations.some((x) => x.id === selectedConversationId);
+    if (!exists) setSelectedConversationId(filteredConversations[0].id);
+  }, [filteredConversations, selectedConversationId]);
+
+  const selectedChat = filteredConversations.find((x) => x.id === selectedConversationId) || filteredConversations[0] || {
     avatar: "NA",
     name: "No conversation",
     phone: "-",
@@ -200,13 +247,14 @@ const InboxPage = () => {
   }, [selectedTemplate]);
 
   useEffect(() => {
+    selectedChatIdRef.current = selectedChat?.id || null;
     if (!selectedChat?.id) {
       setMessages([]);
       return;
     }
     loadThread(selectedChat.id);
     loadNotes(selectedChat.id);
-  }, [selectedChat?.id]);
+  }, [selectedChat?.id, loadNotes, loadThread]);
 
   const handleSendMessage = () => {
     if (!canReplyInSession) {
@@ -214,6 +262,7 @@ const InboxPage = () => {
       return;
     }
     if (message.trim()) {
+      stopTyping();
       apiPost("/api/messages/send", {
         recipient: selectedChat.phone || "+910000000000",
         body: message,
@@ -233,6 +282,7 @@ const InboxPage = () => {
       return;
     }
     try {
+      stopTyping();
       const params = templateParamIndexes.map((idx) => (templateVars[idx] || "").trim());
       if (params.some((p) => !p)) {
         toast.error("Fill all template variables before sending.");
@@ -265,51 +315,108 @@ const InboxPage = () => {
     if (!s?.tenantSlug) return;
     const baseUrl = process.env.REACT_APP_API_BASE || "https://textzy.onrender.com";
     const connection = new signalR.HubConnectionBuilder()
-      .withUrl(`${baseUrl}/hubs/inbox`)
+      .withUrl(`${baseUrl}/hubs/inbox?tenantSlug=${encodeURIComponent(s.tenantSlug)}`, {
+        withCredentials: true,
+        accessTokenFactory: () => s.accessToken || s.token || "",
+      })
       .withAutomaticReconnect()
       .build();
 
+    const joinRoom = () => connection.invoke("JoinTenantRoom", s.tenantSlug).catch(() => {});
+    const activeConversationId = () => selectedChatIdRef.current;
+
     const refreshMessageViews = () => {
       loadConversations();
-      if (selectedChat?.id) loadThread(selectedChat.id);
+      const activeId = activeConversationId();
+      if (activeId) loadThread(activeId);
     };
-    connection.on("message.queued", refreshMessageViews);
-    connection.on("message.sent", refreshMessageViews);
+    connection.on("message.queued", () => {
+      refreshMessageViews();
+    });
+    connection.on("message.sent", () => {
+      refreshMessageViews();
+      playNotificationSound(980);
+    });
     connection.on("webhook.inbound", () => {
       loadConversations();
-      if (selectedChat?.id) loadThread(selectedChat.id);
+      const activeId = activeConversationId();
+      if (activeId) loadThread(activeId);
       loadSla();
+      playNotificationSound(760);
     });
     connection.on("conversation.assigned", () => loadConversations());
     connection.on("conversation.transferred", () => loadConversations());
     connection.on("conversation.labels", () => loadConversations());
     connection.on("conversation.note", () => {
-      if (selectedChat?.id) loadNotes(selectedChat.id);
+      const activeId = activeConversationId();
+      if (activeId) loadNotes(activeId);
     });
     connection.onreconnected(() => {
+      joinRoom();
       loadConversations();
-      if (selectedChat?.id) loadThread(selectedChat.id);
+      const activeId = activeConversationId();
+      if (activeId) loadThread(activeId);
       loadSla();
     });
     connection.on("conversation.typing", (e) => {
-      if (!e?.conversationId || String(e.conversationId) !== String(selectedChat?.id)) return;
+      const activeId = activeConversationId();
+      if (!e?.conversationId || String(e.conversationId) !== String(activeId)) return;
+      if (e.user && me?.email && String(e.user).toLowerCase() === String(me.email).toLowerCase()) return;
       setTypingUsers((prev) => {
         const next = new Set(prev);
         if (e.isTyping) next.add(e.user || "Agent");
         else next.delete(e.user || "Agent");
         return [...next];
       });
+      if (e.isTyping) {
+        setTimeout(() => {
+          setTypingUsers((prev) => prev.filter((u) => u !== (e.user || "Agent")));
+        }, 3000);
+      }
+    });
+    connection.onclose(() => {
+      setTypingUsers([]);
     });
 
     connection.start()
-      .then(() => connection.invoke("JoinTenantRoom", s.tenantSlug))
-      .catch(() => {});
+      .then(joinRoom)
+      .catch(() => {
+        toast.error("Realtime connection failed. Inbox will auto-refresh on actions.");
+      });
 
     return () => {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
       connection.invoke("LeaveTenantRoom", s.tenantSlug).catch(() => {});
       connection.stop().catch(() => {});
     };
+  }, [loadConversations, loadNotes, loadSla, loadThread, me?.email, playNotificationSound]);
+
+  const emitTyping = useCallback((isTyping) => {
+    if (!selectedChat?.id) return;
+    apiPost("/api/inbox/typing", { conversationId: selectedChat.id, isTyping }).catch(() => {});
   }, [selectedChat?.id]);
+
+  const handleInputTyping = useCallback((value) => {
+    setMessage(value);
+    if (!selectedChat?.id) return;
+    if (!typingActiveRef.current) {
+      typingActiveRef.current = true;
+      emitTyping(true);
+    }
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = setTimeout(() => {
+      typingActiveRef.current = false;
+      emitTyping(false);
+    }, 1200);
+  }, [emitTyping, selectedChat?.id]);
+
+  const stopTyping = useCallback(() => {
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    if (typingActiveRef.current) {
+      typingActiveRef.current = false;
+      emitTyping(false);
+    }
+  }, [emitTyping]);
 
   const handleAssign = async (member) => {
     if (!selectedChat.id) return;
@@ -419,8 +526,8 @@ const InboxPage = () => {
         </div>
 
         <ScrollArea className="flex-1">
-          {filteredConversations.map((conversation, index) => (
-            <div key={conversation.id} className={`p-4 border-b border-slate-100 cursor-pointer transition-colors ${selectedConversation === index ? "bg-orange-50 border-l-4 border-l-orange-500" : "hover:bg-slate-50"}`} onClick={() => setSelectedConversation(index)}>
+          {filteredConversations.map((conversation) => (
+            <div key={conversation.id} className={`p-4 border-b border-slate-100 cursor-pointer transition-colors ${selectedChat?.id === conversation.id ? "bg-orange-50 border-l-4 border-l-orange-500" : "hover:bg-slate-50"}`} onClick={() => setSelectedConversationId(conversation.id)}>
               <div className="flex items-start gap-3">
                 <div className="relative">
                   <Avatar className="w-12 h-12">
@@ -526,14 +633,14 @@ const InboxPage = () => {
               <Textarea
                 placeholder={canReplyInSession ? "Type a message..." : "24h session closed. Use template message flow."}
                 value={message}
-                onChange={(e) => setMessage(e.target.value)}
+                onChange={(e) => handleInputTyping(e.target.value)}
                 className="min-h-[70px] max-h-40 resize-none pr-12 text-base leading-6 border-0 focus-visible:ring-0 rounded-2xl bg-transparent text-slate-900 placeholder:text-slate-400"
                 disabled={!canReplyInSession}
                 onFocus={() => {
-                  if (selectedChat?.id) apiPost("/api/inbox/typing", { conversationId: selectedChat.id, isTyping: true }).catch(() => {});
+                  if (selectedChat?.id) emitTyping(true);
                 }}
                 onBlur={() => {
-                  if (selectedChat?.id) apiPost("/api/inbox/typing", { conversationId: selectedChat.id, isTyping: false }).catch(() => {});
+                  stopTyping();
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {

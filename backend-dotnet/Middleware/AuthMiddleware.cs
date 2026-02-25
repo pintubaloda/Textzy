@@ -17,6 +17,7 @@ public class AuthMiddleware(RequestDelegate next)
         var isPublicTenantPath = path.StartsWith("/api/tenants", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/public", StringComparison.OrdinalIgnoreCase);
         var isSwaggerPath = path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase);
+        var isHubPath = path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase);
         var isWabaWebhookPath = path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase);
         var isPaymentWebhookPath = path.StartsWith("/api/payments/webhook", StringComparison.OrdinalIgnoreCase);
 
@@ -35,6 +36,11 @@ public class AuthMiddleware(RequestDelegate next)
         else
         {
             opaqueToken = authCookie.ReadToken(context) ?? string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(opaqueToken) && isHubPath)
+        {
+            opaqueToken = context.Request.Query["access_token"].FirstOrDefault()?.Trim() ?? string.Empty;
         }
 
         if (string.IsNullOrWhiteSpace(opaqueToken))

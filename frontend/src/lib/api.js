@@ -17,10 +17,11 @@ export function getSession() {
       tenantSlug: p.tenantSlug || p.slug || '',
       projectName: p.projectName || '',
       role: p.role || '',
-      email: p.email || ''
+      email: p.email || '',
+      accessToken: p.accessToken || p.token || ''
     }
   } catch {
-    return { tenantSlug: '', projectName: '', role: '', email: '' }
+    return { tenantSlug: '', projectName: '', role: '', email: '', accessToken: '' }
   }
 }
 
@@ -65,7 +66,8 @@ async function baseFetch(path, options = {}, useAuth = true) {
 async function refresh() {
   const res = await baseFetch('/api/auth/refresh', { method: 'POST' }, true)
   if (!res.ok) return false
-  await res.json().catch(() => ({}))
+  const data = await res.json().catch(() => ({}))
+  if (data?.accessToken) setSession({ accessToken: data.accessToken })
   return true
 }
 
@@ -139,7 +141,9 @@ export async function authLogin({ email, password, tenantSlug }) {
     const msg = await res.text()
     throw new Error(msg || 'Invalid login')
   }
-  return res.json()
+  const data = await res.json()
+  if (data?.accessToken) setSession({ accessToken: data.accessToken })
+  return data
 }
 
 export async function authAcceptInvite({ token, fullName, password }) {
@@ -153,7 +157,9 @@ export async function authAcceptInvite({ token, fullName, password }) {
     const msg = await res.text()
     throw new Error(msg || 'Failed to accept invite')
   }
-  return res.json()
+  const data = await res.json()
+  if (data?.accessToken) setSession({ accessToken: data.accessToken })
+  return data
 }
 
 export async function initializeMe() {
