@@ -13,4 +13,8 @@ public class SendMessageRequest
     public string TemplateName { get; set; } = string.Empty;
     public string TemplateLanguageCode { get; set; } = "en";
     public List<string> TemplateParameters { get; set; } = [];
+    public bool IsMedia { get; set; }
+    public string MediaType { get; set; } = string.Empty; // image | video | audio | document
+    public string MediaId { get; set; } = string.Empty;
+    public string MediaCaption { get; set; } = string.Empty;
 }

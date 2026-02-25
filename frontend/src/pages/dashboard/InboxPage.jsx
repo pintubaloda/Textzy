@@ -37,12 +37,17 @@ import {
   Mic,
   Bell,
 } from "lucide-react";
-import { apiGet, apiPost, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
+import { apiGet, apiPost, apiPostForm, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
 import { playNotificationTone } from "@/lib/notificationAudio";
 import { toast } from "sonner";
 
 const NOTIFICATION_STYLE_KEY = "textzy.inbox.notificationStyle";
+const FULL_EMOJI_SET = [
+  "😀","😁","😂","🤣","😃","😄","😅","😆","😉","😊","🙂","🙃","😍","🥰","😘","😗","😙","😚","😋","😛","😜","🤪","🤗","🤩","🤔",
+  "😐","😶","🙄","😏","😣","😥","😮","🤐","😯","😪","😫","🥱","😴","😌","😛","🫡","🤝","👍","👎","👏","🙌","🙏","💪","🔥","✅",
+  "❌","⚡","💯","🎉","✨","💬","📌","📎","🧩","📞","📹","🎤","📷","📝","🛒","💰","📦","🚚","📍","📅","⌛","⏱️","⚠️","❓","❤️"
+];
 
 const InboxPage = () => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
@@ -61,9 +66,18 @@ const InboxPage = () => {
   const [templateVars, setTemplateVars] = useState({});
   const [notes, setNotes] = useState([]);
   const [newNote, setNewNote] = useState("");
+  const [faqs, setFaqs] = useState([]);
   const [sla, setSla] = useState({ breachedCount: 0, items: [] });
   const [typingUsers, setTypingUsers] = useState([]);
   const [showEmojiTray, setShowEmojiTray] = useState(false);
+  const [showTemplateAttach, setShowTemplateAttach] = useState(false);
+  const [showFaqAttach, setShowFaqAttach] = useState(false);
+  const [emojiSearch, setEmojiSearch] = useState("");
+  const [sendBusy, setSendBusy] = useState(false);
+  const [assignBusy, setAssignBusy] = useState(false);
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [starBusy, setStarBusy] = useState(false);
+  const [voiceRecording, setVoiceRecording] = useState(false);
   const [notificationStyle, setNotificationStyle] = useState(() => {
     try {
       return localStorage.getItem(NOTIFICATION_STYLE_KEY) || "classic";
@@ -75,7 +89,11 @@ const InboxPage = () => {
   const typingTimerRef = useRef(null);
   const typingActiveRef = useRef(false);
   const fileInputRef = useRef(null);
+  const imageInputRef = useRef(null);
+  const docInputRef = useRef(null);
   const endMessageRef = useRef(null);
+  const voiceRecorderRef = useRef(null);
+  const voiceChunksRef = useRef([]);
 
   const mapConversation = (x) => ({
     id: x.id,
@@ -97,16 +115,31 @@ const InboxPage = () => {
     const rawStatus = String(x.status || "").toLowerCase();
     const sender = rawStatus === "received" ? "customer" : "agent";
     const normalizedStatus = sender === "agent" ? (rawStatus || "sent") : "received";
+    const messageType = String(x.messageType || "session");
+    let text = x.body || "";
+    if (messageType.startsWith("media:")) {
+      const kind = messageType.split(":")[1] || "media";
+      try {
+        const media = JSON.parse(x.body || "{}");
+        text = `${kind === "audio" ? "🎤" : "📎"} ${kind.toUpperCase()}${media.caption ? ` - ${media.caption}` : ""}`;
+      } catch {
+        text = `📎 ${kind.toUpperCase()} attachment`;
+      }
+    } else if (messageType === "template") {
+      const name = String(x.body || "").split("|")[0] || "template";
+      text = `🧩 Template: ${name}`;
+    }
     return {
     id: x.id,
     sender,
-    text: x.body,
+    text,
     time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
     retryCount: Number(x.retryCount || 0),
     nextRetryAtUtc: x.nextRetryAtUtc || null,
     lastError: x.lastError || "",
     queueProvider: x.queueProvider || "memory",
     status: normalizedStatus,
+    messageType,
   };
   };
 
@@ -153,9 +186,10 @@ const InboxPage = () => {
       apiGet("/api/auth/team-members").catch(() => []),
       apiGet("/api/auth/me").catch(() => null),
       apiGet("/api/templates").catch(() => []),
+      apiGet("/api/automation/faq").catch(() => []),
       wabaGetOnboardingStatus().catch(() => null),
     ])
-      .then(([c, ct, tm, meData, tpl, waba]) => {
+      .then(([c, ct, tm, meData, tpl, faqRows, waba]) => {
         const mapped = (c || []).map(mapConversation);
         setConversations(mapped);
         setSelectedConversationId((prev) => prev || mapped[0]?.id || null);
@@ -166,6 +200,7 @@ const InboxPage = () => {
         const approved = (tpl || []).filter((x) => String(x.status || "").toLowerCase() === "approved" && Number(x.channel) === 2);
         setTemplates(approved);
         if (approved.length > 0) setSelectedTemplateId(String(approved[0].id));
+        setFaqs((faqRows || []).filter((f) => f.isActive !== false));
         setWabaDetails(waba);
         loadSla();
       })
@@ -229,6 +264,11 @@ const InboxPage = () => {
   const isStarred = (selectedChat.labels || []).some((x) => String(x).toLowerCase() === "starred");
   const selectedContact = contacts.find((x) => x.phone === selectedChat.phone);
   const selectedTemplate = templates.find((x) => String(x.id) === selectedTemplateId) || templates[0];
+  const filteredEmojis = useMemo(() => {
+    const q = emojiSearch.trim();
+    if (!q) return FULL_EMOJI_SET;
+    return FULL_EMOJI_SET.filter((e) => e.includes(q));
+  }, [emojiSearch]);
   const templateParamIndexes = useMemo(() => {
     const body = selectedTemplate?.body || "";
     const matches = [...body.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1]));
@@ -250,22 +290,37 @@ const InboxPage = () => {
     endMessageRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, selectedChat?.id]);
 
-  const handleSendMessage = () => {
+  const handleAttachFaq = (item) => {
+    if (!item?.answer) return;
+    setMessage((prev) => {
+      const next = `${prev ? `${prev}\n` : ""}${item.answer}`;
+      return next;
+    });
+    setShowFaqAttach(false);
+  };
+
+  const handleSendMessage = async () => {
     if (!canReplyInSession) {
       toast.error("24-hour session expired. Send an approved template first.");
       return;
     }
-    if (message.trim()) {
+    if (!message.trim() || sendBusy) return;
+    try {
+      setSendBusy(true);
       stopTyping();
-      apiPost("/api/messages/send", {
+      await apiPost("/api/messages/send", {
         recipient: selectedChat.phone || "+910000000000",
         body: message,
         channel: 2,
         idempotencyKey: buildIdempotencyKey("inbox"),
-      }).catch(() => {});
+      });
       setMessage("");
-      loadThread(selectedChat.id);
-      loadConversations();
+      await loadThread(selectedChat.id);
+      await loadConversations();
+    } catch (e) {
+      toast.error(e?.message || "Message send failed");
+    } finally {
+      setSendBusy(false);
     }
   };
 
@@ -282,6 +337,7 @@ const InboxPage = () => {
         toast.error("Fill all template variables before sending.");
         return;
       }
+      setSendBusy(true);
       await apiPost("/api/messages/send", {
         recipient: selectedChat.phone,
         body: tpl.body || "Template message",
@@ -293,10 +349,13 @@ const InboxPage = () => {
         idempotencyKey: buildIdempotencyKey("tpl"),
       });
       toast.success(`Template sent: ${tpl.name}`);
-      loadThread(selectedChat.id);
-      loadConversations();
+      await loadThread(selectedChat.id);
+      await loadConversations();
+      setShowTemplateAttach(false);
     } catch (e) {
       toast.error(e?.message || "Template send failed");
+    } finally {
+      setSendBusy(false);
     }
   };
 
@@ -435,8 +494,9 @@ const InboxPage = () => {
   }, [emitTyping]);
 
   const handleAssign = async (member) => {
-    if (!selectedChat.id) return;
+    if (!selectedChat.id || assignBusy) return;
     try {
+      setAssignBusy(true);
       const updated = await apiPost(`/api/inbox/conversations/${selectedChat.id}/assign`, {
         userId: String(member.id),
         userName: member.name,
@@ -445,14 +505,17 @@ const InboxPage = () => {
         prev.map((x) => (x.id === selectedChat.id ? { ...x, assignedUserId: updated.assignedUserId, assignedUserName: updated.assignedUserName } : x))
       );
       toast.success(`Assigned to ${member.name}`);
-    } catch {
-      toast.error("Failed to assign");
+    } catch (e) {
+      toast.error(e?.message || "Failed to assign");
+    } finally {
+      setAssignBusy(false);
     }
   };
 
   const handleTransfer = async (member) => {
-    if (!selectedChat.id) return;
+    if (!selectedChat.id || transferBusy) return;
     try {
+      setTransferBusy(true);
       const updated = await apiPost(`/api/inbox/conversations/${selectedChat.id}/transfer`, {
         userId: String(member.id),
         userName: member.name,
@@ -461,8 +524,10 @@ const InboxPage = () => {
         prev.map((x) => (x.id === selectedChat.id ? { ...x, assignedUserId: updated.assignedUserId, assignedUserName: updated.assignedUserName } : x))
       );
       toast.success(`Transferred to ${member.name}`);
-    } catch {
-      toast.error("Failed to transfer chat");
+    } catch (e) {
+      toast.error(e?.message || "Failed to transfer chat");
+    } finally {
+      setTransferBusy(false);
     }
   };
 
@@ -482,8 +547,9 @@ const InboxPage = () => {
   };
 
   const handleToggleStar = async () => {
-    if (!selectedChat?.id) return;
+    if (!selectedChat?.id || starBusy) return;
     try {
+      setStarBusy(true);
       const current = selectedChat.labels || [];
       const has = current.some((x) => String(x).toLowerCase() === "starred");
       const labels = has ? current.filter((x) => String(x).toLowerCase() !== "starred") : [...current, "starred"];
@@ -491,8 +557,10 @@ const InboxPage = () => {
       const nextLabels = (updated.labelsCsv || "").split(",").map((z) => z.trim()).filter(Boolean);
       setConversations((prev) => prev.map((x) => (x.id === selectedChat.id ? { ...x, labels: nextLabels } : x)));
       toast.success(has ? "Star removed" : "Conversation starred");
-    } catch {
-      toast.error("Failed to update star");
+    } catch (e) {
+      toast.error(e?.message || "Failed to update star");
+    } finally {
+      setStarBusy(false);
     }
   };
 
@@ -508,36 +576,77 @@ const InboxPage = () => {
     window.open(`https://wa.me/${digits}`, "_blank", "noopener,noreferrer");
   };
 
-  const handlePickAttachment = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleAttachmentSelected = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
+  const uploadAndSendMedia = async (file, mediaType, caption = "") => {
     if (!file || !selectedChat?.phone) return;
     try {
-      await apiPost("/api/messages/send", {
-        recipient: selectedChat.phone,
-        body: `[Attachment] ${file.name}`,
-        channel: 2,
-        idempotencyKey: buildIdempotencyKey("attach"),
-      });
-      toast.success(`Attachment queued: ${file.name}`);
-      loadThread(selectedChat.id);
-      loadConversations();
-    } catch {
-      toast.error("Attachment send failed");
+      setSendBusy(true);
+      const fd = new FormData();
+      fd.append("recipient", selectedChat.phone);
+      fd.append("file", file);
+      fd.append("mediaType", mediaType);
+      fd.append("caption", caption);
+      await apiPostForm("/api/messages/upload-whatsapp-media", fd, { "Idempotency-Key": buildIdempotencyKey(mediaType) });
+      toast.success(`${mediaType[0].toUpperCase()}${mediaType.slice(1)} sent`);
+      await loadThread(selectedChat.id);
+      await loadConversations();
+    } catch (e) {
+      toast.error(e?.message || `${mediaType} send failed`);
+    } finally {
+      setSendBusy(false);
     }
+  };
+
+  const handlePickAttachment = () => fileInputRef.current?.click();
+  const handlePickImage = () => imageInputRef.current?.click();
+  const handlePickDocument = () => docInputRef.current?.click();
+
+  const handleAttachmentSelected = async (e, forcedType = null) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const mime = String(file.type || "").toLowerCase();
+    const mediaType = forcedType || (mime.startsWith("image/") ? "image" : mime.startsWith("audio/") ? "audio" : mime.startsWith("video/") ? "video" : "document");
+    await uploadAndSendMedia(file, mediaType, mediaType === "audio" ? "" : (message || "").trim());
   };
 
   const handleInsertEmoji = (emoji) => {
     setMessage((prev) => `${prev}${emoji}`);
-    setShowEmojiTray(false);
   };
 
-  const handleVoiceNote = () => {
-    toast.info("Voice recording will be enabled in next update. Text/attachment is active.");
+  const handleVoiceNote = async () => {
+    if (!selectedChat?.phone) return;
+    if (!voiceRecording) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new MediaRecorder(stream);
+        voiceChunksRef.current = [];
+        recorder.ondataavailable = (evt) => {
+          if (evt.data?.size > 0) voiceChunksRef.current.push(evt.data);
+        };
+        recorder.onstop = async () => {
+          const blob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+          const ext = blob.type.includes("ogg") ? "ogg" : "webm";
+          const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type || "audio/webm" });
+          await uploadAndSendMedia(file, "audio");
+          stream.getTracks().forEach((t) => t.stop());
+        };
+        voiceRecorderRef.current = recorder;
+        recorder.start();
+        setVoiceRecording(true);
+        toast.success("Recording started. Tap mic again to send.");
+      } catch (e) {
+        toast.error(e?.message || "Microphone access denied");
+      }
+      return;
+    }
+    try {
+      voiceRecorderRef.current?.stop();
+      setVoiceRecording(false);
+      toast.success("Recording stopped. Uploading...");
+    } catch {
+      setVoiceRecording(false);
+      toast.error("Voice send failed");
+    }
   };
 
   const handleAddNote = async () => {
@@ -681,12 +790,12 @@ const InboxPage = () => {
               </select>
             </div>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="rounded-xl h-9 px-3 border-slate-200 bg-white text-slate-800 hover:bg-slate-50"><UserPlus className="w-4 h-4 mr-1.5" />Assign</Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end">{teamMembers.length === 0 ? <DropdownMenuItem disabled>No members</DropdownMenuItem> : teamMembers.map((member) => <DropdownMenuItem key={member.id} onClick={() => handleAssign(member)}>{member.name} ({member.role})</DropdownMenuItem>)}</DropdownMenuContent>
+              <DropdownMenuTrigger asChild><Button disabled={assignBusy} variant="outline" size="sm" className="rounded-xl h-9 px-3 border-slate-200 bg-white text-slate-800 hover:bg-slate-50"><UserPlus className="w-4 h-4 mr-1.5" />{assignBusy ? "Assigning..." : "Assign"}</Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end">{teamMembers.length === 0 ? <DropdownMenuItem disabled>No members</DropdownMenuItem> : teamMembers.map((member) => <DropdownMenuItem key={member.id} disabled={assignBusy} onClick={() => handleAssign(member)}>{member.name} ({member.role})</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="rounded-xl h-9 px-3 border-slate-200 bg-white text-slate-800 hover:bg-slate-50">Transfer</Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end">{teamMembers.length === 0 ? <DropdownMenuItem disabled>No members</DropdownMenuItem> : teamMembers.map((member) => <DropdownMenuItem key={member.id} onClick={() => handleTransfer(member)}>{member.name} ({member.role})</DropdownMenuItem>)}</DropdownMenuContent>
+              <DropdownMenuTrigger asChild><Button disabled={transferBusy} variant="outline" size="sm" className="rounded-xl h-9 px-3 border-slate-200 bg-white text-slate-800 hover:bg-slate-50">{transferBusy ? "Transferring..." : "Transfer"}</Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end">{teamMembers.length === 0 ? <DropdownMenuItem disabled>No members</DropdownMenuItem> : teamMembers.map((member) => <DropdownMenuItem key={member.id} disabled={transferBusy} onClick={() => handleTransfer(member)}>{member.name} ({member.role})</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
             <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700" onClick={handleCall}><Phone className="w-4 h-4" /></Button>
             <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700" onClick={handleVideoCall}><Video className="w-4 h-4" /></Button>
@@ -694,7 +803,7 @@ const InboxPage = () => {
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700"><MoreVertical className="w-4 h-4" /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={handleToggleStar}><Star className="w-4 h-4 mr-2" /> {isStarred ? "Unstar conversation" : "Star conversation"}</DropdownMenuItem>
+                <DropdownMenuItem disabled={starBusy} onClick={handleToggleStar}><Star className="w-4 h-4 mr-2" /> {starBusy ? "Updating..." : isStarred ? "Unstar conversation" : "Star conversation"}</DropdownMenuItem>
                 <DropdownMenuItem><UserPlus className="w-4 h-4 mr-2" /> Assign to agent</DropdownMenuItem>
                 <DropdownMenuItem><Tag className="w-4 h-4 mr-2" /> Add label</DropdownMenuItem>
                 <DropdownMenuSeparator />
@@ -718,9 +827,13 @@ const InboxPage = () => {
           <div className="flex items-end gap-3">
             <div className="flex items-center gap-1">
               <Button variant="ghost" size="icon" className="text-slate-500" onClick={handlePickAttachment}><Paperclip className="w-5 h-5" /></Button>
-              <Button variant="ghost" size="icon" className="text-slate-500"><Image className="w-5 h-5" /></Button>
-              <Button variant="ghost" size="icon" className="text-slate-500"><FileText className="w-5 h-5" /></Button>
-              <input ref={fileInputRef} type="file" className="hidden" onChange={handleAttachmentSelected} />
+              <Button variant="ghost" size="icon" className="text-slate-500" onClick={handlePickImage}><Image className="w-5 h-5" /></Button>
+              <Button variant="ghost" size="icon" className="text-slate-500" onClick={handlePickDocument}><FileText className="w-5 h-5" /></Button>
+              <Button variant="outline" size="sm" className="h-8 px-3 rounded-lg text-xs" onClick={() => setShowTemplateAttach((v) => !v)}>Attach Template</Button>
+              <Button variant="outline" size="sm" className="h-8 px-3 rounded-lg text-xs" onClick={() => setShowFaqAttach((v) => !v)}>Attach Q&A</Button>
+              <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => handleAttachmentSelected(e)} />
+              <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleAttachmentSelected(e, "image")} />
+              <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.zip" className="hidden" onChange={(e) => handleAttachmentSelected(e, "document")} />
             </div>
             <div className="flex-1 relative rounded-2xl border border-slate-200 bg-white">
               <Textarea
@@ -744,16 +857,50 @@ const InboxPage = () => {
               />
               <Button variant="ghost" size="icon" className="absolute right-2 bottom-3 text-slate-500" onClick={() => setShowEmojiTray((v) => !v)}><Smile className="w-5 h-5" /></Button>
               {showEmojiTray ? (
-                <div className="absolute right-3 bottom-14 z-20 rounded-xl border border-slate-200 bg-white shadow-lg p-2 flex gap-1">
-                  {["😀", "👍", "🙏", "✅", "🔥"].map((e) => (
-                    <button key={e} className="w-8 h-8 rounded hover:bg-slate-100" onClick={() => handleInsertEmoji(e)}>{e}</button>
-                  ))}
+                <div className="absolute right-3 bottom-14 z-20 rounded-xl border border-slate-200 bg-white shadow-lg p-2 w-80">
+                  <Input placeholder="Search emoji..." className="h-8 text-xs mb-2" value={emojiSearch} onChange={(e) => setEmojiSearch(e.target.value)} />
+                  <div className="max-h-44 overflow-auto grid grid-cols-10 gap-1">
+                    {filteredEmojis.map((e, idx) => (
+                      <button key={`${e}-${idx}`} className="w-7 h-7 rounded hover:bg-slate-100 text-lg" onClick={() => handleInsertEmoji(e)}>{e}</button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {showTemplateAttach ? (
+                <div className="absolute left-3 bottom-16 z-20 rounded-xl border border-slate-200 bg-white shadow-lg p-3 w-[420px]">
+                  <p className="text-xs font-semibold text-slate-700 mb-2">Attach Template</p>
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <select className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700" value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
+                      {templates.length === 0 ? <option value="">No templates</option> : null}
+                      {templates.map((t) => <option key={t.id} value={String(t.id)}>{t.name}</option>)}
+                    </select>
+                    <Button size="sm" className="h-9 bg-orange-500 hover:bg-orange-600 text-white" onClick={handleSendTemplateFallback} disabled={sendBusy || !selectedTemplate}>Send Template</Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {templateParamIndexes.map((idx) => (
+                      <Input key={idx} className="h-8 text-xs" placeholder={`Var ${idx}`} value={templateVars[idx] || ""} onChange={(e) => setTemplateVars((prev) => ({ ...prev, [idx]: e.target.value }))} />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {showFaqAttach ? (
+                <div className="absolute left-3 bottom-16 z-20 rounded-xl border border-slate-200 bg-white shadow-lg p-3 w-[420px]">
+                  <p className="text-xs font-semibold text-slate-700 mb-2">Attach Q&A Answer</p>
+                  <div className="max-h-44 overflow-auto space-y-1">
+                    {faqs.length === 0 ? <p className="text-xs text-slate-500">No Q&A items found.</p> : null}
+                    {faqs.map((f) => (
+                      <button key={f.id} className="w-full text-left rounded-md border border-slate-200 p-2 hover:bg-slate-50" onClick={() => handleAttachFaq(f)}>
+                        <div className="text-xs font-medium text-slate-700 truncate">{f.question}</div>
+                        <div className="text-[11px] text-slate-500 truncate">{f.answer}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : null}
             </div>
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" className="text-slate-500" onClick={handleVoiceNote}><Mic className="w-5 h-5" /></Button>
-              <Button className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-xl h-12 w-14 shadow-md shadow-orange-500/30" onClick={handleSendMessage} disabled={!canReplyInSession}><Send className="w-5 h-5" /></Button>
+              <Button variant="ghost" size="icon" className={`text-slate-500 ${voiceRecording ? "bg-red-50 text-red-600" : ""}`} onClick={handleVoiceNote}><Mic className="w-5 h-5" /></Button>
+              <Button className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-xl h-12 w-14 shadow-md shadow-orange-500/30" onClick={handleSendMessage} disabled={!canReplyInSession || sendBusy}><Send className="w-5 h-5" /></Button>
             </div>
           </div>
         </div>

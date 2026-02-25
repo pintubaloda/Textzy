@@ -84,6 +84,21 @@ public class OutboundMessageWorker(
                             var bodyParams = ExtractTemplateParams(message.Body);
                             providerId = await SendWhatsAppTemplateAsync(httpClientFactory, waOptions, wabaCfg.PhoneNumberId, accessToken, message.Recipient, name, "en", bodyParams, stoppingToken);
                         }
+                        else if (message.MessageType.StartsWith("media:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var mediaType = message.MessageType["media:".Length..].Trim().ToLowerInvariant();
+                            var mediaPayload = ParseMediaPayload(message.Body);
+                            providerId = await SendWhatsAppMediaAsync(
+                                httpClientFactory,
+                                waOptions,
+                                wabaCfg.PhoneNumberId,
+                                accessToken,
+                                message.Recipient,
+                                mediaType,
+                                mediaPayload.mediaId,
+                                mediaPayload.caption,
+                                stoppingToken);
+                        }
                         else
                         {
                             var window = await tenantDb.Set<ConversationWindow>()
@@ -277,6 +292,22 @@ public class OutboundMessageWorker(
         return split[1].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
     }
 
+    private static (string mediaId, string caption) ParseMediaPayload(string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload ?? "{}");
+            var root = doc.RootElement;
+            var mediaId = root.TryGetProperty("mediaId", out var mid) ? (mid.GetString() ?? string.Empty) : string.Empty;
+            var caption = root.TryGetProperty("caption", out var cap) ? (cap.GetString() ?? string.Empty) : string.Empty;
+            return (mediaId, caption);
+        }
+        catch
+        {
+            return (string.Empty, string.Empty);
+        }
+    }
+
     private static async Task<string> SendWhatsAppSessionAsync(
         IHttpClientFactory httpClientFactory,
         WhatsAppOptions options,
@@ -320,5 +351,47 @@ public class OutboundMessageWorker(
         if (!resp.IsSuccessStatusCode) throw new InvalidOperationException($"WhatsApp template send failed ({(int)resp.StatusCode}): {responseBody}");
         using var doc = JsonDocument.Parse(responseBody);
         return doc.RootElement.GetProperty("messages")[0].GetProperty("id").GetString() ?? $"wa_tpl_{Guid.NewGuid():N}";
+    }
+
+    private static async Task<string> SendWhatsAppMediaAsync(
+        IHttpClientFactory httpClientFactory,
+        WhatsAppOptions options,
+        string phoneNumberId,
+        string accessToken,
+        string recipient,
+        string mediaType,
+        string mediaId,
+        string caption,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId)) throw new InvalidOperationException("Media id is required.");
+        if (mediaType is not ("image" or "video" or "audio" or "document"))
+            throw new InvalidOperationException($"Unsupported media type '{mediaType}'.");
+
+        var client = httpClientFactory.CreateClient();
+        var url = $"{options.GraphApiBase}/{options.ApiVersion}/{phoneNumberId}/messages";
+        object mediaObj = mediaType switch
+        {
+            "audio" => new { id = mediaId },
+            _ => new { id = mediaId, caption = caption ?? string.Empty }
+        };
+        var payload = JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["messaging_product"] = "whatsapp",
+            ["to"] = recipient,
+            ["type"] = mediaType,
+            [mediaType] = mediaObj
+        });
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json")
+        };
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        var resp = await client.SendAsync(req, ct);
+        var responseBody = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode) throw new InvalidOperationException($"WhatsApp media send failed ({(int)resp.StatusCode}): {responseBody}");
+        using var doc = JsonDocument.Parse(responseBody);
+        return doc.RootElement.GetProperty("messages")[0].GetProperty("id").GetString() ?? $"wa_media_{Guid.NewGuid():N}";
     }
 }

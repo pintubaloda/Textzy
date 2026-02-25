@@ -2,6 +2,7 @@ using Textzy.Api.Data;
 using Textzy.Api.DTOs;
 using Textzy.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace Textzy.Api.Services;
 
@@ -25,7 +26,18 @@ public class MessagingService(
         if (idempotencyKey.Length > 180) throw new InvalidOperationException("Idempotency-Key is too long.");
 
         request.Recipient = InputGuardService.ValidatePhone(request.Recipient, "Recipient");
-        if (!request.UseTemplate)
+        if (request.IsMedia)
+        {
+            var mediaType = (request.MediaType ?? string.Empty).Trim().ToLowerInvariant();
+            if (mediaType is not ("image" or "video" or "audio" or "document"))
+                throw new InvalidOperationException("Media type must be image, video, audio, or document.");
+            request.MediaType = mediaType;
+            request.MediaId = InputGuardService.RequireTrimmed(request.MediaId, "Media id", 256);
+            request.MediaCaption = (request.MediaCaption ?? string.Empty).Trim();
+            if (request.MediaCaption.Length > 1024)
+                throw new InvalidOperationException("Media caption is too long.");
+        }
+        else if (!request.UseTemplate)
         {
             request.Body = InputGuardService.RequireTrimmed(request.Body, "Message body", 4096);
         }
@@ -70,7 +82,13 @@ public class MessagingService(
 
         var messageBody = request.UseTemplate
             ? $"{request.TemplateName}|{string.Join(",", request.TemplateParameters)}|{request.TemplateLanguageCode}"
-            : request.Body;
+            : request.IsMedia
+                ? JsonSerializer.Serialize(new
+                {
+                    mediaId = request.MediaId,
+                    caption = request.MediaCaption
+                })
+                : request.Body;
 
         var message = new Message
         {
@@ -80,7 +98,7 @@ public class MessagingService(
             Channel = request.Channel,
             Recipient = request.Recipient,
             Body = messageBody,
-            MessageType = request.UseTemplate ? "template" : "session",
+            MessageType = request.UseTemplate ? "template" : request.IsMedia ? $"media:{request.MediaType}" : "session",
             IdempotencyKey = idempotencyKey,
             RetryCount = 0,
             LastError = string.Empty,

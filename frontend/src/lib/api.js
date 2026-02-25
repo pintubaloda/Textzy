@@ -140,6 +140,20 @@ export async function apiPost(path, body) {
   return text ? JSON.parse(text) : null
 }
 
+export async function apiPostForm(path, formData, headers = {}) {
+  const reqHeaders = { ...headers }
+  if (path === '/api/messages/upload-whatsapp-media') {
+    reqHeaders['Idempotency-Key'] = reqHeaders['Idempotency-Key'] || buildIdempotencyKey('media')
+  }
+  const res = await apiRequest(path, { method: 'POST', headers: reqHeaders, body: formData })
+  if (!res.ok) {
+    const msg = await res.text()
+    throw new Error(msg || `POST ${path} failed (${res.status})`)
+  }
+  const text = await res.text()
+  return text ? JSON.parse(text) : null
+}
+
 export async function apiPut(path, body) {
   const res = await apiRequest(path, { method: 'PUT', body: JSON.stringify(body) })
   if (!res.ok) throw new Error(`PUT ${path} failed (${res.status})`)
