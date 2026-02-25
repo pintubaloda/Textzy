@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { apiGet, apiPost, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
+import { playNotificationTone } from "@/lib/notificationAudio";
 import { toast } from "sonner";
 
 const NOTIFICATION_STYLE_KEY = "textzy.inbox.notificationStyle";
@@ -72,8 +73,6 @@ const InboxPage = () => {
   const selectedChatIdRef = useRef(null);
   const typingTimerRef = useRef(null);
   const typingActiveRef = useRef(false);
-  const audioCtxRef = useRef(null);
-  const audioUnlockedRef = useRef(false);
 
   const mapConversation = (x) => ({
     id: x.id,
@@ -130,43 +129,7 @@ const InboxPage = () => {
   const playNotificationSound = useCallback((frequency = 880) => {
     try {
       if (notificationStyle === "off") return;
-      if (!audioUnlockedRef.current) return;
-      const ctx = audioCtxRef.current;
-      if (!ctx || ctx.state !== "running") return;
-
-      const playTone = (freq, startAt, duration = 0.16, gainValue = 0.06) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(freq, startAt);
-        gain.gain.setValueAtTime(0.001, startAt);
-        gain.gain.exponentialRampToValueAtTime(gainValue, startAt + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.001, startAt + duration);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(startAt);
-        osc.stop(startAt + duration + 0.02);
-      };
-
-      const now = ctx.currentTime;
-      switch (notificationStyle) {
-        case "soft":
-          playTone(frequency, now, 0.12, 0.03);
-          break;
-        case "double":
-          playTone(frequency - 90, now, 0.11, 0.05);
-          playTone(frequency + 30, now + 0.15, 0.11, 0.05);
-          break;
-        case "chime":
-          playTone(frequency - 130, now, 0.12, 0.045);
-          playTone(frequency, now + 0.12, 0.12, 0.045);
-          playTone(frequency + 120, now + 0.24, 0.14, 0.045);
-          break;
-        case "classic":
-        default:
-          playTone(frequency, now, 0.16, 0.06);
-          break;
-      }
+      playNotificationTone(notificationStyle, frequency);
     } catch {
       // Ignore audio failures (autoplay policy / unsupported browser)
     }
@@ -179,37 +142,6 @@ const InboxPage = () => {
       // ignore storage issues
     }
   }, [notificationStyle]);
-
-  useEffect(() => {
-    const unlockAudio = () => {
-      try {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (!Ctx) return;
-        if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
-        audioCtxRef.current
-          .resume()
-          .then(() => {
-            audioUnlockedRef.current = audioCtxRef.current?.state === "running";
-          })
-          .catch(() => {
-            audioUnlockedRef.current = false;
-          });
-        window.removeEventListener("pointerdown", unlockAudio);
-        window.removeEventListener("keydown", unlockAudio);
-        window.removeEventListener("touchstart", unlockAudio);
-      } catch {
-        // ignore
-      }
-    };
-    window.addEventListener("pointerdown", unlockAudio, { passive: true });
-    window.addEventListener("keydown", unlockAudio);
-    window.addEventListener("touchstart", unlockAudio, { passive: true });
-    return () => {
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
-      window.removeEventListener("touchstart", unlockAudio);
-    };
-  }, []);
 
   useEffect(() => {
     Promise.all([

@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { authProjects, clearSession, getSession, initializeMe, switchProject } from "@/lib/api";
+import { isNotificationAudioUnlocked, isNotificationSoundEnabled, unlockNotificationAudio } from "@/lib/notificationAudio";
 
 const DashboardLayout = () => {
   const location = useLocation();
@@ -58,6 +59,7 @@ const DashboardLayout = () => {
       return "self";
     }
   });
+  const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
   const session = getSession();
   const role = (session.role || "").toLowerCase();
   const canAccessPlatformSettings = role === "super_admin";
@@ -82,6 +84,10 @@ const DashboardLayout = () => {
     initializeMe();
     authProjects().then((res) => setProjects(Array.isArray(res) ? res : [])).catch(() => setProjects([]));
   }, []);
+  useEffect(() => {
+    if (!session?.email) return;
+    setShowNotificationPrompt(isNotificationSoundEnabled() && !isNotificationAudioUnlocked());
+  }, [session?.email]);
   useEffect(() => {
     if (!isPlatformOwner) return;
     try {
@@ -131,6 +137,11 @@ const DashboardLayout = () => {
   const handleLogout = () => {
     clearSession();
     navigate("/login");
+  };
+
+  const handleEnableNotificationSound = async () => {
+    const ok = await unlockNotificationAudio();
+    if (ok) setShowNotificationPrompt(false);
   };
 
   return (
@@ -612,6 +623,22 @@ const DashboardLayout = () => {
         }`}
       >
         <div className="p-6">
+          {showNotificationPrompt && (
+            <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-slate-900">Enable notification sounds</p>
+                <p className="text-xs text-slate-600">One-time click after login to allow browser audio notifications.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" className="bg-orange-500 hover:bg-orange-600 text-white" onClick={handleEnableNotificationSound}>
+                  Enable Sound
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setShowNotificationPrompt(false)}>
+                  Not now
+                </Button>
+              </div>
+            </div>
+          )}
           {isSettingsPage && (
             <div className="mb-4 h-12 bg-white border border-slate-200 rounded-xl flex items-center px-4 lg:px-6">
               <div className="flex items-center gap-2 overflow-x-auto">
