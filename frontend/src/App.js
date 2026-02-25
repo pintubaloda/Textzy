@@ -32,7 +32,7 @@ import SmsSetupPage from "@/pages/dashboard/SmsSetupPage";
 
 function App() {
   const session = getSession();
-  const authed = !!session.token;
+  const authed = !!session.email;
   const isPlatformOwner = (session.role || "").toLowerCase() === "super_admin";
   return (
     <div className="App">

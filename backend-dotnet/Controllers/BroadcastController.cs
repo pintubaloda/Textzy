@@ -20,17 +20,41 @@ public class BroadcastController(
     public async Task<IActionResult> Create([FromBody] CreateBroadcastJobRequest req, CancellationToken ct)
     {
         if (!rbac.HasPermission(CampaignsWrite)) return Forbid();
+        string name;
+        string body;
+        try
+        {
+            name = InputGuardService.RequireTrimmed(req.Name, "Broadcast name", 160);
+            body = InputGuardService.RequireTrimmed(req.MessageBody, "Message body", 4000);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
 
-        var recipients = req.Recipients.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var recipients = (req.Recipients ?? [])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(x => x?.Trim() ?? string.Empty)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+        if (recipients.Count == 0) return BadRequest("At least one recipient is required.");
+        try
+        {
+            recipients = recipients.Select(x => InputGuardService.ValidatePhone(x, "Recipient")).ToList();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
         if (recipients.Count > 10000) return BadRequest("Broadcast recipient limit exceeded.");
 
         var job = new BroadcastJob
         {
             Id = Guid.NewGuid(),
             TenantId = tenancy.TenantId,
-            Name = req.Name,
+            Name = name,
             Channel = req.Channel,
-            MessageBody = req.MessageBody,
+            MessageBody = body,
             RecipientCsv = string.Join(',', recipients),
             Status = "Queued"
         };

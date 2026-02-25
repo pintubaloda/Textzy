@@ -21,7 +21,16 @@ public class ContactGroupsController(TenantDbContext db, TenancyContext tenancy,
     public async Task<IActionResult> Create([FromBody] ContactGroup request, CancellationToken ct)
     {
         if (!rbac.HasPermission(ContactsWrite)) return Forbid();
-        var item = new ContactGroup { Id = Guid.NewGuid(), TenantId = tenancy.TenantId, Name = request.Name };
+        string name;
+        try
+        {
+            name = InputGuardService.RequireTrimmed(request.Name, "Group name", 120);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        var item = new ContactGroup { Id = Guid.NewGuid(), TenantId = tenancy.TenantId, Name = name };
         db.ContactGroups.Add(item);
         await db.SaveChangesAsync(ct);
         return Ok(item);

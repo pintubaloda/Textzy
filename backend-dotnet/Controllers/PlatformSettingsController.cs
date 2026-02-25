@@ -21,6 +21,14 @@ public class PlatformSettingsController(
     {
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+        try
+        {
+            scope = InputGuardService.RequireTrimmed(scope, "Scope", 80).ToLowerInvariant();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
 
         var entries = await db.PlatformSettings
             .Where(x => x.Scope == scope)
@@ -38,23 +46,44 @@ public class PlatformSettingsController(
     {
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+        try
+        {
+            scope = InputGuardService.RequireTrimmed(scope, "Scope", 80).ToLowerInvariant();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
         if (values.Count == 0) return BadRequest("At least one key is required.");
+        if (values.Count > 200) return BadRequest("Too many settings in one request.");
 
         foreach (var kv in values)
         {
-            var row = await db.PlatformSettings.FirstOrDefaultAsync(x => x.Scope == scope && x.Key == kv.Key, ct);
+            string key;
+            try
+            {
+                key = InputGuardService.RequireTrimmed(kv.Key, "Key", 120);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            var value = kv.Value ?? string.Empty;
+            if (value.Length > 12000) return BadRequest($"Value too long for key '{key}'.");
+
+            var row = await db.PlatformSettings.FirstOrDefaultAsync(x => x.Scope == scope && x.Key == key, ct);
             if (row is null)
             {
                 row = new PlatformSetting
                 {
                     Id = Guid.NewGuid(),
                     Scope = scope,
-                    Key = kv.Key
+                    Key = key
                 };
                 db.PlatformSettings.Add(row);
             }
 
-            row.ValueEncrypted = crypto.Encrypt(kv.Value ?? string.Empty);
+            row.ValueEncrypted = crypto.Encrypt(value);
             row.UpdatedByUserId = auth.UserId;
             row.UpdatedAtUtc = DateTime.UtcNow;
         }

@@ -23,14 +23,25 @@ public class ChatbotController(TenantDbContext db, TenancyContext tenancy, RbacS
     public async Task<IActionResult> Upsert([FromBody] ChatbotConfig request, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        string greeting;
+        string fallback;
+        try
+        {
+            greeting = InputGuardService.RequireTrimmed(request.Greeting, "Greeting", 2000);
+            fallback = InputGuardService.RequireTrimmed(request.Fallback, "Fallback", 2000);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
         var cfg = db.ChatbotConfigs.FirstOrDefault(x => x.TenantId == tenancy.TenantId);
         if (cfg is null)
         {
             cfg = new ChatbotConfig { Id = Guid.NewGuid(), TenantId = tenancy.TenantId };
             db.ChatbotConfigs.Add(cfg);
         }
-        cfg.Greeting = request.Greeting;
-        cfg.Fallback = request.Fallback;
+        cfg.Greeting = greeting;
+        cfg.Fallback = fallback;
         cfg.HandoffEnabled = request.HandoffEnabled;
         cfg.UpdatedAtUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);

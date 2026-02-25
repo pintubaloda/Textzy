@@ -10,6 +10,7 @@ public class WabaWebhookWorker(
     WabaWebhookQueueService queue,
     IServiceScopeFactory scopeFactory,
     IHubContext<InboxHub> hub,
+    SensitiveDataRedactor redactor,
     ILogger<WabaWebhookWorker> logger) : BackgroundService
 {
     private sealed class InboundItem
@@ -245,8 +246,12 @@ public class WabaWebhookWorker(
                         convo.LastMessageAtUtc = DateTime.UtcNow;
                     }
 
-                    var existingContact = await tenantDb.Set<Contact>()
-                        .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.Phone == inbound.From, stoppingToken);
+                    var inboundPhoneHash = contactPii.IsEnabled ? contactPii.ComputePhoneHash(inbound.From) : string.Empty;
+                    var existingContact = contactPii.IsEnabled
+                        ? await tenantDb.Set<Contact>()
+                            .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.PhoneHash == inboundPhoneHash, stoppingToken)
+                        : await tenantDb.Set<Contact>()
+                            .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.Phone == inbound.From, stoppingToken);
                     if (existingContact is null)
                     {
                         var defaultSegment = await tenantDb.Set<ContactSegment>()
@@ -350,12 +355,12 @@ public class WabaWebhookWorker(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "WABA webhook worker failed for queue item {QueueId} attempt={Attempt}", item.Id, item.Attempt);
+                logger.LogError("WABA webhook worker failed for queue item {QueueId} attempt={Attempt}: {Error}", item.Id, item.Attempt, redactor.RedactText(ex.Message));
                 if (item.Attempt < item.MaxAttempts)
                 {
                     eventRow.Status = "RetryScheduled";
                     eventRow.RetryCount = item.Attempt;
-                    eventRow.LastError = ex.GetType().Name;
+                    eventRow.LastError = redactor.RedactText(ex.GetType().Name);
                     await controlDb.SaveChangesAsync(stoppingToken);
                     controlDb.AuditLogs.Add(new AuditLog
                     {
@@ -382,7 +387,7 @@ public class WabaWebhookWorker(
                 {
                     eventRow.Status = "DeadLetter";
                     eventRow.RetryCount = item.Attempt;
-                    eventRow.LastError = $"{ex.GetType().Name}: {ex.Message}";
+                    eventRow.LastError = redactor.RedactText($"{ex.GetType().Name}: {ex.Message}");
                     eventRow.DeadLetteredAtUtc = DateTime.UtcNow;
                     await controlDb.SaveChangesAsync(stoppingToken);
                     controlDb.AuditLogs.Add(new AuditLog
@@ -391,7 +396,7 @@ public class WabaWebhookWorker(
                         TenantId = null,
                         ActorUserId = Guid.Empty,
                         Action = "waba.webhook.dead_letter",
-                        Details = $"queueId={item.Id}; attempts={item.Attempt}; error={ex.GetType().Name}; message={ex.Message}",
+                        Details = $"queueId={item.Id}; attempts={item.Attempt}; error={redactor.RedactText(ex.GetType().Name)}; message={redactor.RedactText(ex.Message)}",
                         CreatedAtUtc = DateTime.UtcNow
                     });
                     await controlDb.SaveChangesAsync(stoppingToken);

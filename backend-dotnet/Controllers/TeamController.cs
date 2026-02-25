@@ -72,7 +72,17 @@ public class TeamController(
         if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
         if (!CanManageTeam(auth.Role)) return Forbid();
 
-        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        string email;
+        try
+        {
+            email = InputGuardService.ValidateEmailOrEmpty(request.Email, "Email").ToLowerInvariant();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        request.Name = (request.Name ?? string.Empty).Trim();
+        if (request.Name.Length > 256) return BadRequest("Name is too long.");
         var role = NormalizeRole(request.Role);
         if (string.IsNullOrWhiteSpace(email)) return BadRequest("Email is required.");
         if (string.IsNullOrWhiteSpace(role)) return BadRequest("Valid role is required.");
@@ -177,7 +187,15 @@ public class TeamController(
         if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
         if (!CanManageTeam(auth.Role)) return Forbid();
 
-        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        string email;
+        try
+        {
+            email = InputGuardService.ValidateEmailOrEmpty(request.Email, "Email").ToLowerInvariant();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
         if (string.IsNullOrWhiteSpace(email)) return BadRequest("Email is required.");
 
         var invite = await db.TeamInvitations

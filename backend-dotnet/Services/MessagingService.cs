@@ -128,7 +128,10 @@ public class MessagingService(
         });
 
         // Auto-create/update contact from outbound sends (WhatsApp/SMS).
-        var existingContact = db.Contacts.FirstOrDefault(x => x.TenantId == tenancy.TenantId && x.Phone == request.Recipient);
+        var recipientHash = contactPii.IsEnabled ? contactPii.ComputePhoneHash(request.Recipient) : string.Empty;
+        var existingContact = contactPii.IsEnabled
+            ? db.Contacts.FirstOrDefault(x => x.TenantId == tenancy.TenantId && x.PhoneHash == recipientHash)
+            : db.Contacts.FirstOrDefault(x => x.TenantId == tenancy.TenantId && x.Phone == request.Recipient);
         if (existingContact is null)
         {
             var defaultSegment = db.ContactSegments.FirstOrDefault(x => x.TenantId == tenancy.TenantId && x.Name.ToLower() == "new");
@@ -163,7 +166,7 @@ public class MessagingService(
         }
         else
         {
-            if (string.IsNullOrWhiteSpace(existingContact.Name))
+            if (string.IsNullOrWhiteSpace(existingContact.Name) && string.IsNullOrWhiteSpace(existingContact.NameEncrypted))
                 existingContact.Name = request.Recipient;
             contactPii.Protect(existingContact);
         }

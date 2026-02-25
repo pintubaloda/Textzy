@@ -21,7 +21,18 @@ public class SmsInputsController(TenantDbContext db, TenancyContext tenancy, Rba
     public async Task<IActionResult> Create([FromBody] SmsInputField request, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
-        var item = new SmsInputField { Id = Guid.NewGuid(), TenantId = tenancy.TenantId, Name = request.Name, Type = request.Type };
+        string name;
+        string type;
+        try
+        {
+            name = InputGuardService.RequireTrimmed(request.Name, "Name", 120);
+            type = InputGuardService.RequireTrimmed(request.Type, "Type", 60).ToLowerInvariant();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        var item = new SmsInputField { Id = Guid.NewGuid(), TenantId = tenancy.TenantId, Name = name, Type = type };
         db.SmsInputFields.Add(item);
         await db.SaveChangesAsync(ct);
         return Ok(item);
@@ -31,10 +42,21 @@ public class SmsInputsController(TenantDbContext db, TenancyContext tenancy, Rba
     public async Task<IActionResult> Update(Guid id, [FromBody] SmsInputField request, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        string name;
+        string type;
+        try
+        {
+            name = InputGuardService.RequireTrimmed(request.Name, "Name", 120);
+            type = InputGuardService.RequireTrimmed(request.Type, "Type", 60).ToLowerInvariant();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
         var item = db.SmsInputFields.FirstOrDefault(x => x.Id == id && x.TenantId == tenancy.TenantId);
         if (item is null) return NotFound();
-        item.Name = request.Name;
-        item.Type = request.Type;
+        item.Name = name;
+        item.Type = type;
         await db.SaveChangesAsync(ct);
         return Ok(item);
     }

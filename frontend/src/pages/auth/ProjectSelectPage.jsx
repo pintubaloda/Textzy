@@ -19,7 +19,7 @@ export default function ProjectSelectPage() {
   const session = getSession();
 
   useEffect(() => {
-    if (!session.token) {
+    if (!session.email) {
       navigate("/login", { replace: true });
       return;
     }

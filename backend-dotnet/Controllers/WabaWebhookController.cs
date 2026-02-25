@@ -137,7 +137,7 @@ public class WabaWebhookController(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "WABA webhook enqueue failure.");
+            logger.LogError("WABA webhook enqueue failure: {Error}", redactor.RedactText(ex.Message));
             controlDb.AuditLogs.Add(new AuditLog
             {
                 Id = Guid.NewGuid(),

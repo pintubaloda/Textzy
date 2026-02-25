@@ -10,6 +10,7 @@ public class WabaOnboardingHealthWorker(
     IServiceScopeFactory scopeFactory,
     IHttpClientFactory httpClientFactory,
     IConfiguration configuration,
+    SensitiveDataRedactor redactor,
     ILogger<WabaOnboardingHealthWorker> logger) : BackgroundService
 {
     private readonly TimeSpan _interval = TimeSpan.FromMinutes(Math.Clamp(
@@ -28,7 +29,7 @@ public class WabaOnboardingHealthWorker(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "WABA onboarding health worker iteration failed.");
+                logger.LogWarning("WABA onboarding health worker iteration failed: {Error}", redactor.RedactText(ex.Message));
             }
 
             await Task.Delay(_interval, stoppingToken);
@@ -84,7 +85,7 @@ public class WabaOnboardingHealthWorker(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "WABA health scan failed for tenant {TenantId}", tenant.Id);
+                logger.LogWarning("WABA health scan failed for tenant {TenantId}: {Error}", tenant.Id, redactor.RedactText(ex.Message));
             }
         }
     }

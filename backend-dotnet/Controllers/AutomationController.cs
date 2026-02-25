@@ -18,6 +18,7 @@ public class AutomationController(
     RbacService rbac,
     MessagingService messaging,
     BillingGuardService billingGuard,
+    SensitiveDataRedactor redactor,
     ILogger<AutomationController> logger) : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -73,7 +74,7 @@ public class AutomationController(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Automation schema ensure failed for tenant {TenantId}", tenancy.TenantId);
+            logger.LogError("Automation schema ensure failed for tenant {TenantId}: {Error}", tenancy.TenantId, redactor.RedactText(ex.Message));
             errorResult = StatusCode(500, new
             {
                 error = "automation_schema_init_failed",
@@ -147,7 +148,7 @@ public class AutomationController(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Automation limits query failed for tenant {TenantId}", tenancy.TenantId);
+            logger.LogError("Automation limits query failed for tenant {TenantId}: {Error}", tenancy.TenantId, redactor.RedactText(ex.Message));
             return Ok(new
             {
                 limits,
@@ -271,7 +272,7 @@ public class AutomationController(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Automation flows query failed for tenant {TenantId}", tenancy.TenantId);
+            logger.LogError("Automation flows query failed for tenant {TenantId}: {Error}", tenancy.TenantId, redactor.RedactText(ex.Message));
             return Ok(Array.Empty<object>());
         }
     }

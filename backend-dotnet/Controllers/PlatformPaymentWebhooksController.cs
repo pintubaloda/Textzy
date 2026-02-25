@@ -50,8 +50,20 @@ public class PlatformPaymentWebhooksController(
     {
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
-        var provider = (request.Provider ?? "razorpay").Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(request.EndpointUrl)) return BadRequest("Endpoint URL is required.");
+        string provider;
+        string endpointUrl;
+        try
+        {
+            provider = InputGuardService.RequireTrimmed(request.Provider, "Provider", 40).ToLowerInvariant();
+            endpointUrl = InputGuardService.RequireTrimmed(request.EndpointUrl, "Endpoint URL", 1000);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        if (!Uri.TryCreate(endpointUrl, UriKind.Absolute, out var endpoint) ||
+            (endpoint.Scheme != Uri.UriSchemeHttps && endpoint.Scheme != Uri.UriSchemeHttp))
+            return BadRequest("Endpoint URL must be a valid absolute URL.");
 
         var list = await ReadList(ct);
         var row = list.FirstOrDefault(x => x.Provider == provider);
@@ -60,9 +72,10 @@ public class PlatformPaymentWebhooksController(
             row = new WebhookCfg { Provider = provider };
             list.Add(row);
         }
-        row.EndpointUrl = request.EndpointUrl.Trim();
+        row.EndpointUrl = endpointUrl.Trim();
         row.WebhookId = request.WebhookId?.Trim() ?? string.Empty;
-        row.EventsCsv = request.EventsCsv?.Trim() ?? "payment.captured,payment.failed";
+        row.EventsCsv = (request.EventsCsv?.Trim() ?? "payment.captured,payment.failed");
+        if (row.EventsCsv.Length > 1000) return BadRequest("Events list is too long.");
         row.LastSyncedAtUtc = DateTime.UtcNow;
 
         await WriteList(list, ct);
@@ -76,6 +89,7 @@ public class PlatformPaymentWebhooksController(
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
         var provider = (body.TryGetValue("provider", out var p) ? p : "razorpay").Trim().ToLowerInvariant();
+        if (provider.Length > 40 || string.IsNullOrWhiteSpace(provider)) return BadRequest("Invalid provider.");
 
         var list = await ReadList(ct);
         var existing = list.FirstOrDefault(x => x.Provider == provider);

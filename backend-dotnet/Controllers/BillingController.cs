@@ -19,6 +19,7 @@ public class BillingController(
     TenancyContext tenancy,
     RbacService rbac,
     SecretCryptoService crypto,
+    SensitiveDataRedactor redactor,
     AuditLogService audit,
     ILogger<BillingController> logger) : ControllerBase
 {
@@ -98,6 +99,7 @@ public class BillingController(
     {
         if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
         if (!rbac.HasPermission(BillingWrite)) return Forbid();
+        if (string.IsNullOrWhiteSpace(request.PlanCode)) return BadRequest("planCode is required.");
         var plan = await db.BillingPlans.FirstOrDefaultAsync(x => x.Code == request.PlanCode && x.IsActive, ct);
         if (plan is null) return NotFound("Plan not found.");
 
@@ -142,6 +144,7 @@ public class BillingController(
     {
         if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
         if (!rbac.HasPermission(BillingWrite)) return Forbid();
+        if (string.IsNullOrWhiteSpace(request.PlanCode)) return BadRequest("planCode is required.");
 
         var plan = await db.BillingPlans.FirstOrDefaultAsync(x => x.Code == request.PlanCode && x.IsActive, ct);
         if (plan is null) return NotFound("Plan not found.");
@@ -187,7 +190,7 @@ public class BillingController(
         var raw = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
         {
-            logger.LogWarning("Razorpay order create failed status={Status} body={Body}", (int)resp.StatusCode, raw);
+            logger.LogWarning("Razorpay order create failed status={Status} body={Body}", (int)resp.StatusCode, redactor.RedactText(raw));
             return BadRequest("Failed to create Razorpay order.");
         }
 

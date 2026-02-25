@@ -22,6 +22,11 @@ public class ContactPiiService(SecretCryptoService crypto, IConfiguration config
             contact.PhoneEncrypted = ProtectValue(contact.Phone);
             contact.PhoneHash = Sha256(contact.Phone.Trim());
         }
+
+        // Keep plaintext empty at rest when encryption is enabled.
+        contact.Name = string.Empty;
+        contact.Email = string.Empty;
+        contact.Phone = string.Empty;
     }
 
     public string RevealName(Contact contact) => Reveal(contact.NameEncrypted, contact.Name);
@@ -48,6 +53,12 @@ public class ContactPiiService(SecretCryptoService crypto, IConfiguration config
     {
         var enc = crypto.Encrypt(input.Trim());
         return $"enc:{enc}";
+    }
+
+    public string ComputePhoneHash(string input)
+    {
+        var value = (input ?? string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(value) ? string.Empty : Sha256(value);
     }
 
     private static string Sha256(string input)

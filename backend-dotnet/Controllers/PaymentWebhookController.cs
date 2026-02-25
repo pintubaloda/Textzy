@@ -15,11 +15,15 @@ public class PaymentWebhookController(
     ControlDbContext db,
     SecretCryptoService crypto,
     AuditLogService audit,
+    SensitiveDataRedactor redactor,
     ILogger<PaymentWebhookController> logger) : ControllerBase
 {
     [HttpPost("{provider}")]
     public async Task<IActionResult> Receive(string provider, CancellationToken ct)
     {
+        provider = (provider ?? string.Empty).Trim().ToLowerInvariant();
+        if (provider.Length is < 2 or > 40) return BadRequest("Invalid provider.");
+
         using var reader = new StreamReader(Request.Body);
         var raw = await reader.ReadToEndAsync(ct);
         var scopeRows = await db.PlatformSettings.Where(x => x.Scope == "payment-gateway").ToListAsync(ct);
@@ -110,7 +114,7 @@ public class PaymentWebhookController(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Payment webhook processing failed provider={Provider} event={Event}", provider, eventName);
+            logger.LogError("Payment webhook processing failed provider={Provider} event={Event}: {Error}", provider, eventName, redactor.RedactText(ex.Message));
         }
     }
 

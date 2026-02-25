@@ -28,14 +28,18 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
     private readonly string _rabbitQueue = config["OutboundQueue:RabbitMq:QueueName"] ?? "textzy.outbound.queue";
     private readonly string _rabbitExchange = config["OutboundQueue:RabbitMq:ExchangeName"] ?? "textzy.outbound.exchange";
     private readonly string _rabbitRoutingKey = config["OutboundQueue:RabbitMq:RoutingKey"] ?? "message.send";
+    private readonly string _rabbitVhost = config["OutboundQueue:RabbitMq:VHost"] ?? string.Empty;
+    private readonly string _rabbitUser = config["OutboundQueue:RabbitMq:Username"] ?? string.Empty;
+    private readonly string _rabbitPass = config["OutboundQueue:RabbitMq:Password"] ?? string.Empty;
+    private readonly bool _rabbitUseTls = bool.TryParse(config["OutboundQueue:RabbitMq:UseTls"], out var t1) ? t1 : true;
     private readonly string _sqsQueueUrl = config["OutboundQueue:Sqs:QueueUrl"] ?? config["AWS_SQS_OUTBOUND_QUEUE_URL"] ?? string.Empty;
     private readonly Lazy<ConnectionMultiplexer?> _redis = new(() =>
     {
         try
         {
-            return string.IsNullOrWhiteSpace(config["OutboundQueue:RedisConnection"] ?? config["REDIS_URL"])
+            return string.IsNullOrWhiteSpace(_redisConn)
                 ? null
-                : ConnectionMultiplexer.Connect(config["OutboundQueue:RedisConnection"] ?? config["REDIS_URL"]);
+                : ConnectionMultiplexer.Connect(_redisConn);
         }
         catch
         {
@@ -46,13 +50,8 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(config["OutboundQueue:RabbitMq:ConnectionString"] ?? config["RABBITMQ_URL"])) return null;
-            var factory = new ConnectionFactory
-            {
-                Uri = new Uri(config["OutboundQueue:RabbitMq:ConnectionString"] ?? config["RABBITMQ_URL"]),
-                DispatchConsumersAsync = false
-            };
-            return factory.CreateConnection();
+            if (string.IsNullOrWhiteSpace(_rabbitConn)) return null;
+            return BuildRabbitConnection(_rabbitConn, _rabbitVhost, _rabbitUser, _rabbitPass, _rabbitUseTls);
         }
         catch
         {
@@ -98,6 +97,30 @@ public class OutboundMessageQueueService(IConfiguration config, ILogger<Outbound
             if (_provider is "rabbitmq" or "sqs") logger.LogWarning("Outbound queue provider {Provider} unavailable; falling back to memory.", _provider);
             return "memory";
         }
+    }
+
+    private static IConnection? BuildRabbitConnection(string connectionString, string vhost, string user, string pass, bool useTls)
+    {
+        if (!Uri.TryCreate(connectionString, UriKind.Absolute, out var uri)) return null;
+        var factory = new ConnectionFactory
+        {
+            Uri = uri,
+            DispatchConsumersAsync = false,
+            AutomaticRecoveryEnabled = true,
+            TopologyRecoveryEnabled = true
+        };
+        if (!string.IsNullOrWhiteSpace(vhost)) factory.VirtualHost = vhost;
+        if (!string.IsNullOrWhiteSpace(user)) factory.UserName = user;
+        if (!string.IsNullOrWhiteSpace(pass)) factory.Password = pass;
+        if (useTls || string.Equals(uri.Scheme, "amqps", StringComparison.OrdinalIgnoreCase))
+        {
+            factory.Ssl = new SslOption
+            {
+                Enabled = true,
+                ServerName = uri.Host
+            };
+        }
+        return factory.CreateConnection();
     }
 
     public async ValueTask EnqueueAsync(OutboundMessageQueueItem item, CancellationToken ct = default)

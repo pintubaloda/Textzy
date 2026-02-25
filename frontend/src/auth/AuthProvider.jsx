@@ -7,11 +7,11 @@ const SESSION_KEY = 'textzy.session'
 
 function readSession() {
   const raw = localStorage.getItem(SESSION_KEY)
-  if (!raw) return { token: '', tenantSlug: '', role: '', email: '' }
+  if (!raw) return { tenantSlug: '', role: '', email: '' }
   try {
     return JSON.parse(raw)
   } catch {
-    return { token: '', tenantSlug: '', role: '', email: '' }
+    return { tenantSlug: '', role: '', email: '' }
   }
 }
 
@@ -27,7 +27,7 @@ export function AuthProvider({ children }) {
   }
 
   function clearSession() {
-    const empty = { token: '', tenantSlug: '', role: '', email: '' }
+    const empty = { tenantSlug: '', role: '', email: '' }
     setSession(empty)
     localStorage.setItem(SESSION_KEY, JSON.stringify(empty))
   }
@@ -40,7 +40,7 @@ export function AuthProvider({ children }) {
 
   async function login({ email, password }) {
     const loginRes = await authLogin({ email, password })
-    persist({ token: loginRes.accessToken })
+    if (!loginRes) return
     const me = await apiGet('/api/auth/me')
     persist({ role: me.role, email: me.email, tenantSlug: me.tenantSlug || '' })
   }
@@ -55,7 +55,7 @@ export function AuthProvider({ children }) {
 
   const value = useMemo(() => ({
     session,
-    isAuthenticated: Boolean(session.token || session.email),
+    isAuthenticated: Boolean(session.email),
     login,
     logout,
     setTenantSlug: () => {}

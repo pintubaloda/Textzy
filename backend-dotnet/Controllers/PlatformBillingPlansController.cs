@@ -33,6 +33,11 @@ public class PlatformBillingPlansController(
         if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
         var code = NormalizeCode(request.Code);
         if (string.IsNullOrWhiteSpace(code)) return BadRequest("Plan code is required.");
+        if ((request.Name ?? string.Empty).Trim().Length > 120) return BadRequest("Plan name is too long.");
+        if (request.PriceMonthly < 0 || request.PriceYearly < 0) return BadRequest("Plan price cannot be negative.");
+        if (request.Features.Count > 200) return BadRequest("Too many features.");
+        if (request.Limits.Count > 200) return BadRequest("Too many limits.");
+        if (request.Limits.Any(x => string.IsNullOrWhiteSpace(x.Key) || x.Key.Length > 120 || x.Value < 0)) return BadRequest("Invalid limits.");
         if (await db.BillingPlans.AnyAsync(x => x.Code == code, ct)) return Conflict("Plan code already exists.");
 
         var row = new BillingPlan
@@ -64,6 +69,11 @@ public class PlatformBillingPlansController(
 
         var code = NormalizeCode(request.Code);
         if (string.IsNullOrWhiteSpace(code)) return BadRequest("Plan code is required.");
+        if ((request.Name ?? string.Empty).Trim().Length > 120) return BadRequest("Plan name is too long.");
+        if (request.PriceMonthly < 0 || request.PriceYearly < 0) return BadRequest("Plan price cannot be negative.");
+        if (request.Features.Count > 200) return BadRequest("Too many features.");
+        if (request.Limits.Count > 200) return BadRequest("Too many limits.");
+        if (request.Limits.Any(x => string.IsNullOrWhiteSpace(x.Key) || x.Key.Length > 120 || x.Value < 0)) return BadRequest("Invalid limits.");
         if (await db.BillingPlans.AnyAsync(x => x.Id != id && x.Code == code, ct)) return Conflict("Plan code already exists.");
 
         row.Code = code;

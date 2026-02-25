@@ -16,6 +16,7 @@ public class WhatsAppCloudService(
     IConfiguration configuration,
     SecretCryptoService crypto,
     WabaTenantResolver tenantResolver,
+    SensitiveDataRedactor redactor,
     ILogger<WhatsAppCloudService> logger)
 {
     private readonly WhatsAppOptions _options = configuration.GetSection("WhatsApp").Get<WhatsAppOptions>() ?? new WhatsAppOptions();
@@ -339,7 +340,7 @@ public class WhatsAppCloudService(
                 var (ok, status, body) = await GraphGetRawAsync(url, accessToken, ct);
                 if (!ok)
                 {
-                    logger.LogWarning("Template bootstrap failed: tenant={TenantId} waba={WabaId} status={Status} body={Body}", tenancy.TenantId, config.WabaId, status, body);
+                    logger.LogWarning("Template bootstrap failed: tenant={TenantId} waba={WabaId} status={Status} body={Body}", tenancy.TenantId, config.WabaId, status, redactor.RedactText(body));
                     return;
                 }
 
@@ -460,7 +461,7 @@ public class WhatsAppCloudService(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Template bootstrap exception for tenant={TenantId} waba={WabaId}", tenancy.TenantId, config.WabaId);
+            logger.LogWarning("Template bootstrap exception for tenant={TenantId} waba={WabaId}: {Error}", tenancy.TenantId, config.WabaId, redactor.RedactText(ex.Message));
         }
     }
 
@@ -554,7 +555,7 @@ public class WhatsAppCloudService(
         var tokenPayload = await tokenResp.Content.ReadAsStringAsync(ct);
         if (!tokenResp.IsSuccessStatusCode)
         {
-            logger.LogWarning("WABA code exchange failed: status={Status} body={Body}", (int)tokenResp.StatusCode, tokenPayload);
+            logger.LogWarning("WABA code exchange failed: status={Status} body={Body}", (int)tokenResp.StatusCode, redactor.RedactText(tokenPayload));
             throw new InvalidOperationException($"Failed to exchange embedded signup code. Graph status={(int)tokenResp.StatusCode} payload={tokenPayload}");
         }
 
@@ -868,7 +869,7 @@ public class WhatsAppCloudService(
         var resp = await client.SendAsync(req, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
-            logger.LogWarning("Graph call failed: {Url} status={Status} body={Body}", url, (int)resp.StatusCode, body);
+            logger.LogWarning("Graph call failed: {Url} status={Status} body={Body}", url, (int)resp.StatusCode, redactor.RedactText(body));
         return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
     }
 
@@ -882,7 +883,7 @@ public class WhatsAppCloudService(
         var resp = await client.SendAsync(req, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
-            logger.LogWarning("Graph POST failed: {Url} status={Status} body={Body}", url, (int)resp.StatusCode, body);
+            logger.LogWarning("Graph POST failed: {Url} status={Status} body={Body}", url, (int)resp.StatusCode, redactor.RedactText(body));
         return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
     }
 
@@ -1005,7 +1006,7 @@ public class WhatsAppCloudService(
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
         {
-            logger.LogWarning("System user create failed: tenant={TenantId} business={BusinessId} status={Status} body={Body}", tenancy.TenantId, businessId, (int)resp.StatusCode, body);
+            logger.LogWarning("System user create failed: tenant={TenantId} business={BusinessId} status={Status} body={Body}", tenancy.TenantId, businessId, (int)resp.StatusCode, redactor.RedactText(body));
             return (string.Empty, string.Empty, body);
         }
 
@@ -1041,7 +1042,7 @@ public class WhatsAppCloudService(
             var body = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
             {
-                logger.LogWarning("System user asset assignment failed: tenant={TenantId} su={SystemUserId} asset={AssetId} status={Status} body={Body}", tenancy.TenantId, systemUserId, assetId, (int)resp.StatusCode, body);
+                logger.LogWarning("System user asset assignment failed: tenant={TenantId} su={SystemUserId} asset={AssetId} status={Status} body={Body}", tenancy.TenantId, systemUserId, assetId, (int)resp.StatusCode, redactor.RedactText(body));
             }
 
             return resp.IsSuccessStatusCode;
@@ -1070,7 +1071,7 @@ public class WhatsAppCloudService(
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
         {
-            logger.LogWarning("System user token generation failed: tenant={TenantId} su={SystemUserId} status={Status} body={Body}", tenancy.TenantId, systemUserId, (int)resp.StatusCode, body);
+            logger.LogWarning("System user token generation failed: tenant={TenantId} su={SystemUserId} status={Status} body={Body}", tenancy.TenantId, systemUserId, (int)resp.StatusCode, redactor.RedactText(body));
             return (string.Empty, null, body);
         }
 
@@ -1200,7 +1201,7 @@ public class WhatsAppCloudService(
         var responseBody = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
         {
-            logger.LogWarning("WhatsApp session send failed: tenant={TenantId} status={Status} payload={Payload}", tenancy.TenantId, (int)resp.StatusCode, responseBody);
+            logger.LogWarning("WhatsApp session send failed: tenant={TenantId} status={Status} payload={Payload}", tenancy.TenantId, (int)resp.StatusCode, redactor.RedactText(responseBody));
             throw new InvalidOperationException($"WhatsApp send failed ({(int)resp.StatusCode}): {responseBody}");
         }
 
@@ -1225,7 +1226,7 @@ public class WhatsAppCloudService(
         var responseBody = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
         {
-            logger.LogWarning("WhatsApp template send failed: tenant={TenantId} status={Status} payload={Payload}", tenancy.TenantId, (int)resp.StatusCode, responseBody);
+            logger.LogWarning("WhatsApp template send failed: tenant={TenantId} status={Status} payload={Payload}", tenancy.TenantId, (int)resp.StatusCode, redactor.RedactText(responseBody));
             throw new InvalidOperationException($"WhatsApp template send failed ({(int)resp.StatusCode}): {responseBody}");
         }
 

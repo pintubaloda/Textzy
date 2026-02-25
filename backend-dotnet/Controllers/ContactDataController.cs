@@ -13,7 +13,8 @@ public class ContactDataController(
     TenantDbContext db,
     TenancyContext tenancy,
     RbacService rbac,
-    BillingGuardService billingGuard) : ControllerBase
+    BillingGuardService billingGuard,
+    ContactPiiService contactPii) : ControllerBase
 {
     [HttpPost("import/csv")]
     public async Task<IActionResult> ImportCsv([FromForm] IFormFile file, CancellationToken ct)
@@ -50,10 +51,20 @@ public class ContactDataController(
         {
             var cols = line.Split(',');
             if (cols.Length < 2) continue;
-            var name = cols[0].Trim();
-            var phone = cols[1].Trim();
+            var name = (cols[0] ?? string.Empty).Trim();
+            var phoneRaw = (cols[1] ?? string.Empty).Trim();
+            string phone;
+            try
+            {
+                phone = InputGuardService.ValidatePhone(phoneRaw);
+            }
+            catch
+            {
+                continue;
+            }
             var optIn = cols.Length > 2 ? cols[2].Trim().ToLowerInvariant() : "unknown";
-            db.Contacts.Add(new Contact
+            if (optIn is not ("opted_in" or "opted_out" or "unknown")) optIn = "unknown";
+            var contact = new Contact
             {
                 Id = Guid.NewGuid(),
                 TenantId = tenancy.TenantId,
@@ -62,7 +73,9 @@ public class ContactDataController(
                 OptInStatus = optIn,
                 SegmentId = defaultSegment.Id,
                 TagsCsv = "New"
-            });
+            };
+            contactPii.Protect(contact);
+            db.Contacts.Add(contact);
             imported++;
         }
 
@@ -75,6 +88,9 @@ public class ContactDataController(
     public async Task<IActionResult> UpsertCustomField(Guid contactId, [FromBody] ContactCustomField field, CancellationToken ct)
     {
         if (!rbac.HasPermission(ContactsWrite)) return Forbid();
+        field.FieldKey = InputGuardService.RequireTrimmed(field.FieldKey, "FieldKey", 80);
+        field.FieldValue = (field.FieldValue ?? string.Empty).Trim();
+        if (field.FieldValue.Length > 1000) return BadRequest("FieldValue is too long.");
         var existing = await db.ContactCustomFields.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.ContactId == contactId && x.FieldKey == field.FieldKey, ct);
         if (existing is null)
         {
@@ -94,6 +110,9 @@ public class ContactDataController(
     public async Task<IActionResult> CreateSegment([FromBody] ContactSegment segment, CancellationToken ct)
     {
         if (!rbac.HasPermission(ContactsWrite)) return Forbid();
+        segment.Name = InputGuardService.RequireTrimmed(segment.Name, "Segment name", 120);
+        segment.RuleJson = string.IsNullOrWhiteSpace(segment.RuleJson) ? "{}" : segment.RuleJson.Trim();
+        if (segment.RuleJson.Length > 8000) return BadRequest("RuleJson is too long.");
         segment.Id = Guid.NewGuid();
         segment.TenantId = tenancy.TenantId;
         db.ContactSegments.Add(segment);
@@ -113,6 +132,7 @@ public class ContactDataController(
     {
         if (!rbac.HasPermission(ContactsWrite)) return Forbid();
         var status = body.TryGetValue("status", out var s) ? s.ToLowerInvariant() : "unknown";
+        if (status is not ("opted_in" or "opted_out" or "unknown")) return BadRequest("Invalid opt-in status.");
         var c = await db.Contacts.FirstOrDefaultAsync(x => x.Id == contactId && x.TenantId == tenancy.TenantId, ct);
         if (c is null) return NotFound();
         c.OptInStatus = status;

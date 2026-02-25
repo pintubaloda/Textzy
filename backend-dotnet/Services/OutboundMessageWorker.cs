@@ -13,6 +13,7 @@ public class OutboundMessageWorker(
     OutboundMessageQueueService queue,
     IServiceScopeFactory scopeFactory,
     IHubContext<InboxHub> hub,
+    SensitiveDataRedactor redactor,
     ILogger<OutboundMessageWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -147,7 +148,7 @@ public class OutboundMessageWorker(
                             Classification = retryable ? "exhausted" : "permanent",
                             ErrorCode = errorCode,
                             ErrorTitle = errorTitle,
-                            ErrorDetail = string.IsNullOrWhiteSpace(errorDetail) ? Truncate(ex.Message, 1500) : errorDetail,
+                            ErrorDetail = string.IsNullOrWhiteSpace(errorDetail) ? Truncate(redactor.RedactText(ex.Message), 1500) : redactor.RedactText(errorDetail),
                             PayloadJson = JsonSerializer.Serialize(new
                             {
                                 message.Id,
@@ -178,12 +179,12 @@ public class OutboundMessageWorker(
                     }
 
                     await tenantDb.SaveChangesAsync(stoppingToken);
-                    logger.LogWarning(ex, "Outbound send failed for message {MessageId}. retryable={Retryable}", message.Id, retryable);
+                    logger.LogWarning("Outbound send failed for message {MessageId}. retryable={Retryable}; reason={Reason}; error={Error}", message.Id, retryable, reason, redactor.RedactText(ex.Message));
                 }
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Outbound worker failed for tenant {TenantId} message {MessageId}", job.TenantId, job.MessageId);
+                logger.LogError("Outbound worker failed for tenant {TenantId} message {MessageId}: {Error}", job.TenantId, job.MessageId, redactor.RedactText(ex.Message));
             }
         }
     }

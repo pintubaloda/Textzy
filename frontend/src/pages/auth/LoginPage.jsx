@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { MessageSquare, Eye, EyeOff, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
-import { authLogin, initializeMe, setSession } from "@/lib/api";
+import { authLogin, initializeMe } from "@/lib/api";
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -28,7 +28,6 @@ const LoginPage = () => {
         email: formData.email,
         password: formData.password,
       });
-      setSession({ token: "" });
       await initializeMe();
       setLoading(false);
       toast.success("Welcome back! Select your project...");

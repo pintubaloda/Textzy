@@ -31,14 +31,18 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
     private readonly string _rabbitQueue = config["WebhookQueue:RabbitMq:QueueName"] ?? "textzy.webhook.queue";
     private readonly string _rabbitExchange = config["WebhookQueue:RabbitMq:ExchangeName"] ?? "textzy.webhook.exchange";
     private readonly string _rabbitRoutingKey = config["WebhookQueue:RabbitMq:RoutingKey"] ?? "webhook.meta";
+    private readonly string _rabbitVhost = config["WebhookQueue:RabbitMq:VHost"] ?? string.Empty;
+    private readonly string _rabbitUser = config["WebhookQueue:RabbitMq:Username"] ?? string.Empty;
+    private readonly string _rabbitPass = config["WebhookQueue:RabbitMq:Password"] ?? string.Empty;
+    private readonly bool _rabbitUseTls = bool.TryParse(config["WebhookQueue:RabbitMq:UseTls"], out var t1) ? t1 : true;
     private readonly string _sqsQueueUrl = config["WebhookQueue:Sqs:QueueUrl"] ?? config["AWS_SQS_WEBHOOK_QUEUE_URL"] ?? string.Empty;
     private readonly Lazy<ConnectionMultiplexer?> _redis = new(() =>
     {
         try
         {
-            return string.IsNullOrWhiteSpace(config["WebhookQueue:RedisConnection"] ?? config["REDIS_URL"])
+            return string.IsNullOrWhiteSpace(_redisConn)
                 ? null
-                : ConnectionMultiplexer.Connect(config["WebhookQueue:RedisConnection"] ?? config["REDIS_URL"]);
+                : ConnectionMultiplexer.Connect(_redisConn);
         }
         catch
         {
@@ -49,13 +53,8 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(config["WebhookQueue:RabbitMq:ConnectionString"] ?? config["RABBITMQ_URL"])) return null;
-            var factory = new ConnectionFactory
-            {
-                Uri = new Uri(config["WebhookQueue:RabbitMq:ConnectionString"] ?? config["RABBITMQ_URL"]),
-                DispatchConsumersAsync = false
-            };
-            return factory.CreateConnection();
+            if (string.IsNullOrWhiteSpace(_rabbitConn)) return null;
+            return BuildRabbitConnection(_rabbitConn, _rabbitVhost, _rabbitUser, _rabbitPass, _rabbitUseTls);
         }
         catch
         {
@@ -101,6 +100,30 @@ public class WabaWebhookQueueService(IConfiguration config, ILogger<WabaWebhookQ
             if (_provider is "rabbitmq" or "sqs") logger.LogWarning("Webhook queue provider {Provider} unavailable; falling back to memory.", _provider);
             return "memory";
         }
+    }
+
+    private static IConnection? BuildRabbitConnection(string connectionString, string vhost, string user, string pass, bool useTls)
+    {
+        if (!Uri.TryCreate(connectionString, UriKind.Absolute, out var uri)) return null;
+        var factory = new ConnectionFactory
+        {
+            Uri = uri,
+            DispatchConsumersAsync = false,
+            AutomaticRecoveryEnabled = true,
+            TopologyRecoveryEnabled = true
+        };
+        if (!string.IsNullOrWhiteSpace(vhost)) factory.VirtualHost = vhost;
+        if (!string.IsNullOrWhiteSpace(user)) factory.UserName = user;
+        if (!string.IsNullOrWhiteSpace(pass)) factory.Password = pass;
+        if (useTls || string.Equals(uri.Scheme, "amqps", StringComparison.OrdinalIgnoreCase))
+        {
+            factory.Ssl = new SslOption
+            {
+                Enabled = true,
+                ServerName = uri.Host
+            };
+        }
+        return factory.CreateConnection();
     }
 
     public async ValueTask EnqueueAsync(WabaWebhookQueueItem item, CancellationToken ct = default)

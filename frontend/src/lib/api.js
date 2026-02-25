@@ -11,17 +11,16 @@ const STORAGE_KEY = 'textzy.session'
 export function getSession() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { token: '', tenantSlug: '', role: '', email: '' }
+    if (!raw) return { tenantSlug: '', role: '', email: '' }
     const p = JSON.parse(raw)
     return {
-      token: p.token || '',
       tenantSlug: p.tenantSlug || p.slug || '',
       projectName: p.projectName || '',
       role: p.role || '',
       email: p.email || ''
     }
   } catch {
-    return { token: '', tenantSlug: '', projectName: '', role: '', email: '' }
+    return { tenantSlug: '', projectName: '', role: '', email: '' }
   }
 }
 
@@ -56,7 +55,6 @@ async function baseFetch(path, options = {}, useAuth = true) {
     throw new Error('Missing tenant context. Please select project.')
   }
 
-  if (useAuth && s.token) headers.Authorization = `Bearer ${s.token}`
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json'
   }
@@ -68,7 +66,6 @@ async function refresh() {
   const res = await baseFetch('/api/auth/refresh', { method: 'POST' }, true)
   if (!res.ok) return false
   await res.json().catch(() => ({}))
-  setSession({ token: '' })
   return true
 }
 
@@ -176,7 +173,6 @@ export async function authProjects() {
 export async function createProject(name) {
   const data = await apiPost('/api/auth/projects', { name })
   setSession({
-    token: '',
     tenantSlug: data?.slug || '',
     projectName: data?.name || '',
     role: data?.role || 'owner'
@@ -187,7 +183,6 @@ export async function createProject(name) {
 export async function switchProject(slug) {
   const data = await apiPost('/api/auth/switch-project', { slug })
   setSession({
-    token: '',
     tenantSlug: data?.tenantSlug || slug,
     projectName: data?.projectName || '',
     role: data?.role || ''
@@ -197,7 +192,7 @@ export async function switchProject(slug) {
 
 export function requireAuthOrRedirect(navigate) {
   const s = getSession()
-  if (!s.token && !s.email) {
+  if (!s.email) {
     navigate('/login')
     return false
   }

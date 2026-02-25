@@ -162,7 +162,7 @@ using (var scope = app.Services.CreateScope())
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Skipping tenant seed for {TenantSlug} due to DB connectivity/config issue.", tenant.Slug);
+            logger.LogWarning("Skipping tenant seed for {TenantSlug} due to DB connectivity/config issue. errorType={ErrorType}", tenant.Slug, ex.GetType().Name);
         }
     }
 }

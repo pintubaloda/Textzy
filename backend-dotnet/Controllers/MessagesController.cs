@@ -24,6 +24,22 @@ public class MessagesController(
         if (string.IsNullOrWhiteSpace(idempotencyKey))
             return BadRequest(new { error = "Idempotency-Key header is required." });
         request.IdempotencyKey = idempotencyKey;
+        try
+        {
+            request.Recipient = InputGuardService.ValidatePhone(request.Recipient, "Recipient");
+            request.Body = InputGuardService.RequireTrimmed(request.Body, "Message body", 4000);
+            if (request.UseTemplate && string.IsNullOrWhiteSpace(request.TemplateName))
+                return BadRequest(new { error = "Template name is required when UseTemplate is true." });
+            if (request.UseTemplate)
+                request.TemplateName = InputGuardService.RequireTrimmed(request.TemplateName, "Template name", 128);
+            request.TemplateLanguageCode = string.IsNullOrWhiteSpace(request.TemplateLanguageCode)
+                ? "en"
+                : InputGuardService.RequireTrimmed(request.TemplateLanguageCode, "Template language", 12).ToLowerInvariant();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
 
         try
         {

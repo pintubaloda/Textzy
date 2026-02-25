@@ -23,7 +23,6 @@ export default function AcceptInvitePage() {
     try {
       const data = await authAcceptInvite({ token, fullName: name, password });
       setSession({
-        token: data.accessToken,
         tenantSlug: data.tenantSlug || "",
         projectName: data.projectName || "",
         role: data.role || ""

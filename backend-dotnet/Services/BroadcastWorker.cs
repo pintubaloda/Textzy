@@ -8,6 +8,7 @@ namespace Textzy.Api.Services;
 public class BroadcastWorker(
     BroadcastQueueService queue,
     IServiceScopeFactory scopeFactory,
+    SensitiveDataRedactor redactor,
     ILogger<BroadcastWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -23,6 +24,7 @@ public class BroadcastWorker(
 
                 using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
                 var provider = scope.ServiceProvider.GetRequiredService<IMessageProvider>();
+                var contactPii = scope.ServiceProvider.GetRequiredService<ContactPiiService>();
 
                 var recipients = (job.RecipientCsv ?? string.Empty)
                     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -40,7 +42,10 @@ public class BroadcastWorker(
                     // Compliance safeguard: enforce opt-in for WhatsApp broadcasts
                     if (job.Channel == ChannelType.WhatsApp)
                     {
-                        var contact = await tenantDb.Contacts.FirstOrDefaultAsync(x => x.TenantId == job.TenantId && x.Phone == recipient, stoppingToken);
+                        var recipientHash = contactPii.IsEnabled ? contactPii.ComputePhoneHash(recipient) : string.Empty;
+                        var contact = contactPii.IsEnabled
+                            ? await tenantDb.Contacts.FirstOrDefaultAsync(x => x.TenantId == job.TenantId && x.PhoneHash == recipientHash, stoppingToken)
+                            : await tenantDb.Contacts.FirstOrDefaultAsync(x => x.TenantId == job.TenantId && x.Phone == recipient, stoppingToken);
                         if (contact is not null && !contact.OptInStatus.Equals("opted_in", StringComparison.OrdinalIgnoreCase))
                         {
                             job.FailedCount++;
@@ -103,7 +108,7 @@ public class BroadcastWorker(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Broadcast worker failed for job {JobId}", job.Id);
+                logger.LogError("Broadcast worker failed for job {JobId}: {Error}", job.Id, redactor.RedactText(ex.Message));
             }
         }
     }

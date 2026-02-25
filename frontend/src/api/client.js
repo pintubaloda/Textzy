@@ -5,7 +5,7 @@ const API_BASE =
   process.env.REACT_APP_API_BASE ||
   'http://localhost:5000'
 
-let getSession = () => ({ token: '', tenantSlug: '' })
+let getSession = () => ({ tenantSlug: '' })
 let onSessionUpdate = () => {}
 let onAuthFailure = () => {}
 
@@ -16,13 +16,12 @@ export function configureApiClient({ getSessionFn, onSessionUpdateFn, onAuthFail
 }
 
 async function baseFetch(path, options = {}, useAuth = true) {
-  const { token, tenantSlug } = getSession()
+  const { tenantSlug } = getSession()
   const headers = {
     ...(options.headers || {})
   }
   if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
 
-  if (useAuth && token) headers.Authorization = `Bearer ${token}`
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
 
   return fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' })
@@ -31,8 +30,7 @@ async function baseFetch(path, options = {}, useAuth = true) {
 async function refreshToken() {
   const res = await baseFetch('/api/auth/refresh', { method: 'POST' }, true)
   if (!res.ok) return false
-  const data = await res.json()
-  onSessionUpdate({ token: data.accessToken })
+  await res.json().catch(() => ({}))
   return true
 }
 
