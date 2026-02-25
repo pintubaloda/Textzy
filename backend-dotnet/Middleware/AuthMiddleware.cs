@@ -9,6 +9,12 @@ public class AuthMiddleware(RequestDelegate next)
 
     public async Task Invoke(HttpContext context, SessionService sessions, ControlDbContext db, TenancyContext tenancy, AuthContext auth, AuthCookieService authCookie)
     {
+        if (HttpMethods.IsOptions(context.Request.Method))
+        {
+            await _next(context);
+            return;
+        }
+
         var path = context.Request.Path.Value ?? string.Empty;
         var isAuthPath = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/accept-invite", StringComparison.OrdinalIgnoreCase);

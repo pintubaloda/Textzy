@@ -189,7 +189,7 @@ app.UseMiddleware<PlatformRequestLoggingMiddleware>();
 app.UseMiddleware<TenantMiddleware>();
 app.UseMiddleware<AuthMiddleware>();
 app.MapControllers();
-app.MapHub<Textzy.Api.Services.InboxHub>("/hubs/inbox");
+app.MapHub<Textzy.Api.Services.InboxHub>("/hubs/inbox").RequireCors("frontend");
 app.Run();
 
 static void EnsureControlAuthSchema(ControlDbContext db)
