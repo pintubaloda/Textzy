@@ -63,6 +63,7 @@ const InboxPage = () => {
   const typingTimerRef = useRef(null);
   const typingActiveRef = useRef(false);
   const audioCtxRef = useRef(null);
+  const audioUnlockedRef = useRef(false);
 
   const mapConversation = (x) => ({
     id: x.id,
@@ -113,10 +114,12 @@ const InboxPage = () => {
 
   const playNotificationSound = useCallback((frequency = 880) => {
     try {
+      if (!audioUnlockedRef.current) return;
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
       const ctx = audioCtxRef.current || new Ctx();
       audioCtxRef.current = ctx;
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";
@@ -131,6 +134,31 @@ const InboxPage = () => {
     } catch {
       // Ignore audio failures (autoplay policy / unsupported browser)
     }
+  }, []);
+
+  useEffect(() => {
+    const unlockAudio = () => {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
+        audioCtxRef.current.resume().catch(() => {});
+        audioUnlockedRef.current = true;
+        window.removeEventListener("pointerdown", unlockAudio);
+        window.removeEventListener("keydown", unlockAudio);
+        window.removeEventListener("touchstart", unlockAudio);
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener("pointerdown", unlockAudio, { passive: true });
+    window.addEventListener("keydown", unlockAudio);
+    window.addEventListener("touchstart", unlockAudio, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+      window.removeEventListener("touchstart", unlockAudio);
+    };
   }, []);
 
   useEffect(() => {
@@ -288,6 +316,8 @@ const InboxPage = () => {
   useEffect(() => {
     const s = getSession();
     if (!s?.tenantSlug) return;
+    let disposed = false;
+    let started = false;
     const runtimeConfig = typeof window !== "undefined" ? (window.__APP_CONFIG__ || {}) : {};
     const baseUrl =
       runtimeConfig.API_BASE ||
@@ -359,14 +389,20 @@ const InboxPage = () => {
     });
 
     connection.start()
-      .then(joinRoom)
+      .then(() => {
+        if (disposed) return connection.stop().catch(() => {});
+        started = true;
+        return joinRoom();
+      })
       .catch(() => {
+        if (disposed) return;
         toast.error("Realtime connection failed. Inbox will auto-refresh on actions.");
       });
 
     return () => {
+      disposed = true;
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-      connection.invoke("LeaveTenantRoom", s.tenantSlug).catch(() => {});
+      if (started) connection.invoke("LeaveTenantRoom", s.tenantSlug).catch(() => {});
       connection.stop().catch(() => {});
     };
   }, [loadConversations, loadNotes, loadSla, loadThread, me?.email, playNotificationSound]);
