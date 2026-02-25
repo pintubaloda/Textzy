@@ -3,3 +3,6 @@
 design/
 
 frontend/public/design/
+
+# Broken legacy submodule path; keep local files out of git tracking
+ND/app/
