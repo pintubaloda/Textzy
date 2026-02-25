@@ -36,6 +36,7 @@ import {
   FileText,
   Mic,
   Bell,
+  X,
 } from "lucide-react";
 import { apiGet, apiPost, apiPostForm, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
@@ -78,6 +79,9 @@ const InboxPage = () => {
   const [transferBusy, setTransferBusy] = useState(false);
   const [starBusy, setStarBusy] = useState(false);
   const [voiceRecording, setVoiceRecording] = useState(false);
+  const [pendingVoiceFile, setPendingVoiceFile] = useState(null);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [voiceMimeType, setVoiceMimeType] = useState("");
   const [notificationStyle, setNotificationStyle] = useState(() => {
     try {
       return localStorage.getItem(NOTIFICATION_STYLE_KEY) || "classic";
@@ -94,6 +98,8 @@ const InboxPage = () => {
   const endMessageRef = useRef(null);
   const voiceRecorderRef = useRef(null);
   const voiceChunksRef = useRef([]);
+  const voiceStreamRef = useRef(null);
+  const recordingTimerRef = useRef(null);
 
   const mapConversation = (x) => ({
     id: x.id,
@@ -290,6 +296,17 @@ const InboxPage = () => {
     endMessageRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, selectedChat?.id]);
 
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      try {
+        voiceStreamRef.current?.getTracks?.().forEach((t) => t.stop());
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
+
   const handleAttachFaq = (item) => {
     if (!item?.answer) return;
     setMessage((prev) => {
@@ -299,7 +316,41 @@ const InboxPage = () => {
     setShowFaqAttach(false);
   };
 
+  const toggleTemplatePanel = () => {
+    setShowTemplateAttach((prev) => {
+      const next = !prev;
+      if (next) setShowFaqAttach(false);
+      return next;
+    });
+  };
+
+  const toggleFaqPanel = () => {
+    setShowFaqAttach((prev) => {
+      const next = !prev;
+      if (next) setShowTemplateAttach(false);
+      return next;
+    });
+  };
+
+  const pickRecorderMimeType = () => {
+    if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported) return "";
+    const candidates = [
+      "audio/ogg;codecs=opus",
+      "audio/webm;codecs=opus",
+      "audio/mp4",
+      "audio/mpeg",
+      "audio/webm",
+    ];
+    return candidates.find((m) => MediaRecorder.isTypeSupported(m)) || "";
+  };
+
   const handleSendMessage = async () => {
+    if (pendingVoiceFile) {
+      await uploadAndSendMedia(pendingVoiceFile, "audio");
+      setPendingVoiceFile(null);
+      setVoiceMimeType("");
+      return;
+    }
     if (!canReplyInSession) {
       toast.error("24-hour session expired. Send an approved template first.");
       return;
@@ -617,23 +668,50 @@ const InboxPage = () => {
     if (!selectedChat?.phone) return;
     if (!voiceRecording) {
       try {
+        const mimeType = pickRecorderMimeType();
+        if (!mimeType) {
+          toast.error("Voice recording format not supported in this browser.");
+          return;
+        }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const recorder = new MediaRecorder(stream);
+        const recorder = new MediaRecorder(stream, { mimeType });
+        voiceStreamRef.current = stream;
         voiceChunksRef.current = [];
+        setRecordingSeconds(0);
+        setVoiceMimeType(mimeType);
+        if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = setInterval(() => setRecordingSeconds((s) => s + 1), 1000);
         recorder.ondataavailable = (evt) => {
           if (evt.data?.size > 0) voiceChunksRef.current.push(evt.data);
         };
-        recorder.onstop = async () => {
-          const blob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || "audio/webm" });
-          const ext = blob.type.includes("ogg") ? "ogg" : "webm";
-          const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type || "audio/webm" });
-          await uploadAndSendMedia(file, "audio");
-          stream.getTracks().forEach((t) => t.stop());
+        recorder.onstop = () => {
+          if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+          const blob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || mimeType || "audio/webm" });
+          if (!blob.size) {
+            toast.error("No voice captured. Try again.");
+            return;
+          }
+          const ext = blob.type.includes("ogg")
+            ? "ogg"
+            : blob.type.includes("mp4")
+              ? "m4a"
+              : blob.type.includes("mpeg")
+                ? "mp3"
+                : "webm";
+          const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type || mimeType || "audio/webm" });
+          setPendingVoiceFile(file);
+          toast.success("Voice ready. Click Send to deliver.");
+          try {
+            voiceStreamRef.current?.getTracks?.().forEach((t) => t.stop());
+          } catch {
+            // ignore
+          }
         };
         voiceRecorderRef.current = recorder;
         recorder.start();
+        setPendingVoiceFile(null);
         setVoiceRecording(true);
-        toast.success("Recording started. Tap mic again to send.");
+        toast.success("Recording started.");
       } catch (e) {
         toast.error(e?.message || "Microphone access denied");
       }
@@ -642,9 +720,10 @@ const InboxPage = () => {
     try {
       voiceRecorderRef.current?.stop();
       setVoiceRecording(false);
-      toast.success("Recording stopped. Uploading...");
+      toast.success("Recording stopped.");
     } catch {
       setVoiceRecording(false);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       toast.error("Voice send failed");
     }
   };
@@ -829,8 +908,14 @@ const InboxPage = () => {
               <Button variant="ghost" size="icon" className="text-slate-500" onClick={handlePickAttachment}><Paperclip className="w-5 h-5" /></Button>
               <Button variant="ghost" size="icon" className="text-slate-500" onClick={handlePickImage}><Image className="w-5 h-5" /></Button>
               <Button variant="ghost" size="icon" className="text-slate-500" onClick={handlePickDocument}><FileText className="w-5 h-5" /></Button>
-              <Button variant="outline" size="sm" className="h-8 px-3 rounded-lg text-xs" onClick={() => setShowTemplateAttach((v) => !v)}>Attach Template</Button>
-              <Button variant="outline" size="sm" className="h-8 px-3 rounded-lg text-xs" onClick={() => setShowFaqAttach((v) => !v)}>Attach Q&A</Button>
+              <Button variant="outline" size="sm" className="h-8 px-3 rounded-lg text-xs inline-flex items-center gap-1.5" onClick={toggleTemplatePanel}>
+                <FileText className="w-3.5 h-3.5" />
+                <span>Attach Template</span>
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 px-3 rounded-lg text-xs inline-flex items-center gap-1.5" onClick={toggleFaqPanel}>
+                <MessageCircle className="w-3.5 h-3.5" />
+                <span>Attach Q&A</span>
+              </Button>
               <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => handleAttachmentSelected(e)} />
               <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleAttachmentSelected(e, "image")} />
               <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.zip" className="hidden" onChange={(e) => handleAttachmentSelected(e, "document")} />
@@ -868,7 +953,12 @@ const InboxPage = () => {
               ) : null}
               {showTemplateAttach ? (
                 <div className="absolute left-3 bottom-16 z-20 rounded-xl border border-slate-200 bg-white shadow-lg p-3 w-[420px]">
-                  <p className="text-xs font-semibold text-slate-700 mb-2">Attach Template</p>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold text-slate-700">Attach Template</p>
+                    <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowTemplateAttach(false)}>
+                      <X className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
                   <div className="grid grid-cols-2 gap-2 mb-2">
                     <select className="h-9 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700" value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
                       {templates.length === 0 ? <option value="">No templates</option> : null}
@@ -885,7 +975,12 @@ const InboxPage = () => {
               ) : null}
               {showFaqAttach ? (
                 <div className="absolute left-3 bottom-16 z-20 rounded-xl border border-slate-200 bg-white shadow-lg p-3 w-[420px]">
-                  <p className="text-xs font-semibold text-slate-700 mb-2">Attach Q&A Answer</p>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold text-slate-700">Attach Q&A Answer</p>
+                    <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowFaqAttach(false)}>
+                      <X className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
                   <div className="max-h-44 overflow-auto space-y-1">
                     {faqs.length === 0 ? <p className="text-xs text-slate-500">No Q&A items found.</p> : null}
                     {faqs.map((f) => (
@@ -903,6 +998,16 @@ const InboxPage = () => {
               <Button className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-xl h-12 w-14 shadow-md shadow-orange-500/30" onClick={handleSendMessage} disabled={!canReplyInSession || sendBusy}><Send className="w-5 h-5" /></Button>
             </div>
           </div>
+          {voiceRecording ? (
+            <div className="mt-2 text-xs text-red-600">
+              Recording... {Math.floor(recordingSeconds / 60).toString().padStart(2, "0")}:{(recordingSeconds % 60).toString().padStart(2, "0")}
+            </div>
+          ) : null}
+          {!voiceRecording && pendingVoiceFile ? (
+            <div className="mt-2 text-xs text-emerald-700">
+              Voice ready ({voiceMimeType || pendingVoiceFile.type || "audio"}). Click send to deliver.
+            </div>
+          ) : null}
         </div>
       </div>
 
