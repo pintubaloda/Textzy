@@ -50,6 +50,8 @@ public class WhatsAppCloudService(
         public string BusinessVerificationStatus { get; init; } = string.Empty;
         public string PhoneQualityRating { get; init; } = string.Empty;
         public string PhoneNameStatus { get; init; } = string.Empty;
+        public string MessagingLimitTier { get; init; } = string.Empty;
+        public string AccountHealth { get; init; } = string.Empty;
         public List<string> Warnings { get; init; } = [];
     }
 
@@ -240,6 +242,8 @@ public class WhatsAppCloudService(
         config.BusinessVerificationStatus = audit.BusinessVerificationStatus;
         config.PhoneQualityRating = audit.PhoneQualityRating;
         config.PhoneNameStatus = audit.PhoneNameStatus;
+        config.MessagingLimitTier = audit.MessagingLimitTier;
+        config.AccountHealth = audit.AccountHealth;
         if (audit.Warnings.Count > 0) config.LastError = string.Join(" | ", audit.Warnings);
         config.OnboardingState = webhookOk && audit.PermissionAuditPassed ? "ready" : config.OnboardingState;
         await tenantResolver.InvalidateAsync(config.PhoneNumberId, ct);
@@ -327,6 +331,8 @@ public class WhatsAppCloudService(
         config.BusinessVerificationStatus = audit.BusinessVerificationStatus;
         config.PhoneQualityRating = audit.PhoneQualityRating;
         config.PhoneNameStatus = audit.PhoneNameStatus;
+        config.MessagingLimitTier = audit.MessagingLimitTier;
+        config.AccountHealth = audit.AccountHealth;
         if (audit.Warnings.Count > 0) config.LastError = string.Join(" | ", audit.Warnings);
         config.OnboardingState = webhookOk && audit.PermissionAuditPassed ? "ready" : config.OnboardingState;
         await tenantResolver.InvalidateAsync(config.PhoneNumberId, ct);
@@ -469,6 +475,10 @@ public class WhatsAppCloudService(
             config.PhoneQualityRating = audit.PhoneQualityRating;
         if (!string.IsNullOrWhiteSpace(audit.PhoneNameStatus))
             config.PhoneNameStatus = audit.PhoneNameStatus;
+        if (!string.IsNullOrWhiteSpace(audit.MessagingLimitTier))
+            config.MessagingLimitTier = audit.MessagingLimitTier;
+        if (!string.IsNullOrWhiteSpace(audit.AccountHealth))
+            config.AccountHealth = audit.AccountHealth;
         if (audit.Warnings.Count > 0)
             config.LastError = string.Join(" | ", audit.Warnings);
         if (webhookOk && audit.PermissionAuditPassed)
@@ -659,6 +669,8 @@ public class WhatsAppCloudService(
             config.BusinessVerificationStatus = audit.BusinessVerificationStatus;
             config.PhoneQualityRating = audit.PhoneQualityRating;
             config.PhoneNameStatus = audit.PhoneNameStatus;
+            config.MessagingLimitTier = audit.MessagingLimitTier;
+            config.AccountHealth = audit.AccountHealth;
             if (audit.Warnings.Count > 0)
             {
                 config.LastError = string.Join(" | ", audit.Warnings);
@@ -697,6 +709,8 @@ public class WhatsAppCloudService(
             businessVerificationStatus = config.BusinessVerificationStatus,
             phoneQualityRating = config.PhoneQualityRating,
             phoneNameStatus = config.PhoneNameStatus,
+            messagingLimitTier = config.MessagingLimitTier,
+            accountHealth = config.AccountHealth,
             permissionAuditPassed = config.PermissionAuditPassed,
             webhookSubscribed = config.WebhookSubscribedAtUtc.HasValue,
             timeline = new
@@ -768,6 +782,8 @@ public class WhatsAppCloudService(
         var businessVerificationStatus = string.Empty;
         var phoneQualityRating = string.Empty;
         var phoneNameStatus = string.Empty;
+        var messagingLimitTier = string.Empty;
+        var accountHealth = string.Empty;
         var permissionAuditPassed = false;
         var webhookSubscribed = false;
 
@@ -776,7 +792,7 @@ public class WhatsAppCloudService(
 
         if (!string.IsNullOrWhiteSpace(config.WabaId))
         {
-            var wabaUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.WabaId}?fields=id,name,account_review_status,business_verification_status";
+            var wabaUrl = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.WabaId}?fields=id,name,account_review_status,business_verification_status,messaging_limit_tier";
             var waba = await GraphGetRawAsync(wabaUrl, accessToken, ct);
             if (waba.Ok && !string.IsNullOrWhiteSpace(waba.Body))
             {
@@ -784,6 +800,8 @@ public class WhatsAppCloudService(
                 {
                     using var wabaDoc = JsonDocument.Parse(waba.Body);
                     businessVerificationStatus = TryGetString(wabaDoc.RootElement, "business_verification_status");
+                    messagingLimitTier = TryGetString(wabaDoc.RootElement, "messaging_limit_tier");
+                    accountHealth = TryGetString(wabaDoc.RootElement, "account_review_status");
                 }
                 catch
                 {
@@ -846,6 +864,8 @@ public class WhatsAppCloudService(
             BusinessVerificationStatus = businessVerificationStatus,
             PhoneQualityRating = phoneQualityRating,
             PhoneNameStatus = phoneNameStatus,
+            MessagingLimitTier = messagingLimitTier,
+            AccountHealth = accountHealth,
             Warnings = warnings
         };
     }

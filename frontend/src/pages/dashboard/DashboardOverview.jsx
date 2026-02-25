@@ -384,9 +384,11 @@ const DashboardOverview = () => {
         <div className="space-y-6 relative z-10">
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <div className="px-5 py-2 rounded-full bg-white border border-slate-200 text-slate-700 shadow-sm">WhatsApp Business API Status: <b className={wabaStatus.readyToSend ? "text-green-600" : "text-orange-600"}>{wabaStatus.readyToSend ? "Connected" : "Pending"}</b></div>
-            <Button className="rounded-full bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25" onClick={handleEmbeddedConnect} disabled={connectingWaba}>
-              {connectingWaba ? "Connecting..." : "Apply Now"}
-            </Button>
+            {!wabaStatus?.readyToSend ? (
+              <Button className="rounded-full bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25" onClick={handleEmbeddedConnect} disabled={connectingWaba}>
+                {connectingWaba ? "Connecting..." : "Apply Now"}
+              </Button>
+            ) : null}
             <div className="px-5 py-2 rounded-full bg-white/90 border border-slate-200 text-slate-700 shadow-sm">TRAIL(Pro + Flows)</div>
           </div>
 
@@ -404,27 +406,60 @@ const DashboardOverview = () => {
                   : "Click on Continue with Facebook to apply for WhatsApp Business API"}
               </p>
               <p className="text-slate-600 text-lg leading-snug">
-                {wabaStatus?.readyToSend ? "Use Map Existing WABA only when you want to replace current mapping." : "Requirement: Registered Business & Working Website."}
+                {wabaStatus?.readyToSend ? "Connection details below are synced from your WhatsApp Cloud API onboarding." : "Requirement: Registered Business & Working Website."}
               </p>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <Button variant="outline" className="border-slate-300 text-slate-700 bg-white hover:bg-slate-100 text-base px-7">Schedule Meeting</Button>
-                <Button className="bg-orange-500 hover:bg-orange-600 text-white text-base px-7 shadow-md shadow-orange-500/25" onClick={handleEmbeddedConnect} disabled={connectingWaba}>
-                  {connectingWaba ? "Connecting..." : (wabaStatus?.readyToSend ? "Reconnect with Facebook" : "Continue with Facebook")}
-                </Button>
-              </div>
-              <div className="mt-3">
-                <Button
-                  className="bg-orange-500 hover:bg-orange-600 text-white text-base px-7 shadow-md shadow-orange-500/25"
-                  onClick={handleMapExistingWaba}
-                  disabled={reusingWaba}
-                >
-                  {reusingWaba ? "Mapping..." : "Map Existing WABA"}
-                </Button>
-                <p className="text-sm text-slate-500 mt-2 leading-relaxed max-w-2xl">
-                  If you are already using WhatsApp Business, click here to connect your existing account to this project
-                  without creating a new WABA.
-                </p>
-              </div>
+              {!wabaStatus?.readyToSend ? (
+                <>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <Button variant="outline" className="border-slate-300 text-slate-700 bg-white hover:bg-slate-100 text-base px-7">Schedule Meeting</Button>
+                    <Button className="bg-orange-500 hover:bg-orange-600 text-white text-base px-7 shadow-md shadow-orange-500/25" onClick={handleEmbeddedConnect} disabled={connectingWaba}>
+                      {connectingWaba ? "Connecting..." : "Continue with Facebook"}
+                    </Button>
+                  </div>
+                  <div className="mt-3">
+                    <Button
+                      className="bg-orange-500 hover:bg-orange-600 text-white text-base px-7 shadow-md shadow-orange-500/25"
+                      onClick={handleMapExistingWaba}
+                      disabled={reusingWaba}
+                    >
+                      {reusingWaba ? "Mapping..." : "Map Existing WABA"}
+                    </Button>
+                    <p className="text-sm text-slate-500 mt-2 leading-relaxed max-w-2xl">
+                      If you are already using WhatsApp Business, click here to connect your existing account to this project
+                      without creating a new WABA.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-4 grid sm:grid-cols-2 gap-3">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Connection Health</p>
+                    <p className="text-sm font-semibold text-slate-900">
+                      {wabaStatus.accountHealth || (wabaStatus.permissionAuditPassed && wabaStatus.webhookSubscribed ? "Healthy" : "Needs Attention")}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Display Number</p>
+                    <p className="text-sm font-semibold text-slate-900">{wabaStatus.phone || "-"}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Business Name</p>
+                    <p className="text-sm font-semibold text-slate-900">{wabaStatus.businessName || "-"}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Quality</p>
+                    <p className="text-sm font-semibold text-slate-900">{wabaStatus.phoneQualityRating || "Unknown"}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Messaging Limit Tier</p>
+                    <p className="text-sm font-semibold text-slate-900">{wabaStatus.messagingLimitTier || "Unknown"}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Account Health</p>
+                    <p className="text-sm font-semibold text-slate-900">{wabaStatus.accountHealth || "Unknown"}</p>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
               <div className="w-36 h-36 mx-auto mb-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center overflow-hidden">
@@ -442,6 +477,8 @@ const DashboardOverview = () => {
                 <div className="flex justify-between gap-2"><span className="text-slate-500">Phone Number ID</span><span className="text-slate-900 font-medium break-all">{wabaStatus.phoneNumberId || "Pending"}</span></div>
                 <div className="flex justify-between gap-2"><span className="text-slate-500">Business Manager ID</span><span className="text-slate-900 font-medium break-all">{wabaStatus.businessManagerId || "Pending"}</span></div>
                 <div className="flex justify-between gap-2"><span className="text-slate-500">Token Source</span><span className="text-slate-900 font-medium">{wabaStatus.tokenSource || "exchanged_token"}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Messaging Limit Tier</span><span className="text-slate-900 font-medium">{wabaStatus.messagingLimitTier || "Unknown"}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Account Health</span><span className="text-slate-900 font-medium">{wabaStatus.accountHealth || "Unknown"}</span></div>
               </div>
             </div>
           </div>

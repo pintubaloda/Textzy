@@ -31,5 +31,7 @@ public class TenantWabaConfig
     public string BusinessVerificationStatus { get; set; } = string.Empty;
     public string PhoneQualityRating { get; set; } = string.Empty;
     public string PhoneNameStatus { get; set; } = string.Empty;
+    public string MessagingLimitTier { get; set; } = string.Empty;
+    public string AccountHealth { get; set; } = string.Empty;
     public bool PermissionAuditPassed { get; set; }
 }
