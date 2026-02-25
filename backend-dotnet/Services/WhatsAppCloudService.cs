@@ -658,7 +658,7 @@ public class WhatsAppCloudService(
         var approved = await tenantDb.Templates.CountAsync(x =>
             x.TenantId == tenancy.TenantId &&
             x.Channel == ChannelType.WhatsApp &&
-            string.Equals(x.Status, "approved", StringComparison.OrdinalIgnoreCase), ct);
+            (x.Status ?? string.Empty).ToLower() == "approved", ct);
 
         return new
         {
