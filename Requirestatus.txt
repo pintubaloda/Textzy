@@ -239,3 +239,24 @@ Update: 2026-02-25 (Template UX + shared library + media header)
   - POST /api/templates/library/sync (sync from Meta/account templates into shared DB library)
   - Library UI with search/filter and "Use template" prefill flow.
 - Meta template submit composer now carries media header example handle when HeaderMediaId is set.
+
+Update: 2026-02-26 (Template governance hardening + scheduled sync)
+- Enforced stronger WhatsApp template governance in API:
+  - naming guard rails tightened (lowercase/underscore policy and underscore edge-case checks)
+  - WhatsApp template name immutability enforced on update
+  - duplicate template guard for same name+language+channel per tenant
+  - anti-abuse checks for blocked URL shorteners and category/content mismatch on UTILITY/AUTHENTICATION
+- Added rejection reason persistence on template records (`RejectionReason`) and schema auto-add.
+- Enhanced Meta sync mapping:
+  - sync now reads `rejected_reason`
+  - lifecycle status mapped from Meta status (`approved/submitted/rejected/disabled`)
+  - sync response now includes disabled count.
+- Added background `TemplateStatusSyncWorker`:
+  - periodic per-tenant template status sync from Meta
+  - updates local template status/lifecycle/rejection reason
+  - creates alert audit logs when templates degrade to rejected/disabled/paused.
+- Templates UI improvements:
+  - setup wizard shortcuts for first Utility and OTP template
+  - stricter client-side name/content validation parity
+  - clearer button/shortener guidance
+  - fallback remediation hint when rejection reason is not provided by Meta.

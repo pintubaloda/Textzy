@@ -22,5 +22,6 @@ public class Template
     public string HeaderMediaName { get; set; } = string.Empty;
     public string FooterText { get; set; } = string.Empty;
     public string ButtonsJson { get; set; } = string.Empty;
+    public string RejectionReason { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }

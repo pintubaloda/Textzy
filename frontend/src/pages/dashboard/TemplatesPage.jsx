@@ -103,6 +103,22 @@ const categoryGuide = {
   },
 };
 
+const nameRegex = /^[a-z0-9_]+$/;
+const blockedShortenerHosts = ["bit.ly", "tinyurl.com", "t.co", "shorturl.at", "rb.gy", "goo.gl", "ow.ly", "is.gd", "cutt.ly", "buff.ly"];
+
+function hasBlockedShortener(text) {
+  const value = String(text || "");
+  const matches = value.match(/https?:\/\/[^\s]+/gi) || [];
+  return matches.some((url) => {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      return blockedShortenerHosts.includes(host) || blockedShortenerHosts.some((x) => host.endsWith(`.${x}`));
+    } catch {
+      return false;
+    }
+  });
+}
+
 function parseButtons(buttonsJson) {
   try {
     const parsed = JSON.parse(buttonsJson || "[]");
@@ -174,6 +190,7 @@ const TemplatesPage = () => {
   const [syncingLibrary, setSyncingLibrary] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [wizardStep, setWizardStep] = useState(1);
 
   const isSms = draft.channel === "sms";
   const isMediaHeader = ["image", "video", "document"].includes((draft.headerType || "none").toLowerCase());
@@ -251,9 +268,20 @@ const TemplatesPage = () => {
     if (!draft.name.trim()) return "Template name is required.";
     if (!draft.body.trim()) return "Message body is required.";
     if (draft.channel === "whatsapp") {
+      const normalizedName = draft.name.trim();
+      if (!nameRegex.test(normalizedName)) return "Template name: lowercase letters, numbers, underscore only (no spaces).";
       if (draft.body.length > 1024) return "WhatsApp template body max length is 1024.";
       for (let i = 0; i < templateVars.length; i += 1) {
         if (templateVars[i] !== i + 1) return "Variables must be sequential: {{1}}, {{2}}, {{3}}...";
+      }
+      if (hasBlockedShortener(`${draft.body} ${draft.footerText} ${draft.buttonsJson}`)) {
+        return "URL shortener domains are not allowed in WhatsApp templates.";
+      }
+      if (draft.category === "UTILITY" || draft.category === "AUTHENTICATION") {
+        const content = `${draft.body} ${draft.footerText}`.toLowerCase();
+        if (["buy now", "limited time", "flash sale", "promo code", "discount"].some((x) => content.includes(x))) {
+          return `${draft.category} templates cannot include promotional marketing language.`;
+        }
       }
       if (String(draft.category).toUpperCase() === "AUTHENTICATION" && !draft.body.includes("{{1}}")) {
         return "Authentication category must include auth variable ({{1}}).";
@@ -329,7 +357,7 @@ const TemplatesPage = () => {
   const applyLibraryTemplate = (item) => {
     setDraft((p) => ({
       ...p,
-      name: `${nameValue(item)}_custom`,
+      name: `${nameValue(item)}_custom`.toLowerCase().replace(/[^a-z0-9_]/g, "_"),
       channel: "whatsapp",
       category: String(categoryValue(item) || "UTILITY").toUpperCase(),
       language: languageValue(item),
@@ -342,6 +370,39 @@ const TemplatesPage = () => {
       headerMediaName: "",
     }));
     setShowCreateDialog(true);
+  };
+
+  const applyWizardPreset = (preset) => {
+    if (preset === "utility") {
+      setDraft((p) => ({
+        ...p,
+        channel: "whatsapp",
+        category: "UTILITY",
+        name: "order_update_v1",
+        body: "Hi {{1}}, your order {{2}} is confirmed and will reach by {{3}}.",
+        footerText: "Reply STOP to opt-out",
+        headerType: "none",
+        headerText: "",
+        buttonsJson: '[{"type":"quick_reply","text":"Track Order"},{"type":"quick_reply","text":"Support"}]',
+      }));
+      setWizardStep(2);
+      return;
+    }
+
+    if (preset === "otp") {
+      setDraft((p) => ({
+        ...p,
+        channel: "whatsapp",
+        category: "AUTHENTICATION",
+        name: "login_otp_v1",
+        body: "Your verification code is {{1}}. It is valid for 10 minutes.",
+        footerText: "Do not share this code with anyone.",
+        headerType: "text",
+        headerText: "Verification code",
+        buttonsJson: "[]",
+      }));
+      setWizardStep(3);
+    }
   };
 
   const syncLibrary = async () => {
@@ -485,7 +546,7 @@ const TemplatesPage = () => {
                   Create Template
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-6xl max-h-[92vh] p-0 overflow-hidden">
+                <DialogContent className="max-w-6xl max-h-[92vh] p-0 overflow-hidden">
                 <DialogHeader className="px-6 pt-6 pb-2 border-b bg-white">
                   <DialogTitle>Create Template</DialogTitle>
                   <DialogDescription>Build templates as per WhatsApp and India DLT requirements.</DialogDescription>
@@ -493,6 +554,18 @@ const TemplatesPage = () => {
 
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-0">
                   <div className="lg:col-span-3 px-6 py-4 overflow-y-auto max-h-[calc(92vh-170px)] space-y-4 border-r">
+                    {draft.channel === "whatsapp" && (
+                      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-3">
+                        <div className="font-semibold text-slate-900">Template Setup Wizard</div>
+                        <div className="text-xs text-slate-700">Step {wizardStep}/3: Create utility and authentication starter templates after onboarding.</div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button type="button" size="sm" variant="outline" onClick={() => applyWizardPreset("utility")}>Use Utility Starter</Button>
+                          <Button type="button" size="sm" variant="outline" onClick={() => applyWizardPreset("otp")}>Use OTP Starter</Button>
+                          <Button type="button" size="sm" variant="ghost" onClick={() => setWizardStep(1)}>Reset Wizard</Button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>Template Name</Label>
@@ -628,6 +701,7 @@ const TemplatesPage = () => {
                     <div className="space-y-2">
                       <Label>Buttons JSON (Optional)</Label>
                       <Textarea className="min-h-[90px] font-mono text-xs" placeholder='[{"type":"quick_reply","text":"Track"}]' value={draft.buttonsJson} onChange={(e) => setDraft((p) => ({ ...p, buttonsJson: e.target.value }))} />
+                      <p className="text-xs text-slate-500">Allowed: quick_reply, url, phone_number. Avoid URL shorteners.</p>
                     </div>
                   </div>
 
@@ -762,6 +836,12 @@ const TemplatesPage = () => {
                       <div className="space-y-1">
                         {getStatusBadge(statusValue(template))}
                         {(template?.rejectionReason || template?.RejectionReason) && <p className="text-xs text-red-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" />{template?.rejectionReason || template?.RejectionReason}</p>}
+                        {String(statusValue(template)).toLowerCase() === "rejected" && !(template?.rejectionReason || template?.RejectionReason) && (
+                          <p className="text-xs text-red-600 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            Rejected by Meta. Open Preview, fix category/variables/buttons, then re-submit.
+                          </p>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-slate-600 text-sm font-mono">{template?.dltTemplateId || template?.DltTemplateId || "-"}</TableCell>

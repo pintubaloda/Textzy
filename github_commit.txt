@@ -224,3 +224,16 @@ Pending commit:
 
 Summary:
 - Implemented live template preview, media-header upload flow, category guidance/validation, and DB-backed shared template library sync/list/use.
+
+Summary:
+- Hardened WhatsApp template lifecycle rules and added automated status governance.
+
+Pending commit:
+- backend-dotnet/Controllers/TemplatesController.cs
+- backend-dotnet/Models/Template.cs
+- backend-dotnet/Program.cs
+- backend-dotnet/Services/WhatsAppCloudService.cs
+- backend-dotnet/Services/TemplateStatusSyncWorker.cs
+- frontend/src/pages/dashboard/TemplatesPage.jsx
+- Requirestatus.txt
+- github_commit.txt

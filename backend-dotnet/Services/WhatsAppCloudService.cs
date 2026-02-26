@@ -510,7 +510,7 @@ public class WhatsAppCloudService(
             while (pages < 10)
             {
                 pages++;
-                var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.WabaId}/message_templates?fields=name,status,category,language,components";
+                var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{config.WabaId}/message_templates?fields=name,status,category,language,rejected_reason,components";
                 if (!string.IsNullOrWhiteSpace(after))
                     url += $"&after={Uri.EscapeDataString(after)}";
 
@@ -535,6 +535,8 @@ public class WhatsAppCloudService(
                         if (string.IsNullOrWhiteSpace(category)) category = "UTILITY";
                         var statusText = TryGetString(t, "status");
                         if (string.IsNullOrWhiteSpace(statusText)) statusText = "UNKNOWN";
+                        var rejectionReason = TryGetString(t, "rejected_reason");
+                        var lifecycleStatus = MapLifecycleStatus(statusText);
 
                         string bodyText = string.Empty;
                         string headerType = "none";
@@ -600,7 +602,7 @@ public class WhatsAppCloudService(
                                 Category = category,
                                 Language = language,
                                 Body = bodyText,
-                                LifecycleStatus = "approved",
+                                LifecycleStatus = lifecycleStatus,
                                 Version = 1,
                                 VariantGroup = $"{name}:{language}",
                                 Status = statusText,
@@ -610,6 +612,7 @@ public class WhatsAppCloudService(
                                 HeaderMediaName = string.Empty,
                                 FooterText = footerText,
                                 ButtonsJson = buttonsJson,
+                                RejectionReason = rejectionReason,
                                 CreatedAtUtc = DateTime.UtcNow
                             });
                         }
@@ -624,6 +627,8 @@ public class WhatsAppCloudService(
                             existing.HeaderMediaName = string.Empty;
                             existing.FooterText = footerText;
                             existing.ButtonsJson = buttonsJson;
+                            existing.LifecycleStatus = lifecycleStatus;
+                            existing.RejectionReason = rejectionReason;
                         }
                     }
                 }
@@ -659,13 +664,18 @@ public class WhatsAppCloudService(
             x.TenantId == tenancy.TenantId &&
             x.Channel == ChannelType.WhatsApp &&
             (x.Status ?? string.Empty).ToLower() == "approved", ct);
+        var disabled = await tenantDb.Templates.CountAsync(x =>
+            x.TenantId == tenancy.TenantId &&
+            x.Channel == ChannelType.WhatsApp &&
+            ((x.Status ?? string.Empty).ToLower() == "disabled" || (x.Status ?? string.Empty).ToLower() == "paused"), ct);
 
         return new
         {
             synced = true,
             wabaId = cfg.WabaId,
             total,
-            approved
+            approved,
+            disabled
         };
     }
 
@@ -695,6 +705,7 @@ public class WhatsAppCloudService(
         {
             template.LifecycleStatus = "rejected";
             template.Status = "Rejected";
+            template.RejectionReason = ExtractGraphErrorReason(post.Body);
             await tenantDb.SaveChangesAsync(ct);
             throw new InvalidOperationException($"Graph template submit failed ({post.StatusCode}): {post.Body}");
         }
@@ -715,6 +726,7 @@ public class WhatsAppCloudService(
 
         template.LifecycleStatus = "submitted";
         template.Status = graphStatus;
+        template.RejectionReason = string.Empty;
         await tenantDb.SaveChangesAsync(ct);
 
         return new
@@ -862,6 +874,45 @@ public class WhatsAppCloudService(
         }
 
         return result;
+    }
+
+    private static string MapLifecycleStatus(string status)
+    {
+        var s = (status ?? string.Empty).Trim().ToUpperInvariant();
+        return s switch
+        {
+            "APPROVED" => "approved",
+            "PENDING" or "IN_REVIEW" => "submitted",
+            "REJECTED" => "rejected",
+            "DISABLED" or "PAUSED" => "disabled",
+            _ => "draft"
+        };
+    }
+
+    private static string ExtractGraphErrorReason(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var error))
+            {
+                var message = TryGetString(error, "message");
+                var title = TryGetString(error, "error_user_title");
+                var description = TryGetString(error, "error_user_msg");
+                var parts = new[] { title, message, description }
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct()
+                    .ToArray();
+                return string.Join(" | ", parts);
+            }
+        }
+        catch
+        {
+            // ignore malformed payload
+        }
+
+        return body.Length <= 300 ? body : body[..300];
     }
 
     public async Task<object> GetOnboardingStatusAsync(CancellationToken ct = default)

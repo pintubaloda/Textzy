@@ -36,6 +36,17 @@ public class TemplatesController(
     };
 
     private static readonly Regex WhatsAppTemplateNameRegex = new("^[a-z0-9_]+$", RegexOptions.Compiled);
+    private static readonly Regex UrlRegex = new(@"https?://[^\s]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly HashSet<string> BlockedShortenerHosts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bit.ly", "tinyurl.com", "t.co", "shorturl.at", "rb.gy", "goo.gl", "ow.ly", "is.gd", "cutt.ly", "buff.ly"
+    };
+
+    private static readonly string[] AggressiveMarketingTerms =
+    [
+        "buy now", "limited time", "flash sale", "act now", "hurry", "exclusive offer", "discount", "promo code"
+    ];
 
     private static string? ValidateRequest(UpsertTemplateRequest request)
     {
@@ -62,6 +73,10 @@ public class TemplatesController(
             if (normalizedName.Length > 512) return "WhatsApp template name is too long.";
             if (!WhatsAppTemplateNameRegex.IsMatch(normalizedName))
                 return "WhatsApp template name must contain only lowercase letters, numbers, and underscore.";
+            if (normalizedName.Contains("__", StringComparison.Ordinal))
+                return "WhatsApp template name should not contain repeated underscores.";
+            if (normalizedName.StartsWith("_", StringComparison.Ordinal) || normalizedName.EndsWith("_", StringComparison.Ordinal))
+                return "WhatsApp template name cannot start or end with underscore.";
 
             var headerType = (request.HeaderType ?? "none").Trim().ToLowerInvariant();
             if (headerType == "text")
@@ -86,6 +101,8 @@ public class TemplatesController(
 
             var buttonError = ValidateButtonsJson(request.ButtonsJson);
             if (buttonError is not null) return buttonError;
+            var policyError = ValidatePolicyContent(request);
+            if (policyError is not null) return policyError;
         }
 
         if (request.Channel == ChannelType.Sms)
@@ -136,6 +153,8 @@ public class TemplatesController(
                     var url = row.TryGetProperty("url", out var urlNode) ? (urlNode.GetString() ?? string.Empty).Trim() : string.Empty;
                     if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed) || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
                         return "CTA URL button requires a valid http/https URL.";
+                    if (IsBlockedShortener(parsed))
+                        return "URL shortener domains are not allowed in WhatsApp templates.";
                 }
                 else
                 {
@@ -152,6 +171,46 @@ public class TemplatesController(
         {
             return "Buttons JSON is invalid.";
         }
+    }
+
+    private static string? ValidatePolicyContent(UpsertTemplateRequest request)
+    {
+        var category = (request.Category ?? "UTILITY").Trim().ToUpperInvariant();
+        var content = $"{request.HeaderText} {request.Body} {request.FooterText}".ToLowerInvariant();
+
+        var urls = UrlRegex.Matches(content)
+            .Select(m => m.Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        foreach (var candidate in urls)
+        {
+            if (Uri.TryCreate(candidate, UriKind.Absolute, out var parsed) && IsBlockedShortener(parsed))
+                return "URL shortener domains are not allowed in WhatsApp templates.";
+        }
+
+        if (category is "UTILITY" or "AUTHENTICATION")
+        {
+            if (AggressiveMarketingTerms.Any(term => content.Contains(term, StringComparison.OrdinalIgnoreCase)))
+                return $"{category} templates cannot contain promotional marketing language.";
+        }
+
+        if (category == "AUTHENTICATION")
+        {
+            if (!request.Body.Contains("{{1}}", StringComparison.Ordinal))
+                return "Authentication templates must include OTP/code placeholder {{1}}.";
+            if (request.Body.Contains("{{2}}", StringComparison.Ordinal))
+                return "Authentication templates should only contain required auth variables; remove extra placeholders unless mandatory.";
+        }
+
+        return null;
+    }
+
+    private static bool IsBlockedShortener(Uri uri)
+    {
+        var host = uri.Host?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(host)) return false;
+        return BlockedShortenerHosts.Contains(host) ||
+               BlockedShortenerHosts.Any(x => host.EndsWith($".{x}", StringComparison.OrdinalIgnoreCase));
     }
 
     [HttpGet]
@@ -186,8 +245,18 @@ public class TemplatesController(
             HeaderMediaName = request.HeaderMediaName ?? string.Empty,
             FooterText = request.FooterText ?? string.Empty,
             ButtonsJson = request.ButtonsJson ?? string.Empty,
-            Status = request.Channel == ChannelType.WhatsApp ? "Draft" : "Approved"
+            Status = request.Channel == ChannelType.WhatsApp ? "Draft" : "Approved",
+            RejectionReason = string.Empty
         };
+
+        var duplicateExists = await db.Templates.AnyAsync(x =>
+            x.TenantId == tenancy.TenantId &&
+            x.Channel == item.Channel &&
+            x.Name == item.Name &&
+            x.Language == item.Language, ct);
+        if (duplicateExists)
+            return BadRequest("Template with same name and language already exists for this project.");
+
         db.Templates.Add(item);
         await db.SaveChangesAsync(ct);
         return Ok(item);
@@ -201,7 +270,23 @@ public class TemplatesController(
         if (error is not null) return BadRequest(error);
         var item = db.Templates.FirstOrDefault(x => x.Id == id && x.TenantId == tenancy.TenantId);
         if (item is null) return NotFound();
-        item.Name = request.Name.Trim();
+        var requestedName = request.Name.Trim();
+        if (item.Channel == ChannelType.WhatsApp &&
+            !string.Equals(item.Name, requestedName, StringComparison.Ordinal))
+        {
+            return BadRequest("WhatsApp template name is immutable after creation. Create a new version with a new name.");
+        }
+
+        var duplicateExists = await db.Templates.AnyAsync(x =>
+            x.TenantId == tenancy.TenantId &&
+            x.Id != item.Id &&
+            x.Channel == request.Channel &&
+            x.Name == requestedName &&
+            x.Language == request.Language, ct);
+        if (duplicateExists)
+            return BadRequest("Another template with same name and language already exists.");
+
+        item.Name = requestedName;
         item.Channel = request.Channel;
         item.Category = request.Category.ToUpperInvariant();
         item.Language = request.Language;
@@ -215,6 +300,7 @@ public class TemplatesController(
         item.HeaderMediaName = request.HeaderMediaName ?? string.Empty;
         item.FooterText = request.FooterText ?? string.Empty;
         item.ButtonsJson = request.ButtonsJson ?? string.Empty;
+        item.RejectionReason = string.Empty;
         if (item.Channel == ChannelType.WhatsApp && !string.Equals(item.LifecycleStatus, "approved", StringComparison.OrdinalIgnoreCase))
         {
             item.LifecycleStatus = "draft";
