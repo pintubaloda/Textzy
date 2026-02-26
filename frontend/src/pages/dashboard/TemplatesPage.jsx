@@ -36,17 +36,50 @@ function normalizeListPayload(payload) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.items)) return payload.items;
   if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.templates)) return payload.templates;
+  if (Array.isArray(payload?.results)) return payload.results;
+  if (Array.isArray(payload?.$values)) return payload.$values;
   return [];
 }
 
 function channelValue(x) {
-  const raw = x?.channel;
+  const raw = x?.channel ?? x?.Channel;
   if (typeof raw === "number") return raw;
   const text = String(raw || "").trim().toLowerCase();
   if (text === "whatsapp") return 2;
   if (text === "sms") return 1;
   const num = Number(raw);
   return Number.isFinite(num) ? num : 0;
+}
+
+function nameValue(x) {
+  return x?.name ?? x?.Name ?? "";
+}
+
+function bodyValue(x) {
+  return x?.body ?? x?.Body ?? "";
+}
+
+function statusValue(x) {
+  return x?.status ?? x?.Status ?? x?.lifecycleStatus ?? x?.LifecycleStatus ?? "";
+}
+
+function categoryValue(x) {
+  return x?.category ?? x?.Category ?? "";
+}
+
+function languageValue(x) {
+  return x?.language ?? x?.Language ?? "en";
+}
+
+function idValue(x) {
+  return x?.id ?? x?.Id;
+}
+
+function inSelectedTab(template, tab) {
+  const ch = channelValue(template);
+  if (tab === "sms") return ch === 1;
+  return ch === 2 || ch === 0;
 }
 
 const categoryGuide = {
@@ -183,10 +216,10 @@ const TemplatesPage = () => {
   };
 
   const stats = [
-    { title: "Total Templates", value: String(templates.filter((t) => (tab === "sms" ? channelValue(t) === 1 : channelValue(t) === 2)).length) },
-    { title: "Approved", value: String(templates.filter((t) => (tab === "sms" ? channelValue(t) === 1 : channelValue(t) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "approved").length) },
-    { title: "Pending", value: String(templates.filter((t) => (tab === "sms" ? channelValue(t) === 1 : channelValue(t) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "pending").length) },
-    { title: "Rejected", value: String(templates.filter((t) => (tab === "sms" ? channelValue(t) === 1 : channelValue(t) === 2) && String(t.status || t.lifecycleStatus || "").toLowerCase() === "rejected").length) },
+    { title: "Total Templates", value: String(templates.filter((t) => inSelectedTab(t, tab)).length) },
+    { title: "Approved", value: String(templates.filter((t) => inSelectedTab(t, tab) && String(statusValue(t)).toLowerCase() === "approved").length) },
+    { title: "Pending", value: String(templates.filter((t) => inSelectedTab(t, tab) && String(statusValue(t)).toLowerCase() === "pending").length) },
+    { title: "Rejected", value: String(templates.filter((t) => inSelectedTab(t, tab) && String(statusValue(t)).toLowerCase() === "rejected").length) },
   ];
 
   const templateVars = useMemo(() => {
@@ -197,20 +230,20 @@ const TemplatesPage = () => {
   const filteredTemplates = useMemo(() => {
     const q = tableSearch.trim().toLowerCase();
     return templates.filter((template) => {
-      const inTab = tab === "sms" ? channelValue(template) === 1 : channelValue(template) === 2;
+      const inTab = inSelectedTab(template, tab);
       if (!inTab) return false;
       if (!q) return true;
-      return String(template.name || "").toLowerCase().includes(q) || String(template.body || "").toLowerCase().includes(q);
+      return String(nameValue(template)).toLowerCase().includes(q) || String(bodyValue(template)).toLowerCase().includes(q);
     });
   }, [templates, tab, tableSearch]);
 
   const filteredLibraryItems = useMemo(() => {
     const q = librarySearch.trim().toLowerCase();
     return libraryItems.filter((x) => {
-      const byCategory = libraryCategory === "ALL" || String(x.category || "").toUpperCase() === libraryCategory;
+      const byCategory = libraryCategory === "ALL" || String(categoryValue(x) || "").toUpperCase() === libraryCategory;
       if (!byCategory) return false;
       if (!q) return true;
-      return String(x.name || "").toLowerCase().includes(q) || String(x.body || "").toLowerCase().includes(q);
+      return String(nameValue(x)).toLowerCase().includes(q) || String(bodyValue(x)).toLowerCase().includes(q);
     });
   }, [libraryItems, librarySearch, libraryCategory]);
 
@@ -296,15 +329,15 @@ const TemplatesPage = () => {
   const applyLibraryTemplate = (item) => {
     setDraft((p) => ({
       ...p,
-      name: `${item.name}_custom`,
+      name: `${nameValue(item)}_custom`,
       channel: "whatsapp",
-      category: (item.category || "UTILITY").toUpperCase(),
-      language: item.language || "en",
-      headerType: item.headerType || "none",
-      headerText: item.headerText || "",
-      body: item.body || "",
-      footerText: item.footerText || "",
-      buttonsJson: item.buttonsJson || "",
+      category: String(categoryValue(item) || "UTILITY").toUpperCase(),
+      language: languageValue(item),
+      headerType: item?.headerType || item?.HeaderType || "none",
+      headerText: item?.headerText || item?.HeaderText || "",
+      body: bodyValue(item),
+      footerText: item?.footerText || item?.FooterText || "",
+      buttonsJson: item?.buttonsJson || item?.ButtonsJson || "",
       headerMediaId: "",
       headerMediaName: "",
     }));
@@ -372,11 +405,12 @@ const TemplatesPage = () => {
   };
 
   const removeTemplate = async () => {
-    if (!deleteTarget?.id || deleteBusy) return;
+    const targetId = idValue(deleteTarget);
+    if (!targetId || deleteBusy) return;
     try {
       setDeleteBusy(true);
-      await apiDelete(`/api/templates/${deleteTarget.id}`);
-      setTemplates((prev) => prev.filter((x) => x.id !== deleteTarget.id));
+      await apiDelete(`/api/templates/${targetId}`);
+      setTemplates((prev) => prev.filter((x) => idValue(x) !== targetId));
       toast.success("Template deleted");
       setDeleteTarget(null);
     } catch (e) {
@@ -658,12 +692,12 @@ const TemplatesPage = () => {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                   {filteredLibraryItems.slice(0, 12).map((item) => (
-                  <div key={item.id} className="rounded-xl border border-slate-200 p-3 bg-white">
+                  <div key={idValue(item) || nameValue(item)} className="rounded-xl border border-slate-200 p-3 bg-white">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="font-medium text-slate-900 truncate">{item.name}</div>
-                      {getCategoryBadge(item.category)}
+                      <div className="font-medium text-slate-900 truncate">{nameValue(item)}</div>
+                      {getCategoryBadge(categoryValue(item))}
                     </div>
-                    <div className="text-xs text-slate-500 mt-1 line-clamp-2">{item.body}</div>
+                    <div className="text-xs text-slate-500 mt-1 line-clamp-2">{bodyValue(item)}</div>
                     <div className="mt-3 flex justify-end">
                       <Button size="sm" variant="outline" onClick={() => applyLibraryTemplate(item)}>Use template</Button>
                     </div>
@@ -708,15 +742,15 @@ const TemplatesPage = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredTemplates.map((template) => (
-                  <TableRow key={template.id} className="table-row-hover">
+                  {filteredTemplates.map((template) => (
+                  <TableRow key={idValue(template) || nameValue(template)} className="table-row-hover">
                     <TableCell>
                       <div>
-                        <p className="font-medium text-slate-900">{template.name}</p>
-                        <p className="text-sm text-slate-500 truncate max-w-xs">{template.body}</p>
+                        <p className="font-medium text-slate-900">{nameValue(template)}</p>
+                        <p className="text-sm text-slate-500 truncate max-w-xs">{bodyValue(template)}</p>
                       </div>
                     </TableCell>
-                    <TableCell>{getCategoryBadge(template.category)}</TableCell>
+                    <TableCell>{getCategoryBadge(categoryValue(template))}</TableCell>
                     <TableCell>
                       {channelValue(template) === 2 ? (
                         <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200"><MessageSquare className="w-3 h-3 mr-1" />WhatsApp</Badge>
@@ -726,12 +760,12 @@ const TemplatesPage = () => {
                     </TableCell>
                     <TableCell>
                       <div className="space-y-1">
-                        {getStatusBadge(template.status || template.lifecycleStatus)}
-                        {template.rejectionReason && <p className="text-xs text-red-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" />{template.rejectionReason}</p>}
+                        {getStatusBadge(statusValue(template))}
+                        {(template?.rejectionReason || template?.RejectionReason) && <p className="text-xs text-red-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" />{template?.rejectionReason || template?.RejectionReason}</p>}
                       </div>
                     </TableCell>
-                    <TableCell className="text-slate-600 text-sm font-mono">{template.dltTemplateId || "-"}</TableCell>
-                    <TableCell className="text-slate-600 text-sm font-mono">{template.smsSenderId || "-"}</TableCell>
+                    <TableCell className="text-slate-600 text-sm font-mono">{template?.dltTemplateId || template?.DltTemplateId || "-"}</TableCell>
+                    <TableCell className="text-slate-600 text-sm font-mono">{template?.smsSenderId || template?.SmsSenderId || "-"}</TableCell>
                     <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -742,7 +776,7 @@ const TemplatesPage = () => {
                             <FileText className="w-4 h-4 mr-2" />Preview
                           </DropdownMenuItem>
                           {channelValue(template) === 2 && (
-                            <DropdownMenuItem onClick={() => submitTemplateToMeta(template.id)}>
+                            <DropdownMenuItem onClick={() => submitTemplateToMeta(idValue(template))}>
                               <Send className="w-4 h-4 mr-2" />Submit to Meta
                             </DropdownMenuItem>
                           )}
