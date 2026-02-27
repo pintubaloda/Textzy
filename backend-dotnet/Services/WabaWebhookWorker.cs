@@ -25,6 +25,8 @@ public class WabaWebhookWorker(
         public string MediaId { get; init; } = string.Empty;
         public string MediaMimeType { get; init; } = string.Empty;
         public string MediaSha256 { get; init; } = string.Empty;
+        public string MediaCaption { get; init; } = string.Empty;
+        public string MediaFileName { get; init; } = string.Empty;
         public string ButtonPayload { get; init; } = string.Empty;
         public string ButtonText { get; init; } = string.Empty;
         public string InteractiveType { get; init; } = string.Empty;
@@ -303,7 +305,10 @@ public class WabaWebhookWorker(
                         .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.ProviderMessageId == inboundProviderId, stoppingToken);
                     if (existingInbound is null)
                     {
-                        var normalizedInboundBody = ComposeInboundBody(inbound);
+                        var inboundMessageType = IsMediaType(inbound.MessageType) ? $"media:{inbound.MessageType}" : "session";
+                        var normalizedInboundBody = IsMediaType(inbound.MessageType)
+                            ? ComposeInboundMediaBody(inbound)
+                            : ComposeInboundBody(inbound);
                         tenantDb.Set<Message>().Add(new Message
                         {
                             Id = Guid.NewGuid(),
@@ -311,7 +316,7 @@ public class WabaWebhookWorker(
                             Channel = ChannelType.WhatsApp,
                             Recipient = inbound.From,
                             Body = normalizedInboundBody,
-                            MessageType = "session",
+                            MessageType = inboundMessageType,
                             Status = "Received",
                             ProviderMessageId = inboundProviderId,
                             CreatedAtUtc = inbound.AtUtc ?? DateTime.UtcNow
@@ -512,6 +517,8 @@ public class WabaWebhookWorker(
                         var mediaId = string.Empty;
                         var mediaMime = string.Empty;
                         var mediaSha = string.Empty;
+                        var mediaCaption = string.Empty;
+                        var mediaFileName = string.Empty;
                         if (type is "image" or "video" or "audio" or "document" or "sticker")
                         {
                             if (msg.TryGetProperty(type, out var mediaNode))
@@ -519,6 +526,8 @@ public class WabaWebhookWorker(
                                 mediaId = mediaNode.TryGetProperty("id", out var mId) ? mId.GetString() ?? string.Empty : string.Empty;
                                 mediaMime = mediaNode.TryGetProperty("mime_type", out var mMime) ? mMime.GetString() ?? string.Empty : string.Empty;
                                 mediaSha = mediaNode.TryGetProperty("sha256", out var mSha) ? mSha.GetString() ?? string.Empty : string.Empty;
+                                mediaCaption = mediaNode.TryGetProperty("caption", out var mCap) ? mCap.GetString() ?? string.Empty : string.Empty;
+                                mediaFileName = mediaNode.TryGetProperty("filename", out var mName) ? mName.GetString() ?? string.Empty : string.Empty;
                             }
                         }
                         var buttonPayload = string.Empty;
@@ -613,6 +622,8 @@ public class WabaWebhookWorker(
                             MediaId = mediaId,
                             MediaMimeType = mediaMime,
                             MediaSha256 = mediaSha,
+                            MediaCaption = mediaCaption,
+                            MediaFileName = mediaFileName,
                             ButtonPayload = buttonPayload,
                             ButtonText = buttonText,
                             InteractiveType = interactiveType,
@@ -652,6 +663,24 @@ public class WabaWebhookWorker(
         if (!string.IsNullOrWhiteSpace(inbound.ReferralHeadline)) return $"Referral: {inbound.ReferralHeadline}";
         if (!string.IsNullOrWhiteSpace(inbound.MessageType)) return $"Inbound {inbound.MessageType} message";
         return "[Inbound message]";
+    }
+
+    private static bool IsMediaType(string? messageType)
+    {
+        var t = (messageType ?? string.Empty).Trim().ToLowerInvariant();
+        return t is "image" or "video" or "audio" or "document" or "sticker";
+    }
+
+    private static string ComposeInboundMediaBody(InboundItem inbound)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            mediaId = inbound.MediaId ?? string.Empty,
+            mimeType = inbound.MediaMimeType ?? string.Empty,
+            caption = inbound.MediaCaption ?? string.Empty,
+            fileName = inbound.MediaFileName ?? string.Empty,
+            kind = inbound.MessageType ?? "media"
+        });
     }
 
     private static void ApplyStatusTransition(Message msg, StatusItem incoming, ControlDbContext controlDb)

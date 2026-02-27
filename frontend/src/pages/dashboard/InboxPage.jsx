@@ -38,7 +38,7 @@ import {
   Bell,
   X,
 } from "lucide-react";
-import { apiGet, apiPost, apiPostForm, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
+import { apiGet, apiGetBlob, apiPost, apiPostForm, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
 import { playNotificationTone, isNotificationAudioUnlocked, unlockNotificationAudio } from "@/lib/notificationAudio";
 import { toast } from "sonner";
@@ -130,10 +130,11 @@ const InboxPage = () => {
     const normalizedStatus = sender === "agent" ? (rawStatus || "sent") : "received";
     const messageType = String(x.messageType || "session");
     let text = x.body || "";
+    let media = null;
     if (messageType.startsWith("media:")) {
       const kind = messageType.split(":")[1] || "media";
       try {
-        const media = JSON.parse(x.body || "{}");
+        media = JSON.parse(x.body || "{}");
         text = `${kind === "audio" ? "🎤" : "📎"} ${kind.toUpperCase()}${media.caption ? ` - ${media.caption}` : ""}`;
       } catch {
         text = `📎 ${kind.toUpperCase()} attachment`;
@@ -153,7 +154,32 @@ const InboxPage = () => {
     queueProvider: x.queueProvider || "memory",
     status: normalizedStatus,
     messageType,
+    media,
   };
+  };
+
+  const openInboundMedia = async (msg) => {
+    const mediaId = msg?.media?.mediaId;
+    if (!mediaId) {
+      toast.error("Media id not available");
+      return;
+    }
+    try {
+      const blob = await apiGetBlob(`/api/messages/media/${encodeURIComponent(mediaId)}`);
+      const url = URL.createObjectURL(blob);
+      const fileName = msg?.media?.fileName || `media-${mediaId}`;
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      toast.error(e?.message || "Failed to open media");
+    }
   };
 
   const loadConversations = useCallback(
@@ -1044,7 +1070,7 @@ const InboxPage = () => {
           <div className="space-y-4 max-w-3xl mx-auto">
             <div className="flex items-center justify-center"><span className="px-3 py-1 bg-white text-xs text-slate-500 rounded-full border border-slate-200">Today</span></div>
             {messages.length === 0 ? <div className="h-[60vh] flex items-center justify-center"><div className="text-center max-w-sm"><div className="w-16 h-16 rounded-2xl mx-auto bg-orange-100 text-orange-600 flex items-center justify-center mb-4"><MessageCircle className="w-8 h-8" /></div><h3 className="text-xl font-semibold text-slate-900">No messages yet</h3><p className="text-slate-500 mt-1">Start conversation with a customer to see messages and actions here.</p></div></div> : null}
-            {messages.map((msg) => <div key={msg.id} className={`flex ${msg.sender === "agent" ? "justify-end" : "justify-start"}`}><div className={`group max-w-[70%] ${msg.sender === "agent" ? "chat-bubble-sent text-slate-900" : "chat-bubble-received text-slate-900"} px-4 py-3`} onDoubleClick={() => setReplyTarget(msg)}><p className="text-sm">{msg.text}</p><div className={`flex items-center gap-2 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}><span className="text-xs text-slate-500">{msg.time}</span>{msg.sender === "agent" && getStatusIcon(msg.status)}<button type="button" className="text-[11px] text-slate-400 hover:text-orange-600 opacity-0 group-hover:opacity-100 transition" onClick={() => setReplyTarget(msg)}>Reply</button></div>{msg.sender === "agent" && msg.status === "failed" ? <p className="text-[11px] text-red-600 mt-1">{msg.lastError || "Send failed"}</p> : null}{msg.sender === "agent" && msg.status === "retryscheduled" && msg.nextRetryAtUtc ? <p className="text-[11px] text-amber-700 mt-1">Retry at {new Date(msg.nextRetryAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p> : null}</div></div>)}
+            {messages.map((msg) => <div key={msg.id} className={`flex ${msg.sender === "agent" ? "justify-end" : "justify-start"}`}><div className={`group max-w-[70%] ${msg.sender === "agent" ? "chat-bubble-sent text-slate-900" : "chat-bubble-received text-slate-900"} px-4 py-3`} onDoubleClick={() => setReplyTarget(msg)}><p className="text-sm">{msg.text}</p>{msg.messageType.startsWith("media:") && msg.media?.mediaId ? <div className="mt-2"><Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => openInboundMedia(msg)}>Open attachment</Button></div> : null}<div className={`flex items-center gap-2 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}><span className="text-xs text-slate-500">{msg.time}</span>{msg.sender === "agent" && getStatusIcon(msg.status)}<button type="button" className="text-[11px] text-slate-400 hover:text-orange-600 opacity-0 group-hover:opacity-100 transition" onClick={() => setReplyTarget(msg)}>Reply</button></div>{msg.sender === "agent" && msg.status === "failed" ? <p className="text-[11px] text-red-600 mt-1">{msg.lastError || "Send failed"}</p> : null}{msg.sender === "agent" && msg.status === "retryscheduled" && msg.nextRetryAtUtc ? <p className="text-[11px] text-amber-700 mt-1">Retry at {new Date(msg.nextRetryAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p> : null}</div></div>)}
             <div ref={endMessageRef} />
           </div>
         </ScrollArea>

@@ -132,6 +132,15 @@ export async function apiGet(path) {
   }
 }
 
+export async function apiGetBlob(path) {
+  const res = await apiRequest(path)
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "")
+    throw new Error(msg || `GET ${path} failed (${res.status})`)
+  }
+  return res.blob()
+}
+
 export async function apiPost(path, body) {
   const headers = {}
   if (path === '/api/messages/send') {

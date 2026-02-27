@@ -187,6 +187,60 @@ public class MessagesController(
         return Ok(items);
     }
 
+    [HttpGet("media/{mediaId}")]
+    public async Task<IActionResult> GetInboundMedia(string mediaId, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(InboxRead)) return Forbid();
+        var id = (mediaId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(id)) return BadRequest(new { error = "mediaId is required." });
+
+        var wabaCfg = await db.Set<TenantWabaConfig>()
+            .Where(x => x.TenantId == tenancy.TenantId && x.IsActive)
+            .OrderByDescending(x => x.ConnectedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (wabaCfg is null) return BadRequest(new { error = "WABA config not connected." });
+
+        var accessToken = UnprotectToken(wabaCfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(accessToken)) return BadRequest(new { error = "WABA access token missing." });
+
+        var options = configuration.GetSection("WhatsApp").Get<WhatsAppOptions>() ?? new WhatsAppOptions();
+        var client = httpClientFactory.CreateClient();
+
+        var metaUrl = $"{options.GraphApiBase}/{options.ApiVersion}/{id}";
+        using var metaReq = new HttpRequestMessage(HttpMethod.Get, metaUrl);
+        metaReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        var metaResp = await client.SendAsync(metaReq, ct);
+        var metaBody = await metaResp.Content.ReadAsStringAsync(ct);
+        if (!metaResp.IsSuccessStatusCode)
+            return BadRequest(new { error = $"Media metadata fetch failed ({(int)metaResp.StatusCode})", detail = metaBody });
+
+        string downloadUrl;
+        string mimeType;
+        string fileName;
+        using (var metaDoc = JsonDocument.Parse(metaBody))
+        {
+            downloadUrl = metaDoc.RootElement.TryGetProperty("url", out var u) ? (u.GetString() ?? string.Empty) : string.Empty;
+            mimeType = metaDoc.RootElement.TryGetProperty("mime_type", out var m) ? (m.GetString() ?? "application/octet-stream") : "application/octet-stream";
+            fileName = metaDoc.RootElement.TryGetProperty("filename", out var f) ? (f.GetString() ?? string.Empty) : string.Empty;
+        }
+        if (string.IsNullOrWhiteSpace(downloadUrl))
+            return BadRequest(new { error = "Media URL missing from Graph metadata." });
+
+        using var dlReq = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
+        dlReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        var dlResp = await client.SendAsync(dlReq, ct);
+        if (!dlResp.IsSuccessStatusCode)
+        {
+            var dlBody = await dlResp.Content.ReadAsStringAsync(ct);
+            return BadRequest(new { error = $"Media download failed ({(int)dlResp.StatusCode})", detail = dlBody });
+        }
+
+        var bytes = await dlResp.Content.ReadAsByteArrayAsync(ct);
+        if (string.IsNullOrWhiteSpace(fileName))
+            fileName = $"waba-media-{id}";
+        return File(bytes, mimeType, fileName);
+    }
+
     private static string? ResolveMediaType(string? providedType, string? contentType, string? fileName)
     {
         var t = (providedType ?? string.Empty).Trim().ToLowerInvariant();
