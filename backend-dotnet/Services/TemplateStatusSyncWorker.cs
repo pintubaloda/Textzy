@@ -10,6 +10,7 @@ public class TemplateStatusSyncWorker(
     IServiceScopeFactory scopeFactory,
     IHttpClientFactory httpClientFactory,
     IConfiguration configuration,
+    TenantSchemaGuardService schemaGuard,
     SensitiveDataRedactor redactor,
     ILogger<TemplateStatusSyncWorker> logger) : BackgroundService
 {
@@ -53,6 +54,7 @@ public class TemplateStatusSyncWorker(
                     ? controlDb.Database.GetConnectionString()
                     : tenant.DataConnectionString;
                 if (string.IsNullOrWhiteSpace(tenantConn)) continue;
+                await schemaGuard.EnsureContactEncryptionColumnsAsync(tenant.Id, tenantConn, ct);
 
                 using var tenantDb = SeedData.CreateTenantDbContext(tenantConn);
                 var cfg = await tenantDb.TenantWabaConfigs

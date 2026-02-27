@@ -10,6 +10,7 @@ public class WabaOnboardingHealthWorker(
     IServiceScopeFactory scopeFactory,
     IHttpClientFactory httpClientFactory,
     IConfiguration configuration,
+    TenantSchemaGuardService schemaGuard,
     SensitiveDataRedactor redactor,
     ILogger<WabaOnboardingHealthWorker> logger) : BackgroundService
 {
@@ -47,7 +48,13 @@ public class WabaOnboardingHealthWorker(
         {
             try
             {
-                using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
+                var tenantConn = string.IsNullOrWhiteSpace(tenant.DataConnectionString)
+                    ? controlDb.Database.GetConnectionString()
+                    : tenant.DataConnectionString;
+                if (string.IsNullOrWhiteSpace(tenantConn)) continue;
+                await schemaGuard.EnsureContactEncryptionColumnsAsync(tenant.Id, tenantConn, ct);
+
+                using var tenantDb = SeedData.CreateTenantDbContext(tenantConn);
                 var cfg = await tenantDb.TenantWabaConfigs
                     .Where(x => x.TenantId == tenant.Id && x.IsActive)
                     .OrderByDescending(x => x.ConnectedAtUtc)

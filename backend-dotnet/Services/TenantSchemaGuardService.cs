@@ -62,6 +62,9 @@ public class TenantSchemaGuardService(IMemoryCache cache, ILogger<TenantSchemaGu
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "PermanentTokenIssuedAtUtc" timestamp with time zone NULL;""", ct);
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "PermanentTokenExpiresAtUtc" timestamp with time zone NULL;""", ct);
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "TokenSource" text NOT NULL DEFAULT 'embedded_exchange';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "TemplatesSyncedAtUtc" timestamp with time zone NULL;""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "TemplatesSyncStatus" text NOT NULL DEFAULT '';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "TemplatesSyncFailCount" integer NOT NULL DEFAULT 0;""", ct);
         await db.Database.ExecuteSqlRawAsync("""CREATE INDEX IF NOT EXISTS "IX_TenantWabaConfigs_TenantId" ON "TenantWabaConfigs" ("TenantId");""", ct);
 
         cache.Set(CacheKey(tenantId), true, TimeSpan.FromMinutes(30));
