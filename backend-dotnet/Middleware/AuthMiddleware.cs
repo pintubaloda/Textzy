@@ -96,14 +96,14 @@ public class AuthMiddleware(RequestDelegate next)
 
         if (isProjectPath)
         {
-            auth.Set(user.Id, session.TenantId, user.Email, user.IsSuperAdmin ? RolePermissionCatalog.SuperAdmin : "owner");
+            auth.Set(user.Id, session.TenantId, user.Email, user.IsSuperAdmin ? RolePermissionCatalog.SuperAdmin : "owner", null, user.FullName);
             await _next(context);
             return;
         }
 
         if (user.IsSuperAdmin)
         {
-            auth.Set(user.Id, session.TenantId, user.Email, RolePermissionCatalog.SuperAdmin);
+            auth.Set(user.Id, session.TenantId, user.Email, RolePermissionCatalog.SuperAdmin, null, user.FullName);
             await _next(context);
             return;
         }
@@ -126,7 +126,7 @@ public class AuthMiddleware(RequestDelegate next)
             else effective.Remove(ov.Permission);
         }
 
-        auth.Set(user.Id, session.TenantId, user.Email, tenantUser.Role, effective.ToList());
+        auth.Set(user.Id, session.TenantId, user.Email, tenantUser.Role, effective.ToList(), user.FullName);
         await _next(context);
     }
 }

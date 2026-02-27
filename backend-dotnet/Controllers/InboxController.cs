@@ -98,7 +98,9 @@ public class InboxController(
         c.AssignedUserId = req.UserId;
         c.AssignedUserName = req.UserName;
         await db.SaveChangesAsync(ct);
-        var actor = string.IsNullOrWhiteSpace(auth.Email) ? "Agent" : auth.Email;
+        var actor = !string.IsNullOrWhiteSpace(auth.FullName)
+            ? auth.FullName.Trim()
+            : (string.IsNullOrWhiteSpace(auth.Email) ? "Agent" : auth.Email);
         var target = string.IsNullOrWhiteSpace(req.UserName) ? "Unassigned" : req.UserName.Trim();
         await AddSystemConversationMessageAsync(c, $"Conversation assigned to {target} by {actor}.", ct);
         await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("conversation.assigned", new { c.Id, c.AssignedUserId, c.AssignedUserName }, ct);
@@ -115,7 +117,9 @@ public class InboxController(
         c.AssignedUserName = req.UserName;
         c.Status = "Open";
         await db.SaveChangesAsync(ct);
-        var actor = string.IsNullOrWhiteSpace(auth.Email) ? "Agent" : auth.Email;
+        var actor = !string.IsNullOrWhiteSpace(auth.FullName)
+            ? auth.FullName.Trim()
+            : (string.IsNullOrWhiteSpace(auth.Email) ? "Agent" : auth.Email);
         var target = string.IsNullOrWhiteSpace(req.UserName) ? "Unassigned" : req.UserName.Trim();
         await AddSystemConversationMessageAsync(c, $"Conversation transferred to {target} by {actor}.", ct);
         await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("conversation.transferred", new { c.Id, c.AssignedUserId, c.AssignedUserName }, ct);
@@ -182,7 +186,9 @@ public class InboxController(
     public async Task<IActionResult> Typing([FromBody] TypingEventRequest req, CancellationToken ct)
     {
         if (!rbac.HasPermission(InboxWrite)) return Forbid();
-        var displayName = string.IsNullOrWhiteSpace(auth.Email) ? "Agent" : auth.Email;
+        var displayName = !string.IsNullOrWhiteSpace(auth.FullName)
+            ? auth.FullName.Trim()
+            : (string.IsNullOrWhiteSpace(auth.Email) ? "Agent" : auth.Email);
         await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("conversation.typing", new
         {
             req.ConversationId,

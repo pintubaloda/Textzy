@@ -940,8 +940,16 @@ const InboxPage = () => {
       playNotificationSoundRef.current?.(760);
       notifyDesktop("New WhatsApp message", "You received a new customer message.", `inbound:${evt?.phoneNumberId || "tenant"}`);
     });
-    connection.on("conversation.assigned", () => loadConversations());
-    connection.on("conversation.transferred", () => loadConversations());
+    connection.on("conversation.assigned", () => {
+      loadConversations();
+      const activeId = activeConversationId();
+      if (activeId) loadThread(activeId);
+    });
+    connection.on("conversation.transferred", () => {
+      loadConversations();
+      const activeId = activeConversationId();
+      if (activeId) loadThread(activeId);
+    });
     connection.on("conversation.labels", () => loadConversations());
     connection.on("conversation.note", () => {
       const activeId = activeConversationId();
