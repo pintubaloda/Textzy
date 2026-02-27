@@ -302,7 +302,7 @@ public class PlatformCustomersController(
                 {
                     "yearly" => DateTime.UtcNow.AddYears(1),
                     "monthly" => DateTime.UtcNow.AddMonths(1),
-                    _ => null
+                    _ => DateTime.MaxValue
                 },
                 CreatedAtUtc = DateTime.UtcNow,
                 UpdatedAtUtc = DateTime.UtcNow
@@ -319,7 +319,7 @@ public class PlatformCustomersController(
             {
                 "yearly" => DateTime.UtcNow.AddYears(1),
                 "monthly" => DateTime.UtcNow.AddMonths(1),
-                _ => null
+                _ => DateTime.MaxValue
             };
             sub.CancelledAtUtc = null;
             sub.UpdatedAtUtc = DateTime.UtcNow;
