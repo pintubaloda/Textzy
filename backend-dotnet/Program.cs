@@ -608,12 +608,10 @@ static string? BuildFromPgEnvironment()
             "verify-full" => SslMode.VerifyFull,
             _ => SslMode.Prefer
         };
-        builder.TrustServerCertificate = ssl is "require" or "prefer";
     }
     else
     {
         builder.SslMode = SslMode.Require;
-        builder.TrustServerCertificate = true;
     }
 
     return builder.ConnectionString;
@@ -659,7 +657,6 @@ static bool TryBuildFromUrl(string url, out string connectionString)
         "verify-full" => SslMode.VerifyFull,
         _ => SslMode.Require
     };
-    csb.TrustServerCertificate = csb.SslMode is SslMode.Require or SslMode.Prefer;
     connectionString = csb.ConnectionString;
     return true;
 }

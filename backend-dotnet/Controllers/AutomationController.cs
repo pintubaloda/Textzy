@@ -1009,6 +1009,7 @@ public class AutomationController(
     {
         var text = (inboundText ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        var inboundNormalized = (inboundText ?? string.Empty).Trim();
 
         var items = await db.FaqKnowledgeItems
             .Where(x => x.TenantId == tenancy.TenantId && x.IsActive)
@@ -1017,7 +1018,7 @@ public class AutomationController(
             .ToListAsync(ct);
         if (items.Count == 0) return string.Empty;
 
-        var exact = items.FirstOrDefault(x => string.Equals(x.Question.Trim(), inboundText.Trim(), StringComparison.OrdinalIgnoreCase));
+        var exact = items.FirstOrDefault(x => string.Equals((x.Question ?? string.Empty).Trim(), inboundNormalized, StringComparison.OrdinalIgnoreCase));
         if (exact is not null) return exact.Answer;
 
         foreach (var item in items)
