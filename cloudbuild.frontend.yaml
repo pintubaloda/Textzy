@@ -8,7 +8,7 @@ steps:
       - "gcr.io/$PROJECT_ID/textzy-frontend:$COMMIT_SHA"
       - "-t"
       - "gcr.io/$PROJECT_ID/textzy-frontend:latest"
-      - "."
+      - "frontend"
 
 images:
   - "gcr.io/$PROJECT_ID/textzy-frontend:$COMMIT_SHA"
