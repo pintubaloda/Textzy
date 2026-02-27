@@ -100,7 +100,7 @@ async function baseFetch(path, options = {}, useAuth = true) {
     headers['Content-Type'] = 'application/json'
   }
 
-  return fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' })
+  return fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include', cache: 'no-store' })
 }
 
 async function refresh() {

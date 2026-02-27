@@ -212,7 +212,12 @@ const TemplatesPage = () => {
         apiGet("/api/templates/project-list"),
         listSmsSenders().catch(() => []),
       ]);
-      setTemplates(normalizeListPayload(tpl?.items ?? tpl));
+      let projectTemplates = normalizeListPayload(tpl?.items ?? tpl?.Items ?? tpl);
+      if (projectTemplates.length === 0) {
+        const legacy = await apiGet("/api/templates").catch(() => null);
+        projectTemplates = normalizeListPayload(legacy);
+      }
+      setTemplates(projectTemplates);
       setSmsSenders(senders || []);
     } catch (e) {
       setTemplates([]);
