@@ -74,13 +74,17 @@ const messagePreviewText = (msg) => {
   return body || "Message";
 };
 
-const renderMessageText = (msg) => {
+const renderMessageText = (msg, customerName = "Customer", agentName = "Agent") => {
   const text = String(msg?.text || "");
   const replyMatch = text.match(/^↪ Reply to \(([^)]+)\):\s*([\s\S]*)$/);
   if (!replyMatch) {
     return <p className="text-sm whitespace-pre-wrap break-words">{text}</p>;
   }
-  const [, replyMeta, replyBodyRaw] = replyMatch;
+  const [, rawReplyMeta, replyBodyRaw] = replyMatch;
+  const replyMeta = String(rawReplyMeta || "")
+    .replace(/^Customer\b/i, customerName || "Customer")
+    .replace(/^You\b/i, agentName || "Agent")
+    .replace(/^Agent\b/i, agentName || "Agent");
   const replyBody = String(replyBodyRaw || "").trimStart();
   return (
     <div className="space-y-1">
@@ -431,6 +435,10 @@ const InboxPage = () => {
     if (raw.includes("@")) return raw.split("@")[0];
     return raw;
   }, [me]);
+  const getReplyTargetLabel = useCallback(
+    (sender) => (sender === "agent" ? agentDisplayName : (selectedChat?.name || "Customer")),
+    [agentDisplayName, selectedChat?.name]
+  );
   const filteredEmojis = useMemo(() => {
     const q = emojiSearch.trim();
     if (!q) return FULL_EMOJI_SET;
@@ -564,9 +572,7 @@ const InboxPage = () => {
     try {
       setSendBusy(true);
       stopTyping();
-      const replyTargetLabel = replyToMessage?.sender === "agent"
-        ? "You"
-        : (selectedChat?.name || "Customer");
+      const replyTargetLabel = getReplyTargetLabel(replyToMessage?.sender);
       const replyPrefix = replyToMessage ? `↪ Reply to (${replyTargetLabel} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
       await apiPost("/api/messages/send", {
         recipient: selectedChat.phone || "+910000000000",
@@ -599,9 +605,7 @@ const InboxPage = () => {
         return;
       }
       setSendBusy(true);
-      const replyTargetLabel = replyToMessage?.sender === "agent"
-        ? "You"
-        : (selectedChat?.name || "Customer");
+      const replyTargetLabel = getReplyTargetLabel(replyToMessage?.sender);
       const replyPrefix = replyToMessage ? `↪ Reply to (${replyTargetLabel} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
       await apiPost("/api/messages/send", {
         recipient: selectedChat.phone,
@@ -908,9 +912,7 @@ const InboxPage = () => {
       fd.append("recipient", selectedChat.phone);
       fd.append("file", file);
       fd.append("mediaType", mediaType);
-      const replyTargetLabel = replyToMessage?.sender === "agent"
-        ? "You"
-        : (selectedChat?.name || "Customer");
+      const replyTargetLabel = getReplyTargetLabel(replyToMessage?.sender);
       const replyPrefix = replyToMessage ? `↪ Reply to (${replyTargetLabel} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
       fd.append("caption", `${replyPrefix}${caption || ""}`.trim());
       const res = await apiPostForm("/api/messages/upload-whatsapp-media", fd, { "Idempotency-Key": buildIdempotencyKey(mediaType) });
@@ -1205,7 +1207,7 @@ const InboxPage = () => {
                   {msg.sender === "agent" ? (
                     <div className="text-[11px] text-emerald-700 font-medium mb-1">By {agentDisplayName}</div>
                   ) : null}
-                  {renderMessageText(msg)}
+                    {renderMessageText(msg, selectedChat?.name || "Customer", agentDisplayName)}
                   {msg.messageType.startsWith("media:") ? <InboundMediaPreview msg={msg} onOpen={() => openInboundMedia(msg)} /> : null}
                   <div className={`flex items-center gap-2 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}>
                     <span className="text-xs text-slate-500">{msg.time}</span>
@@ -1225,7 +1227,7 @@ const InboxPage = () => {
           {replyToMessage ? (
             <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50/60 px-3 py-2 flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-xs font-semibold text-orange-700">Replying to ({replyToMessage.sender === "agent" ? "You" : "Customer"} {replyToMessage.time})</div>
+                <div className="text-xs font-semibold text-orange-700">Replying to ({getReplyTargetLabel(replyToMessage.sender)} {replyToMessage.time})</div>
                 <div className="text-xs text-slate-600 truncate">{replyToMessage.text || "Message"}</div>
               </div>
               <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-slate-500" onClick={() => setReplyToMessage(null)}>

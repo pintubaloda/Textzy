@@ -1033,7 +1033,11 @@ public class WabaWebhookWorker(
         var target = await tenantDb.Set<Message>()
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.ProviderMessageId == targetProviderId, ct);
-        if (target is null) return string.Empty;
+        if (target is null)
+        {
+            var fallbackLabel = string.IsNullOrWhiteSpace(customerName) ? "Customer" : customerName;
+            return $"↪ Reply to ({fallbackLabel}): [Referenced message]";
+        }
 
         var label = string.Equals(target.Status, "Received", StringComparison.OrdinalIgnoreCase)
             ? (string.IsNullOrWhiteSpace(customerName) ? "Customer" : customerName)
