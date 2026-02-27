@@ -209,10 +209,10 @@ const TemplatesPage = () => {
   const loadAll = async () => {
     try {
       const [tpl, senders] = await Promise.all([
-        apiGet("/api/templates"),
+        apiGet("/api/templates/project-list"),
         listSmsSenders().catch(() => []),
       ]);
-      setTemplates(normalizeListPayload(tpl));
+      setTemplates(normalizeListPayload(tpl?.items ?? tpl));
       setSmsSenders(senders || []);
     } catch (e) {
       setTemplates([]);

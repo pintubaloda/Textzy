@@ -219,6 +219,25 @@ public class TemplatesController(
         return Ok(db.Templates.Where(x => x.TenantId == tenancy.TenantId).OrderByDescending(x => x.CreatedAtUtc).ToList());
     }
 
+    [HttpGet("project-list")]
+    public async Task<IActionResult> ProjectList(CancellationToken ct)
+    {
+        if (!rbac.HasPermission(TemplatesRead)) return Forbid();
+        var items = await db.Templates
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToListAsync(ct);
+
+        return Ok(new
+        {
+            tenantId = tenancy.TenantId,
+            tenantSlug = tenancy.TenantSlug,
+            total = items.Count,
+            items
+        });
+    }
+
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] UpsertTemplateRequest request, CancellationToken ct)
     {
