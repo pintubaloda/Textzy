@@ -538,7 +538,10 @@ const InboxPage = () => {
     try {
       setSendBusy(true);
       stopTyping();
-      const replyPrefix = replyToMessage ? `↪ Reply to (${replyToMessage.sender === "agent" ? "You" : "Customer"} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
+      const replyTargetLabel = replyToMessage?.sender === "agent"
+        ? "You"
+        : (selectedChat?.name || "Customer");
+      const replyPrefix = replyToMessage ? `↪ Reply to (${replyTargetLabel} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
       await apiPost("/api/messages/send", {
         recipient: selectedChat.phone || "+910000000000",
         body: `${replyPrefix}${message}`,
@@ -570,7 +573,10 @@ const InboxPage = () => {
         return;
       }
       setSendBusy(true);
-      const replyPrefix = replyToMessage ? `↪ Reply to (${replyToMessage.sender === "agent" ? "You" : "Customer"} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
+      const replyTargetLabel = replyToMessage?.sender === "agent"
+        ? "You"
+        : (selectedChat?.name || "Customer");
+      const replyPrefix = replyToMessage ? `↪ Reply to (${replyTargetLabel} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
       await apiPost("/api/messages/send", {
         recipient: selectedChat.phone,
         body: `${replyPrefix}${tpl.body || "Template message"}`,
@@ -876,7 +882,10 @@ const InboxPage = () => {
       fd.append("recipient", selectedChat.phone);
       fd.append("file", file);
       fd.append("mediaType", mediaType);
-      const replyPrefix = replyToMessage ? `↪ Reply to (${replyToMessage.sender === "agent" ? "You" : "Customer"} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
+      const replyTargetLabel = replyToMessage?.sender === "agent"
+        ? "You"
+        : (selectedChat?.name || "Customer");
+      const replyPrefix = replyToMessage ? `↪ Reply to (${replyTargetLabel} ${replyToMessage.time}): ${replyToMessage.text}\n` : "";
       fd.append("caption", `${replyPrefix}${caption || ""}`.trim());
       const res = await apiPostForm("/api/messages/upload-whatsapp-media", fd, { "Idempotency-Key": buildIdempotencyKey(mediaType) });
       const statusText = String(res?.status || "Queued").toLowerCase();
