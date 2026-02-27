@@ -39,9 +39,9 @@ import {
   X,
   CornerUpLeft,
 } from "lucide-react";
-import { apiGet, apiGetBlob, apiPost, apiPostForm, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
+import { apiGet, apiGetBlob, apiPost, apiPostForm, buildIdempotencyKey, getNotificationSettings, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
-import { playNotificationTone, isNotificationAudioUnlocked, unlockNotificationAudio, wasNotificationEverEnabled, getNotificationVolume, setNotificationVolume } from "@/lib/notificationAudio";
+import { playNotificationTone, isNotificationAudioUnlocked, unlockNotificationAudio, wasNotificationEverEnabled, getNotificationVolume, setNotificationVolume, setNotificationSoundEnabled } from "@/lib/notificationAudio";
 import { requestDesktopNotificationPermission, showDesktopNotification, subscribePush } from "@/lib/browserNotifications";
 import { toast } from "sonner";
 
@@ -225,6 +225,7 @@ const InboxPage = () => {
     }
   });
   const [notificationVolume, setNotificationVolumeState] = useState(() => getNotificationVolume());
+  const [desktopNotificationsEnabled, setDesktopNotificationsEnabled] = useState(true);
   const [dismissedSoundPrompt, setDismissedSoundPrompt] = useState(() => {
     try {
       return localStorage.getItem(NOTIFY_PROMPT_DISMISSED_KEY) === "1";
@@ -405,6 +406,7 @@ const InboxPage = () => {
 
   const notifyDesktop = useCallback((title, body, tag) => {
     try {
+      if (!desktopNotificationsEnabled) return;
       if (!isNotifyLeaderRef.current) return;
       if (typeof document !== "undefined" && !document.hidden) return;
       if (dndUntilUtc && Date.now() < dndUntilUtc) return;
@@ -416,7 +418,7 @@ const InboxPage = () => {
     } catch {
       // ignore
     }
-  }, [dndUntilUtc]);
+  }, [desktopNotificationsEnabled, dndUntilUtc]);
 
   const updateTabBadge = useCallback((count) => {
     if (typeof document === "undefined") return;
@@ -533,8 +535,9 @@ const InboxPage = () => {
       apiGet("/api/templates").catch(() => []),
       apiGet("/api/automation/faq").catch(() => []),
       wabaGetOnboardingStatus().catch(() => null),
+      getNotificationSettings().catch(() => null),
     ])
-      .then(([c, ct, tm, meData, tpl, faqRows, waba]) => {
+      .then(([c, ct, tm, meData, tpl, faqRows, waba, notifyCfg]) => {
         const mapped = (c || []).map(mapConversation);
         setConversations(mapped);
         setSelectedConversationId((prev) => prev || mapped[0]?.id || null);
@@ -547,6 +550,19 @@ const InboxPage = () => {
         if (approved.length > 0) setSelectedTemplateId(String(approved[0].id));
         setFaqs((faqRows || []).filter((f) => f.isActive !== false));
         setWabaDetails(waba);
+        if (notifyCfg) {
+          if (notifyCfg.soundStyle) setNotificationStyle(String(notifyCfg.soundStyle));
+          if (notifyCfg.soundVolume !== undefined && notifyCfg.soundVolume !== null) {
+            const v = Number(notifyCfg.soundVolume);
+            if (Number.isFinite(v)) setNotificationVolumeState(v);
+          }
+          setDesktopNotificationsEnabled(notifyCfg.desktopEnabled !== false);
+          setNotificationSoundEnabled(notifyCfg.soundEnabled !== false);
+          if (notifyCfg.dndUntilUtc) {
+            const ts = Date.parse(String(notifyCfg.dndUntilUtc));
+            if (Number.isFinite(ts)) setDndUntilUtc(ts);
+          }
+        }
         loadSla();
       })
       .catch(() => {

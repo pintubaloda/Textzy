@@ -13,6 +13,53 @@ public class SettingsController(
     AuthContext auth,
     TenancyContext tenancy) : ControllerBase
 {
+    [HttpGet("notifications")]
+    public async Task<IActionResult> GetNotifications(CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        var pref = await db.UserNotificationPreferences.FirstOrDefaultAsync(x => x.UserId == auth.UserId, ct);
+        if (pref is null)
+        {
+            pref = new UserNotificationPreference
+            {
+                Id = Guid.NewGuid(),
+                UserId = auth.UserId,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+            db.UserNotificationPreferences.Add(pref);
+            await db.SaveChangesAsync(ct);
+        }
+        return Ok(Map(pref));
+    }
+
+    [HttpPut("notifications")]
+    public async Task<IActionResult> UpsertNotifications([FromBody] UpsertNotificationPreferenceRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        var pref = await db.UserNotificationPreferences.FirstOrDefaultAsync(x => x.UserId == auth.UserId, ct);
+        if (pref is null)
+        {
+            pref = new UserNotificationPreference
+            {
+                Id = Guid.NewGuid(),
+                UserId = auth.UserId
+            };
+            db.UserNotificationPreferences.Add(pref);
+        }
+
+        pref.DesktopEnabled = request.DesktopEnabled;
+        pref.SoundEnabled = request.SoundEnabled;
+        pref.SoundStyle = NormalizeSoundStyle(request.SoundStyle);
+        pref.SoundVolume = Math.Clamp(request.SoundVolume, 0m, 2m);
+        pref.InAppNewMessages = request.InAppNewMessages;
+        pref.InAppSystemAlerts = request.InAppSystemAlerts;
+        pref.DndUntilUtc = request.DndUntilUtc;
+        pref.UpdatedAtUtc = DateTime.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+        return Ok(Map(pref));
+    }
+
     [HttpGet("company")]
     public async Task<IActionResult> GetCompany(CancellationToken ct)
     {
@@ -145,6 +192,28 @@ public class SettingsController(
         p.UpdatedAtUtc
     };
 
+    private static object Map(UserNotificationPreference p) => new
+    {
+        p.DesktopEnabled,
+        p.SoundEnabled,
+        p.SoundStyle,
+        p.SoundVolume,
+        p.InAppNewMessages,
+        p.InAppSystemAlerts,
+        p.DndUntilUtc,
+        p.UpdatedAtUtc
+    };
+
+    private static string NormalizeSoundStyle(string? v)
+    {
+        var x = (v ?? string.Empty).Trim().ToLowerInvariant();
+        return x switch
+        {
+            "whatsapp" or "classic" or "soft" or "double" or "chime" or "off" => x,
+            _ => "whatsapp"
+        };
+    }
+
     public sealed class UpsertCompanyProfileRequest
     {
         public string CompanyName { get; set; } = string.Empty;
@@ -158,5 +227,16 @@ public class SettingsController(
         public string BillingEmail { get; set; } = string.Empty;
         public string BillingPhone { get; set; } = string.Empty;
         public bool IsActive { get; set; } = true;
+    }
+
+    public sealed class UpsertNotificationPreferenceRequest
+    {
+        public bool DesktopEnabled { get; set; } = true;
+        public bool SoundEnabled { get; set; } = true;
+        public string SoundStyle { get; set; } = "whatsapp";
+        public decimal SoundVolume { get; set; } = 1m;
+        public bool InAppNewMessages { get; set; } = true;
+        public bool InAppSystemAlerts { get; set; } = true;
+        public DateTime? DndUntilUtc { get; set; }
     }
 }

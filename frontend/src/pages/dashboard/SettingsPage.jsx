@@ -18,7 +18,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { getCompanySettings, saveCompanySettings, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
+import { getCompanySettings, getNotificationSettings, saveCompanySettings, saveNotificationSettings, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
 import { loadFacebookSdk } from "@/lib/facebookSdk";
 
 const SettingsPage = () => {
@@ -47,10 +47,48 @@ const SettingsPage = () => {
     billingPhone: "",
     isActive: true,
   });
+  const [notifyPrefs, setNotifyPrefs] = useState({
+    desktopEnabled: true,
+    soundEnabled: true,
+    soundStyle: "whatsapp",
+    soundVolume: 1,
+    inAppNewMessages: true,
+    inAppSystemAlerts: true,
+    dndUntilUtc: null,
+  });
   const fmt = (v) => (v ? new Date(v).toLocaleString() : "—");
 
   const handleSave = async () => {
     if (activeTab !== "company") {
+      if (activeTab === "notifications") {
+        setSaving(true);
+        try {
+          const saved = await saveNotificationSettings({
+            desktopEnabled: !!notifyPrefs.desktopEnabled,
+            soundEnabled: !!notifyPrefs.soundEnabled,
+            soundStyle: notifyPrefs.soundStyle || "whatsapp",
+            soundVolume: Number(notifyPrefs.soundVolume || 1),
+            inAppNewMessages: !!notifyPrefs.inAppNewMessages,
+            inAppSystemAlerts: !!notifyPrefs.inAppSystemAlerts,
+            dndUntilUtc: notifyPrefs.dndUntilUtc || null,
+          });
+          setNotifyPrefs({
+            desktopEnabled: !!saved?.desktopEnabled,
+            soundEnabled: !!saved?.soundEnabled,
+            soundStyle: saved?.soundStyle || "whatsapp",
+            soundVolume: Number(saved?.soundVolume ?? 1),
+            inAppNewMessages: !!saved?.inAppNewMessages,
+            inAppSystemAlerts: !!saved?.inAppSystemAlerts,
+            dndUntilUtc: saved?.dndUntilUtc || null,
+          });
+          toast.success("Notification settings saved.");
+        } catch (e) {
+          toast.error(e.message || "Failed to save notification settings.");
+        } finally {
+          setSaving(false);
+        }
+        return;
+      }
       toast.success("Settings saved successfully!");
       return;
     }
@@ -103,6 +141,21 @@ const SettingsPage = () => {
             billingEmail: data?.billingEmail || "",
             billingPhone: data?.billingPhone || "",
             isActive: data?.isActive ?? true,
+          });
+        })
+        .catch(() => {});
+    }
+    if (activeTab === "notifications") {
+      getNotificationSettings()
+        .then((data) => {
+          setNotifyPrefs({
+            desktopEnabled: !!data?.desktopEnabled,
+            soundEnabled: !!data?.soundEnabled,
+            soundStyle: data?.soundStyle || "whatsapp",
+            soundVolume: Number(data?.soundVolume ?? 1),
+            inAppNewMessages: !!data?.inAppNewMessages,
+            inAppSystemAlerts: !!data?.inAppSystemAlerts,
+            dndUntilUtc: data?.dndUntilUtc || null,
           });
         })
         .catch(() => {});
@@ -383,41 +436,62 @@ const SettingsPage = () => {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-4">
-                <h4 className="font-medium text-slate-900">Email Notifications</h4>
+                <h4 className="font-medium text-slate-900">Desktop & Sound</h4>
                 <div className="space-y-4">
-                  {[
-                    { label: "Campaign completed", description: "Get notified when a campaign finishes" },
-                    { label: "Low balance alerts", description: "Alert when SMS or message credits are low" },
-                    { label: "New team member", description: "When someone joins your workspace" },
-                    { label: "Template approved", description: "When your template is approved by WhatsApp" },
-                    { label: "Weekly reports", description: "Receive weekly performance summaries" },
-                  ].map((item, index) => (
-                    <div key={index} className="flex items-center justify-between py-3 border-b border-slate-100 last:border-0">
-                      <div>
-                        <p className="font-medium text-slate-900">{item.label}</p>
-                        <p className="text-sm text-slate-500">{item.description}</p>
-                      </div>
-                      <Switch defaultChecked={index < 3} data-testid={`notification-${index}`} />
+                  <div className="flex items-center justify-between py-3 border-b border-slate-100">
+                    <div>
+                      <p className="font-medium text-slate-900">Desktop notifications</p>
+                      <p className="text-sm text-slate-500">Show system notifications when tab is inactive</p>
                     </div>
-                  ))}
+                    <Switch checked={!!notifyPrefs.desktopEnabled} onCheckedChange={(v) => setNotifyPrefs((p) => ({ ...p, desktopEnabled: !!v }))} />
+                  </div>
+                  <div className="flex items-center justify-between py-3 border-b border-slate-100">
+                    <div>
+                      <p className="font-medium text-slate-900">Notification sound</p>
+                      <p className="text-sm text-slate-500">Play sound for new messages</p>
+                    </div>
+                    <Switch checked={!!notifyPrefs.soundEnabled} onCheckedChange={(v) => setNotifyPrefs((p) => ({ ...p, soundEnabled: !!v }))} />
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Sound style</Label>
+                      <Select value={notifyPrefs.soundStyle || "whatsapp"} onValueChange={(v) => setNotifyPrefs((p) => ({ ...p, soundStyle: v }))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                          <SelectItem value="classic">Classic</SelectItem>
+                          <SelectItem value="soft">Soft</SelectItem>
+                          <SelectItem value="double">Double</SelectItem>
+                          <SelectItem value="chime">Chime</SelectItem>
+                          <SelectItem value="off">Off</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Volume ({Number(notifyPrefs.soundVolume || 1).toFixed(1)})</Label>
+                      <Input type="range" min="0" max="2" step="0.1" value={notifyPrefs.soundVolume} onChange={(e) => setNotifyPrefs((p) => ({ ...p, soundVolume: Number(e.target.value) || 1 }))} />
+                    </div>
+                  </div>
                 </div>
               </div>
 
               <div className="space-y-4">
-                <h4 className="font-medium text-slate-900">In-App Notifications</h4>
+                <h4 className="font-medium text-slate-900">In-App Alerts</h4>
                 <div className="space-y-4">
-                  {[
-                    { label: "New messages", description: "Show notification for new inbox messages" },
-                    { label: "System alerts", description: "Important system notifications" },
-                  ].map((item, index) => (
-                    <div key={index} className="flex items-center justify-between py-3 border-b border-slate-100 last:border-0">
-                      <div>
-                        <p className="font-medium text-slate-900">{item.label}</p>
-                        <p className="text-sm text-slate-500">{item.description}</p>
-                      </div>
-                      <Switch defaultChecked data-testid={`inapp-notification-${index}`} />
+                  <div className="flex items-center justify-between py-3 border-b border-slate-100">
+                    <div>
+                      <p className="font-medium text-slate-900">New messages</p>
+                      <p className="text-sm text-slate-500">Show in-app inbox alerts</p>
                     </div>
-                  ))}
+                    <Switch checked={!!notifyPrefs.inAppNewMessages} onCheckedChange={(v) => setNotifyPrefs((p) => ({ ...p, inAppNewMessages: !!v }))} />
+                  </div>
+                  <div className="flex items-center justify-between py-3 border-b border-slate-100 last:border-0">
+                    <div>
+                      <p className="font-medium text-slate-900">System alerts</p>
+                      <p className="text-sm text-slate-500">Show warning and health alerts</p>
+                    </div>
+                    <Switch checked={!!notifyPrefs.inAppSystemAlerts} onCheckedChange={(v) => setNotifyPrefs((p) => ({ ...p, inAppSystemAlerts: !!v }))} />
+                  </div>
                 </div>
               </div>
             </CardContent>

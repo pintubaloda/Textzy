@@ -423,6 +423,21 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         """);
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_UserPushSubscriptions_Tenant_User_Endpoint" ON "UserPushSubscriptions" ("TenantId","UserId","Endpoint");""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_UserPushSubscriptions_Tenant_User_Active" ON "UserPushSubscriptions" ("TenantId","UserId","IsActive");""");
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "UserNotificationPreferences" (
+            "Id" uuid PRIMARY KEY,
+            "UserId" uuid NOT NULL,
+            "DesktopEnabled" boolean NOT NULL DEFAULT true,
+            "SoundEnabled" boolean NOT NULL DEFAULT true,
+            "SoundStyle" text NOT NULL DEFAULT 'whatsapp',
+            "SoundVolume" numeric(4,2) NOT NULL DEFAULT 1.0,
+            "InAppNewMessages" boolean NOT NULL DEFAULT true,
+            "InAppSystemAlerts" boolean NOT NULL DEFAULT true,
+            "DndUntilUtc" timestamp with time zone NULL,
+            "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now()
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_UserNotificationPreferences_UserId" ON "UserNotificationPreferences" ("UserId");""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "TeamInvitations" (

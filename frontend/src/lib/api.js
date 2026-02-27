@@ -593,3 +593,11 @@ export async function getCompanySettings() {
 export async function saveCompanySettings(payload) {
   return apiPut('/api/settings/company', payload)
 }
+
+export async function getNotificationSettings() {
+  return apiGet('/api/settings/notifications')
+}
+
+export async function saveNotificationSettings(payload) {
+  return apiPut('/api/settings/notifications', payload)
+}
