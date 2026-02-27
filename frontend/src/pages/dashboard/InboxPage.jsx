@@ -42,7 +42,7 @@ import {
 import { apiGet, apiGetBlob, apiPost, apiPostForm, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
 import { playNotificationTone, isNotificationAudioUnlocked, unlockNotificationAudio } from "@/lib/notificationAudio";
-import { requestDesktopNotificationPermission, showDesktopNotification } from "@/lib/browserNotifications";
+import { requestDesktopNotificationPermission, showDesktopNotification, subscribePush } from "@/lib/browserNotifications";
 import { toast } from "sonner";
 
 const NOTIFICATION_STYLE_KEY = "textzy.inbox.notificationStyle";
@@ -450,6 +450,25 @@ const InboxPage = () => {
   }, [dndUntilUtc]);
 
   useEffect(() => {
+    const perm = typeof Notification !== "undefined" ? Notification.permission : "denied";
+    if (perm !== "granted") return;
+    const vapid = process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY || process.env.VITE_WEB_PUSH_PUBLIC_KEY || "";
+    if (!vapid) return;
+    subscribePush(vapid)
+      .then((sub) => {
+        if (!sub?.endpoint) return;
+        const keys = sub.keys || {};
+        return apiPost("/api/notifications/subscriptions", {
+          endpoint: sub.endpoint,
+          p256dh: keys.p256dh || "",
+          auth: keys.auth || "",
+          userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     Promise.all([
       apiGet("/api/inbox/conversations"),
       apiGet("/api/contacts"),
@@ -682,7 +701,22 @@ const InboxPage = () => {
 
   const requestBrowserNotificationAndSound = async () => {
     try {
-      await requestDesktopNotificationPermission();
+      const perm = await requestDesktopNotificationPermission();
+      if (perm === "granted") {
+        const vapid = process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY || process.env.VITE_WEB_PUSH_PUBLIC_KEY || "";
+        if (vapid) {
+          const sub = await subscribePush(vapid);
+          if (sub?.endpoint) {
+            const keys = sub.keys || {};
+            await apiPost("/api/notifications/subscriptions", {
+              endpoint: sub.endpoint,
+              p256dh: keys.p256dh || "",
+              auth: keys.auth || "",
+              userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
+            }).catch(() => {});
+          }
+        }
+      }
       const ok = await unlockNotificationAudio();
       setAudioUnlocked(ok || isNotificationAudioUnlocked());
       if (ok) toast.success("Notification sounds enabled");

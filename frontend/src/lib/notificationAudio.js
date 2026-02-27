@@ -1,5 +1,6 @@
 const ENABLE_KEY = "textzy.notifications.enabled";
 const SESSION_UNLOCK_KEY = "textzy.notifications.unlocked";
+const EVER_ENABLED_KEY = "textzy.notifications.everEnabled";
 
 let sharedAudioContext = null;
 
@@ -19,8 +20,17 @@ export function isNotificationSoundEnabled() {
 export function setNotificationSoundEnabled(enabled) {
   try {
     localStorage.setItem(ENABLE_KEY, enabled ? "on" : "off");
+    if (enabled) localStorage.setItem(EVER_ENABLED_KEY, "1");
   } catch {
     // ignore
+  }
+}
+
+export function wasNotificationEverEnabled() {
+  try {
+    return localStorage.getItem(EVER_ENABLED_KEY) === "1";
+  } catch {
+    return false;
   }
 }
 
@@ -60,7 +70,7 @@ export function playNotificationTone(style = "classic", frequency = 880) {
     if (!sharedAudioContext || sharedAudioContext.state !== "running") return false;
     const ctx = sharedAudioContext;
 
-    const tone = (freq, startAt, duration = 0.16, gainValue = 0.06) => {
+    const tone = (freq, startAt, duration = 0.16, gainValue = 0.1) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";
@@ -77,20 +87,20 @@ export function playNotificationTone(style = "classic", frequency = 880) {
     const now = ctx.currentTime;
     switch (style) {
       case "soft":
-        tone(frequency, now, 0.12, 0.03);
+        tone(frequency, now, 0.14, 0.07);
         break;
       case "double":
-        tone(frequency - 90, now, 0.11, 0.05);
-        tone(frequency + 30, now + 0.15, 0.11, 0.05);
+        tone(frequency - 90, now, 0.12, 0.1);
+        tone(frequency + 30, now + 0.15, 0.12, 0.1);
         break;
       case "chime":
-        tone(frequency - 130, now, 0.12, 0.045);
-        tone(frequency, now + 0.12, 0.12, 0.045);
-        tone(frequency + 120, now + 0.24, 0.14, 0.045);
+        tone(frequency - 130, now, 0.13, 0.09);
+        tone(frequency, now + 0.12, 0.13, 0.09);
+        tone(frequency + 120, now + 0.24, 0.15, 0.09);
         break;
       case "classic":
       default:
-        tone(frequency, now, 0.16, 0.06);
+        tone(frequency, now, 0.18, 0.12);
         break;
     }
     return true;
@@ -98,4 +108,3 @@ export function playNotificationTone(style = "classic", frequency = 880) {
     return false;
   }
 }
-
