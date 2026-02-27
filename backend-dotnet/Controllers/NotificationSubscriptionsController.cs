@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
+using Textzy.Api.Services;
 
 namespace Textzy.Api.Controllers;
 
@@ -95,4 +96,3 @@ public class NotificationSubscriptionsController(
         return Ok(rows);
     }
 }
-
