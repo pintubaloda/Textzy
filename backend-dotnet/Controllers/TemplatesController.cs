@@ -30,6 +30,76 @@ public class TemplatesController(
             .AsNoTracking()
             .Where(x => x.TenantId == CurrentTenantId)
             .OrderByDescending(x => x.CreatedAtUtc);
+
+    private async Task<List<object>> LoadTemplateRowsWithAutoSyncAsync(CancellationToken ct)
+    {
+        var rows = await QueryTemplates()
+            .Select(x => (object)new
+            {
+                x.Id,
+                x.Name,
+                Channel = (int)x.Channel,
+                x.Category,
+                x.Language,
+                x.Body,
+                x.Status,
+                x.LifecycleStatus,
+                x.DltEntityId,
+                x.DltTemplateId,
+                x.SmsSenderId,
+                x.HeaderType,
+                x.HeaderText,
+                x.HeaderMediaId,
+                x.HeaderMediaName,
+                x.FooterText,
+                x.ButtonsJson,
+                x.RejectionReason,
+                x.CreatedAtUtc
+            })
+            .ToListAsync(ct);
+
+        if (rows.Count > 0) return rows;
+
+        var hasActiveWaba = await db.TenantWabaConfigs
+            .AnyAsync(x => x.TenantId == CurrentTenantId && x.IsActive && x.WabaId != "", ct);
+        if (!hasActiveWaba) return rows;
+
+        try
+        {
+            await whatsapp.SyncMessageTemplatesAsync(deepSync: true, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Auto-recovery sync failed for tenant={TenantId}: {Error}",
+                CurrentTenantId, redactor.RedactText(ex.Message));
+            return rows;
+        }
+
+        return await QueryTemplates()
+            .Select(x => (object)new
+            {
+                x.Id,
+                x.Name,
+                Channel = (int)x.Channel,
+                x.Category,
+                x.Language,
+                x.Body,
+                x.Status,
+                x.LifecycleStatus,
+                x.DltEntityId,
+                x.DltTemplateId,
+                x.SmsSenderId,
+                x.HeaderType,
+                x.HeaderText,
+                x.HeaderMediaId,
+                x.HeaderMediaName,
+                x.FooterText,
+                x.ButtonsJson,
+                x.RejectionReason,
+                x.CreatedAtUtc
+            })
+            .ToListAsync(ct);
+    }
     private static readonly HashSet<string> AllowedCategories = new(StringComparer.OrdinalIgnoreCase)
     {
         "MARKETING", "UTILITY", "AUTHENTICATION"
@@ -236,30 +306,7 @@ public class TemplatesController(
             logger.LogWarning("Non-blocking template auto-sync failed on /api/templates tenant={TenantId}: {Error}",
                 CurrentTenantId, redactor.RedactText(ex.Message));
         }
-        var rows = await QueryTemplates()
-            .Select(x => new
-            {
-                x.Id,
-                x.Name,
-                Channel = (int)x.Channel,
-                x.Category,
-                x.Language,
-                x.Body,
-                x.Status,
-                x.LifecycleStatus,
-                x.DltEntityId,
-                x.DltTemplateId,
-                x.SmsSenderId,
-                x.HeaderType,
-                x.HeaderText,
-                x.HeaderMediaId,
-                x.HeaderMediaName,
-                x.FooterText,
-                x.ButtonsJson,
-                x.RejectionReason,
-                x.CreatedAtUtc
-            })
-            .ToListAsync(ct);
+        var rows = await LoadTemplateRowsWithAutoSyncAsync(ct);
         return Ok(rows);
     }
 
@@ -276,30 +323,7 @@ public class TemplatesController(
             logger.LogWarning("Non-blocking template auto-sync failed on /api/templates/project-list tenant={TenantId}: {Error}",
                 CurrentTenantId, redactor.RedactText(ex.Message));
         }
-        var items = await QueryTemplates()
-            .Select(x => new
-            {
-                x.Id,
-                x.Name,
-                Channel = (int)x.Channel,
-                x.Category,
-                x.Language,
-                x.Body,
-                x.Status,
-                x.LifecycleStatus,
-                x.DltEntityId,
-                x.DltTemplateId,
-                x.SmsSenderId,
-                x.HeaderType,
-                x.HeaderText,
-                x.HeaderMediaId,
-                x.HeaderMediaName,
-                x.FooterText,
-                x.ButtonsJson,
-                x.RejectionReason,
-                x.CreatedAtUtc
-            })
-            .ToListAsync(ct);
+        var items = await LoadTemplateRowsWithAutoSyncAsync(ct);
 
         return Ok(new
         {
