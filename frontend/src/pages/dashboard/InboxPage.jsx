@@ -352,8 +352,10 @@ const InboxPage = () => {
 
   const playNotificationSound = useCallback((frequency = 880) => {
     try {
-      if (!isNotifyLeaderRef.current) return;
-      if (typeof document !== "undefined" && document.hidden) return;
+      const hidden = typeof document !== "undefined" ? document.hidden : false;
+      // Always allow sound on the currently visible tab.
+      // For hidden tabs, only leader tab should play to avoid duplicates.
+      if (hidden && !isNotifyLeaderRef.current) return;
       if (dndUntilUtc && Date.now() < dndUntilUtc) return;
       const now = Date.now();
       if (now - lastSoundAtRef.current < 1200) return;
