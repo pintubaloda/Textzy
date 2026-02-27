@@ -50,6 +50,100 @@ const FULL_EMOJI_SET = [
   "❌","⚡","💯","🎉","✨","💬","📌","📎","🧩","📞","📹","🎤","📷","📝","🛒","💰","📦","🚚","📍","📅","⌛","⏱️","⚠️","❓","❤️"
 ];
 
+const mediaKindLabel = (kind) => {
+  const k = String(kind || "").toLowerCase();
+  if (k === "image") return "Image";
+  if (k === "video") return "Video";
+  if (k === "audio") return "Audio";
+  if (k === "document") return "Document";
+  return "Attachment";
+};
+
+const messagePreviewText = (msg) => {
+  if (!msg) return "Message";
+  const body = String(msg.text || "").trim();
+  if (msg.messageType?.startsWith("media:")) {
+    const kind = String(msg.messageType.split(":")[1] || "media");
+    const fileName = String(msg.media?.fileName || "").trim();
+    const caption = String(msg.media?.caption || "").trim();
+    if (caption) return `${mediaKindLabel(kind)}: ${caption}`;
+    if (fileName) return `${mediaKindLabel(kind)}: ${fileName}`;
+    return mediaKindLabel(kind);
+  }
+  return body || "Message";
+};
+
+const InboundMediaPreview = ({ msg, onOpen }) => {
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const mediaId = msg?.media?.mediaId;
+  const mediaType = String(msg?.messageType || "");
+  const kind = mediaType.startsWith("media:") ? mediaType.split(":")[1] : "";
+  const fileName = String(msg?.media?.fileName || "").trim();
+  const caption = String(msg?.media?.caption || "").trim();
+  const mimeType = String(msg?.media?.mimeType || "").toLowerCase();
+  const canInlineImage = kind === "image" || mimeType.startsWith("image/");
+
+  useEffect(() => {
+    let disposed = false;
+    let objectUrl = "";
+    if (!mediaId || !canInlineImage) {
+      setPreviewUrl("");
+      return () => {};
+    }
+    setLoading(true);
+    apiGetBlob(`/api/messages/media/${encodeURIComponent(mediaId)}`)
+      .then((blob) => {
+        if (disposed) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPreviewUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!disposed) setPreviewUrl("");
+      })
+      .finally(() => {
+        if (!disposed) setLoading(false);
+      });
+    return () => {
+      disposed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [mediaId, canInlineImage]);
+
+  if (!mediaId) return null;
+
+  if (canInlineImage) {
+    return (
+      <div className="mt-2">
+        {previewUrl ? (
+          <button type="button" onClick={onOpen} className="block rounded-lg overflow-hidden border border-slate-200">
+            <img src={previewUrl} alt={fileName || "image"} className="max-h-56 w-auto object-cover" />
+          </button>
+        ) : (
+          <div className="text-xs text-slate-500">{loading ? "Loading image..." : "Image preview unavailable"}</div>
+        )}
+        <div className="mt-1.5 flex items-center gap-2">
+          {fileName ? <span className="text-xs text-slate-600 truncate max-w-[230px]">{fileName}</span> : null}
+          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={onOpen}>Open</Button>
+        </div>
+        {caption ? <div className="text-xs text-slate-700 mt-1">{caption}</div> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+      <div className="flex items-center gap-2 text-sm text-slate-800">
+        <Paperclip className="w-4 h-4 text-slate-500" />
+        <span className="font-medium">{mediaKindLabel(kind)}</span>
+      </div>
+      <div className="text-xs text-slate-600 mt-1 truncate">{fileName || `${mediaKindLabel(kind)} attachment`}</div>
+      {caption ? <div className="text-xs text-slate-700 mt-1">{caption}</div> : null}
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs mt-2" onClick={onOpen}>Open attachment</Button>
+    </div>
+  );
+};
+
 const InboxPage = () => {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [message, setMessage] = useState("");
@@ -370,11 +464,11 @@ const InboxPage = () => {
 
   const setReplyTarget = (msg) => {
     if (!msg) return;
-    const preview = String(msg.text || "").trim();
+    const preview = messagePreviewText(msg);
     setReplyToMessage({
       id: msg.id,
       sender: msg.sender,
-      text: preview.length > 140 ? `${preview.slice(0, 140)}...` : preview,
+      text: preview.length > 160 ? `${preview.slice(0, 160)}...` : preview,
       time: msg.time,
     });
     toast.success("Reply target selected");
@@ -1070,7 +1164,21 @@ const InboxPage = () => {
           <div className="space-y-4 max-w-3xl mx-auto">
             <div className="flex items-center justify-center"><span className="px-3 py-1 bg-white text-xs text-slate-500 rounded-full border border-slate-200">Today</span></div>
             {messages.length === 0 ? <div className="h-[60vh] flex items-center justify-center"><div className="text-center max-w-sm"><div className="w-16 h-16 rounded-2xl mx-auto bg-orange-100 text-orange-600 flex items-center justify-center mb-4"><MessageCircle className="w-8 h-8" /></div><h3 className="text-xl font-semibold text-slate-900">No messages yet</h3><p className="text-slate-500 mt-1">Start conversation with a customer to see messages and actions here.</p></div></div> : null}
-            {messages.map((msg) => <div key={msg.id} className={`flex ${msg.sender === "agent" ? "justify-end" : "justify-start"}`}><div className={`group max-w-[70%] ${msg.sender === "agent" ? "chat-bubble-sent text-slate-900" : "chat-bubble-received text-slate-900"} px-4 py-3`} onDoubleClick={() => setReplyTarget(msg)}><p className="text-sm">{msg.text}</p>{msg.messageType.startsWith("media:") && msg.media?.mediaId ? <div className="mt-2"><Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => openInboundMedia(msg)}>Open attachment</Button></div> : null}<div className={`flex items-center gap-2 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}><span className="text-xs text-slate-500">{msg.time}</span>{msg.sender === "agent" && getStatusIcon(msg.status)}<button type="button" className="text-[11px] text-slate-400 hover:text-orange-600 opacity-0 group-hover:opacity-100 transition" onClick={() => setReplyTarget(msg)}>Reply</button></div>{msg.sender === "agent" && msg.status === "failed" ? <p className="text-[11px] text-red-600 mt-1">{msg.lastError || "Send failed"}</p> : null}{msg.sender === "agent" && msg.status === "retryscheduled" && msg.nextRetryAtUtc ? <p className="text-[11px] text-amber-700 mt-1">Retry at {new Date(msg.nextRetryAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p> : null}</div></div>)}
+            {messages.map((msg) => (
+              <div key={msg.id} className={`flex ${msg.sender === "agent" ? "justify-end" : "justify-start"}`}>
+                <div className={`group max-w-[70%] ${msg.sender === "agent" ? "chat-bubble-sent text-slate-900" : "chat-bubble-received text-slate-900"} px-4 py-3`} onDoubleClick={() => setReplyTarget(msg)}>
+                  <p className="text-sm whitespace-pre-wrap break-words">{msg.text}</p>
+                  {msg.messageType.startsWith("media:") ? <InboundMediaPreview msg={msg} onOpen={() => openInboundMedia(msg)} /> : null}
+                  <div className={`flex items-center gap-2 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}>
+                    <span className="text-xs text-slate-500">{msg.time}</span>
+                    {msg.sender === "agent" && getStatusIcon(msg.status)}
+                    <button type="button" className="text-[11px] text-slate-400 hover:text-orange-600 opacity-0 group-hover:opacity-100 transition" onClick={() => setReplyTarget(msg)}>Reply</button>
+                  </div>
+                  {msg.sender === "agent" && msg.status === "failed" ? <p className="text-[11px] text-red-600 mt-1">{msg.lastError || "Send failed"}</p> : null}
+                  {msg.sender === "agent" && msg.status === "retryscheduled" && msg.nextRetryAtUtc ? <p className="text-[11px] text-amber-700 mt-1">Retry at {new Date(msg.nextRetryAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p> : null}
+                </div>
+              </div>
+            ))}
             <div ref={endMessageRef} />
           </div>
         </ScrollArea>
@@ -1079,7 +1187,7 @@ const InboxPage = () => {
           {replyToMessage ? (
             <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50/60 px-3 py-2 flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-xs font-semibold text-orange-700">Replying to {replyToMessage.sender === "agent" ? "your message" : "customer message"}</div>
+                <div className="text-xs font-semibold text-orange-700">Replying to ({replyToMessage.sender === "agent" ? "You" : "Customer"} {replyToMessage.time})</div>
                 <div className="text-xs text-slate-600 truncate">{replyToMessage.text || "Message"}</div>
               </div>
               <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-slate-500" onClick={() => setReplyToMessage(null)}>
