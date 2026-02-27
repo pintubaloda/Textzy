@@ -19,6 +19,58 @@ public class TemplatesController(
     WhatsAppCloudService whatsapp,
     TemplateVariableResolverService templateVariables) : ControllerBase
 {
+    private sealed class TemplateListRow
+    {
+        public Guid Id { get; init; }
+        public string Name { get; init; } = string.Empty;
+        public int Channel { get; init; }
+        public string Category { get; init; } = string.Empty;
+        public string Language { get; init; } = "en";
+        public string Body { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public string LifecycleStatus { get; init; } = string.Empty;
+        public string DltEntityId { get; init; } = string.Empty;
+        public string DltTemplateId { get; init; } = string.Empty;
+        public string SmsSenderId { get; init; } = string.Empty;
+        public string HeaderType { get; init; } = "none";
+        public string HeaderText { get; init; } = string.Empty;
+        public string HeaderMediaId { get; init; } = string.Empty;
+        public string HeaderMediaName { get; init; } = string.Empty;
+        public string FooterText { get; init; } = string.Empty;
+        public string ButtonsJson { get; init; } = string.Empty;
+        public string RejectionReason { get; init; } = string.Empty;
+        public DateTime CreatedAtUtc { get; init; }
+    }
+
+    private IQueryable<TemplateListRow> QueryTemplateRows()
+    {
+        return db.Templates
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Select(x => new TemplateListRow
+            {
+                Id = x.Id,
+                Name = x.Name,
+                Channel = (int)x.Channel,
+                Category = x.Category,
+                Language = x.Language,
+                Body = x.Body,
+                Status = x.Status,
+                LifecycleStatus = x.LifecycleStatus,
+                DltEntityId = x.DltEntityId,
+                DltTemplateId = x.DltTemplateId,
+                SmsSenderId = x.SmsSenderId,
+                HeaderType = x.HeaderType,
+                HeaderText = x.HeaderText,
+                HeaderMediaId = x.HeaderMediaId,
+                HeaderMediaName = x.HeaderMediaName,
+                FooterText = x.FooterText,
+                ButtonsJson = x.ButtonsJson,
+                RejectionReason = x.RejectionReason,
+                CreatedAtUtc = x.CreatedAtUtc
+            });
+    }
     private static readonly HashSet<string> AllowedCategories = new(StringComparer.OrdinalIgnoreCase)
     {
         "MARKETING", "UTILITY", "AUTHENTICATION"
@@ -213,21 +265,18 @@ public class TemplatesController(
     }
 
     [HttpGet]
-    public IActionResult List()
+    public async Task<IActionResult> List(CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesRead)) return Forbid();
-        return Ok(db.Templates.Where(x => x.TenantId == tenancy.TenantId).OrderByDescending(x => x.CreatedAtUtc).ToList());
+        var rows = await QueryTemplateRows().ToListAsync(ct);
+        return Ok(rows);
     }
 
     [HttpGet("project-list")]
     public async Task<IActionResult> ProjectList(CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesRead)) return Forbid();
-        var items = await db.Templates
-            .AsNoTracking()
-            .Where(x => x.TenantId == tenancy.TenantId)
-            .OrderByDescending(x => x.CreatedAtUtc)
-            .ToListAsync(ct);
+        var items = await QueryTemplateRows().ToListAsync(ct);
 
         return Ok(new
         {
