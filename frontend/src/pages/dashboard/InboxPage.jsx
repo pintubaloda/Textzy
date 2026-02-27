@@ -41,7 +41,7 @@ import {
 } from "lucide-react";
 import { apiGet, apiGetBlob, apiPost, apiPostForm, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
-import { playNotificationTone, isNotificationAudioUnlocked, unlockNotificationAudio } from "@/lib/notificationAudio";
+import { playNotificationTone, isNotificationAudioUnlocked, unlockNotificationAudio, wasNotificationEverEnabled, getNotificationVolume, setNotificationVolume } from "@/lib/notificationAudio";
 import { requestDesktopNotificationPermission, showDesktopNotification, subscribePush } from "@/lib/browserNotifications";
 import { toast } from "sonner";
 
@@ -49,6 +49,7 @@ const NOTIFICATION_STYLE_KEY = "textzy.inbox.notificationStyle";
 const NOTIFY_LEADER_KEY = "textzy.inbox.notifyLeader";
 const NOTIFY_LEADER_TTL_MS = 15000;
 const DND_UNTIL_KEY = "textzy.inbox.dndUntilUtc";
+const NOTIFY_PROMPT_DISMISSED_KEY = "textzy.inbox.notifyPromptDismissed";
 const FULL_EMOJI_SET = [
   "😀","😁","😂","🤣","😃","😄","😅","😆","😉","😊","🙂","🙃","😍","🥰","😘","😗","😙","😚","😋","😛","😜","🤪","🤗","🤩","🤔",
   "😐","😶","🙄","😏","😣","😥","😮","🤐","😯","😪","😫","🥱","😴","😌","😛","🫡","🤝","👍","👎","👏","🙌","🙏","💪","🔥","✅",
@@ -221,6 +222,14 @@ const InboxPage = () => {
       return localStorage.getItem(NOTIFICATION_STYLE_KEY) || "classic";
     } catch {
       return "classic";
+    }
+  });
+  const [notificationVolume, setNotificationVolumeState] = useState(() => getNotificationVolume());
+  const [dismissedSoundPrompt, setDismissedSoundPrompt] = useState(() => {
+    try {
+      return localStorage.getItem(NOTIFY_PROMPT_DISMISSED_KEY) === "1";
+    } catch {
+      return false;
     }
   });
   const selectedChatIdRef = useRef(null);
@@ -466,6 +475,18 @@ const InboxPage = () => {
   }, [notificationStyle]);
 
   useEffect(() => {
+    setNotificationVolume(notificationVolume);
+  }, [notificationVolume]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NOTIFY_PROMPT_DISMISSED_KEY, dismissedSoundPrompt ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, [dismissedSoundPrompt]);
+
+  useEffect(() => {
     try {
       localStorage.setItem(DND_UNTIL_KEY, String(dndUntilUtc || 0));
     } catch {
@@ -491,6 +512,17 @@ const InboxPage = () => {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!wasNotificationEverEnabled() || audioUnlocked) return;
+    const tryUnlock = async () => {
+      const ok = await unlockNotificationAudio();
+      if (ok) setAudioUnlocked(true);
+    };
+    const handler = () => { tryUnlock(); };
+    window.addEventListener("pointerdown", handler, { once: true });
+    return () => window.removeEventListener("pointerdown", handler);
+  }, [audioUnlocked]);
 
   useEffect(() => {
     Promise.all([
@@ -743,12 +775,15 @@ const InboxPage = () => {
       }
       const ok = await unlockNotificationAudio();
       setAudioUnlocked(ok || isNotificationAudioUnlocked());
+      setDismissedSoundPrompt(true);
       if (ok) toast.success("Notification sounds enabled");
       else toast.error("Could not enable sound. Click once again and allow browser permissions.");
     } catch {
       toast.error("Unable to enable notification sounds");
     }
   };
+
+  const shouldShowEnableSoundPrompt = !audioUnlocked && !dismissedSoundPrompt && !wasNotificationEverEnabled();
 
   const handleSendMessage = async () => {
     if (pendingVoiceFile) {
@@ -1404,7 +1439,7 @@ const InboxPage = () => {
             </div>
           ) : null}
           <div className="flex items-center gap-1.5 shrink-0">
-            {!audioUnlocked ? (
+            {shouldShowEnableSoundPrompt ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -1421,12 +1456,37 @@ const InboxPage = () => {
                 value={notificationStyle}
                 onChange={(e) => setNotificationStyle(e.target.value)}
               >
+                <option value="whatsapp">WhatsApp</option>
                 <option value="classic">Classic</option>
                 <option value="soft">Soft</option>
                 <option value="double">Double</option>
                 <option value="chime">Chime</option>
                 <option value="off">Off</option>
               </select>
+              <input
+                type="range"
+                min="0"
+                max="2"
+                step="0.1"
+                value={notificationVolume}
+                onChange={(e) => setNotificationVolumeState(Number(e.target.value) || 1)}
+                className="w-20"
+                title="Notification volume"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs text-slate-600"
+                onClick={async () => {
+                  if (!audioUnlocked) {
+                    await requestBrowserNotificationAndSound();
+                  }
+                  playNotificationSoundRef.current?.(860);
+                }}
+              >
+                Test
+              </Button>
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

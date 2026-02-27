@@ -1,6 +1,7 @@
 const ENABLE_KEY = "textzy.notifications.enabled";
 const SESSION_UNLOCK_KEY = "textzy.notifications.unlocked";
 const EVER_ENABLED_KEY = "textzy.notifications.everEnabled";
+const VOLUME_KEY = "textzy.notifications.volume";
 
 let sharedAudioContext = null;
 
@@ -21,6 +22,25 @@ export function setNotificationSoundEnabled(enabled) {
   try {
     localStorage.setItem(ENABLE_KEY, enabled ? "on" : "off");
     if (enabled) localStorage.setItem(EVER_ENABLED_KEY, "1");
+  } catch {
+    // ignore
+  }
+}
+
+export function getNotificationVolume() {
+  try {
+    const raw = Number(localStorage.getItem(VOLUME_KEY) || 1);
+    if (!Number.isFinite(raw)) return 1;
+    return Math.max(0, Math.min(2, raw));
+  } catch {
+    return 1;
+  }
+}
+
+export function setNotificationVolume(volume) {
+  try {
+    const normalized = Math.max(0, Math.min(2, Number(volume) || 1));
+    localStorage.setItem(VOLUME_KEY, String(normalized));
   } catch {
     // ignore
   }
@@ -70,13 +90,14 @@ export function playNotificationTone(style = "classic", frequency = 880) {
     if (!sharedAudioContext || sharedAudioContext.state !== "running") return false;
     const ctx = sharedAudioContext;
 
+    const master = getNotificationVolume();
     const tone = (freq, startAt, duration = 0.16, gainValue = 0.1) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";
       osc.frequency.setValueAtTime(freq, startAt);
       gain.gain.setValueAtTime(0.001, startAt);
-      gain.gain.exponentialRampToValueAtTime(gainValue, startAt + 0.01);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.001, gainValue * master), startAt + 0.01);
       gain.gain.exponentialRampToValueAtTime(0.001, startAt + duration);
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -97,6 +118,10 @@ export function playNotificationTone(style = "classic", frequency = 880) {
         tone(frequency - 130, now, 0.13, 0.09);
         tone(frequency, now + 0.12, 0.13, 0.09);
         tone(frequency + 120, now + 0.24, 0.15, 0.09);
+        break;
+      case "whatsapp":
+        tone(740, now, 0.09, 0.16);
+        tone(920, now + 0.11, 0.11, 0.18);
         break;
       case "classic":
       default:
