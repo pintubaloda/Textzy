@@ -1,0 +1,18 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-f"
+      - "backend-dotnet/Dockerfile"
+      - "-t"
+      - "gcr.io/$PROJECT_ID/textzy-backend:$COMMIT_SHA"
+      - "-t"
+      - "gcr.io/$PROJECT_ID/textzy-backend:latest"
+      - "."
+
+images:
+  - "gcr.io/$PROJECT_ID/textzy-backend:$COMMIT_SHA"
+  - "gcr.io/$PROJECT_ID/textzy-backend:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

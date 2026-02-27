@@ -1,0 +1,18 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-f"
+      - "frontend/Dockerfile"
+      - "-t"
+      - "gcr.io/$PROJECT_ID/textzy-frontend:$COMMIT_SHA"
+      - "-t"
+      - "gcr.io/$PROJECT_ID/textzy-frontend:latest"
+      - "."
+
+images:
+  - "gcr.io/$PROJECT_ID/textzy-frontend:$COMMIT_SHA"
+  - "gcr.io/$PROJECT_ID/textzy-frontend:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
