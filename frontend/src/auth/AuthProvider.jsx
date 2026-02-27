@@ -42,7 +42,8 @@ export function AuthProvider({ children }) {
     const loginRes = await authLogin({ email, password })
     if (!loginRes) return
     const me = await apiGet('/api/auth/me')
-    persist({ role: me.role, email: me.email, tenantSlug: me.tenantSlug || '' })
+    const existing = readSession()
+    persist({ role: me.role, email: me.email, tenantSlug: existing.tenantSlug || me.tenantSlug || '' })
   }
 
   async function logout() {
