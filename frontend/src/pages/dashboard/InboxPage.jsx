@@ -42,7 +42,7 @@ import {
 import { apiGet, apiGetBlob, apiPost, apiPostForm, buildIdempotencyKey, getNotificationSettings, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
 import { playNotificationTone, isNotificationAudioUnlocked, unlockNotificationAudio, wasNotificationEverEnabled, getNotificationVolume, setNotificationVolume, setNotificationSoundEnabled } from "@/lib/notificationAudio";
-import { requestDesktopNotificationPermission, showDesktopNotification, subscribePush } from "@/lib/browserNotifications";
+import { requestDesktopNotificationPermission, showDesktopNotification, subscribeFcm, subscribePush } from "@/lib/browserNotifications";
 import { toast } from "sonner";
 
 const NOTIFICATION_STYLE_KEY = "textzy.inbox.notificationStyle";
@@ -503,16 +503,30 @@ const InboxPage = () => {
     if (perm !== "granted") return;
     const vapid = process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY || process.env.VITE_WEB_PUSH_PUBLIC_KEY || "";
     if (!vapid) return;
-    subscribePush(vapid)
-      .then((sub) => {
-        if (!sub?.endpoint) return;
-        const keys = sub.keys || {};
-        return apiPost("/api/notifications/subscriptions", {
-          endpoint: sub.endpoint,
-          p256dh: keys.p256dh || "",
-          auth: keys.auth || "",
-          userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
-        });
+    subscribeFcm(vapid)
+      .then(async (fcmToken) => {
+        if (fcmToken) {
+          await apiPost("/api/notifications/subscriptions", {
+            provider: "fcm",
+            endpoint: fcmToken,
+            p256dh: "",
+            auth: "",
+            userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
+          }).catch(() => {});
+          return;
+        }
+        return subscribePush(vapid)
+          .then((sub) => {
+            if (!sub?.endpoint) return;
+            const keys = sub.keys || {};
+            return apiPost("/api/notifications/subscriptions", {
+              provider: "webpush",
+              endpoint: sub.endpoint,
+              p256dh: keys.p256dh || "",
+              auth: keys.auth || "",
+              userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
+            });
+          });
       })
       .catch(() => {});
   }, []);
@@ -792,15 +806,27 @@ const InboxPage = () => {
       if (perm === "granted") {
         const vapid = process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY || process.env.VITE_WEB_PUSH_PUBLIC_KEY || "";
         if (vapid) {
-          const sub = await subscribePush(vapid);
-          if (sub?.endpoint) {
-            const keys = sub.keys || {};
+          const fcmToken = await subscribeFcm(vapid);
+          if (fcmToken) {
             await apiPost("/api/notifications/subscriptions", {
-              endpoint: sub.endpoint,
-              p256dh: keys.p256dh || "",
-              auth: keys.auth || "",
+              provider: "fcm",
+              endpoint: fcmToken,
+              p256dh: "",
+              auth: "",
               userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
             }).catch(() => {});
+          } else {
+            const sub = await subscribePush(vapid);
+            if (sub?.endpoint) {
+              const keys = sub.keys || {};
+              await apiPost("/api/notifications/subscriptions", {
+                provider: "webpush",
+                endpoint: sub.endpoint,
+                p256dh: keys.p256dh || "",
+                auth: keys.auth || "",
+                userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
+              }).catch(() => {});
+            }
           }
         }
       }

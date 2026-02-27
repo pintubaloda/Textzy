@@ -14,6 +14,7 @@ public class NotificationSubscriptionsController(
 {
     public sealed class UpsertSubscriptionRequest
     {
+        public string Provider { get; set; } = "webpush";
         public string Endpoint { get; set; } = string.Empty;
         public string P256dh { get; set; } = string.Empty;
         public string Auth { get; set; } = string.Empty;
@@ -24,11 +25,13 @@ public class NotificationSubscriptionsController(
     public async Task<IActionResult> Upsert([FromBody] UpsertSubscriptionRequest req, CancellationToken ct)
     {
         if (auth.UserId == Guid.Empty || tenancy.TenantId == Guid.Empty) return Unauthorized();
+        var provider = (req.Provider ?? "webpush").Trim().ToLowerInvariant();
+        if (provider is not ("webpush" or "fcm")) provider = "webpush";
         var endpoint = (req.Endpoint ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(endpoint)) return BadRequest(new { error = "Endpoint is required." });
 
         var row = await db.UserPushSubscriptions
-            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.UserId == auth.UserId && x.Endpoint == endpoint, ct);
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.UserId == auth.UserId && x.Endpoint == endpoint && x.Provider == provider, ct);
 
         if (row is null)
         {
@@ -38,8 +41,9 @@ public class NotificationSubscriptionsController(
                 TenantId = tenancy.TenantId,
                 UserId = auth.UserId,
                 Endpoint = endpoint,
-                P256dh = (req.P256dh ?? string.Empty).Trim(),
-                Auth = (req.Auth ?? string.Empty).Trim(),
+                Provider = provider,
+                P256dh = provider == "webpush" ? (req.P256dh ?? string.Empty).Trim() : string.Empty,
+                Auth = provider == "webpush" ? (req.Auth ?? string.Empty).Trim() : string.Empty,
                 UserAgent = (req.UserAgent ?? string.Empty).Trim(),
                 IsActive = true,
                 LastSeenAtUtc = DateTime.UtcNow,
@@ -50,8 +54,9 @@ public class NotificationSubscriptionsController(
         }
         else
         {
-            row.P256dh = (req.P256dh ?? string.Empty).Trim();
-            row.Auth = (req.Auth ?? string.Empty).Trim();
+            row.Provider = provider;
+            row.P256dh = provider == "webpush" ? (req.P256dh ?? string.Empty).Trim() : string.Empty;
+            row.Auth = provider == "webpush" ? (req.Auth ?? string.Empty).Trim() : string.Empty;
             row.UserAgent = (req.UserAgent ?? string.Empty).Trim();
             row.IsActive = true;
             row.LastSeenAtUtc = DateTime.UtcNow;
@@ -87,6 +92,7 @@ public class NotificationSubscriptionsController(
             .Select(x => new
             {
                 x.Id,
+                x.Provider,
                 x.Endpoint,
                 x.UserAgent,
                 x.LastSeenAtUtc,

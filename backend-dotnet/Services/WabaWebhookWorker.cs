@@ -503,7 +503,10 @@ public class WabaWebhookWorker(
         var vapidPublicKey = (config["Push:VapidPublicKey"] ?? string.Empty).Trim();
         var vapidPrivateKey = (config["Push:VapidPrivateKey"] ?? string.Empty).Trim();
         var vapidSubject = (config["Push:VapidSubject"] ?? "mailto:support@textzy.local").Trim();
-        if (string.IsNullOrWhiteSpace(vapidPublicKey) || string.IsNullOrWhiteSpace(vapidPrivateKey)) return;
+        var fcmServerKey = (config["Push:FcmServerKey"] ?? string.Empty).Trim();
+        var webPushEnabled = !string.IsNullOrWhiteSpace(vapidPublicKey) && !string.IsNullOrWhiteSpace(vapidPrivateKey);
+        var fcmEnabled = !string.IsNullOrWhiteSpace(fcmServerKey);
+        if (!webPushEnabled && !fcmEnabled) return;
 
         var tenantUsers = await controlDb.TenantUsers
             .Where(x => x.TenantId == tenantId)
@@ -549,14 +552,53 @@ public class WabaWebhookWorker(
             }
         });
 
-        var client = new WebPushClient();
-        var vapid = new VapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+        var webPushClient = webPushEnabled ? new WebPushClient() : null;
+        var vapid = webPushEnabled ? new VapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey) : null;
+        var http = fcmEnabled ? new HttpClient() : null;
         foreach (var sub in subscriptions)
         {
             try
             {
-                var pushSub = new PushSubscription(sub.Endpoint, sub.P256dh, sub.Auth);
-                await client.SendNotificationAsync(pushSub, payload, vapid);
+                if (string.Equals(sub.Provider, "fcm", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (http is null) continue;
+                    using var req = new HttpRequestMessage(HttpMethod.Post, "https://fcm.googleapis.com/fcm/send");
+                    req.Headers.TryAddWithoutValidation("Authorization", $"key={fcmServerKey}");
+                    req.Content = new StringContent(JsonSerializer.Serialize(new
+                    {
+                        to = sub.Endpoint,
+                        priority = "high",
+                        notification = new { title = inbound.Name, body = bodyText },
+                        data = new
+                        {
+                            tenantSlug,
+                            from = inbound.From,
+                            messageId = inbound.MessageId,
+                            at = (inbound.AtUtc ?? DateTime.UtcNow).ToString("O")
+                        }
+                    }));
+                    req.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+                    using var resp = await http.SendAsync(req, ct);
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        var txt = await resp.Content.ReadAsStringAsync(ct);
+                        if (txt.Contains("NotRegistered", StringComparison.OrdinalIgnoreCase) || txt.Contains("InvalidRegistration", StringComparison.OrdinalIgnoreCase))
+                        {
+                            sub.IsActive = false;
+                        }
+                        else
+                        {
+                            logger.LogWarning("FCM send failed tenant={TenantId} user={UserId} status={Status}: {Error}",
+                                tenantId, sub.UserId, (int)resp.StatusCode, redactor.RedactText(txt));
+                        }
+                    }
+                }
+                else
+                {
+                    if (!webPushEnabled || webPushClient is null || vapid is null) continue;
+                    var pushSub = new PushSubscription(sub.Endpoint, sub.P256dh, sub.Auth);
+                    await webPushClient.SendNotificationAsync(pushSub, payload, vapid);
+                }
                 sub.LastSeenAtUtc = DateTime.UtcNow;
                 sub.UpdatedAtUtc = DateTime.UtcNow;
             }

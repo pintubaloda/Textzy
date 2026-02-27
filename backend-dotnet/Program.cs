@@ -412,6 +412,7 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "TenantId" uuid NOT NULL,
             "UserId" uuid NOT NULL,
             "Endpoint" text NOT NULL,
+            "Provider" text NOT NULL DEFAULT 'webpush',
             "P256dh" text NOT NULL DEFAULT '',
             "Auth" text NOT NULL DEFAULT '',
             "UserAgent" text NOT NULL DEFAULT '',
@@ -421,8 +422,10 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "UpdatedAtUtc" timestamp with time zone NOT NULL
         );
         """);
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "UserPushSubscriptions" ADD COLUMN IF NOT EXISTS "Provider" text NOT NULL DEFAULT 'webpush';""");
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_UserPushSubscriptions_Tenant_User_Endpoint" ON "UserPushSubscriptions" ("TenantId","UserId","Endpoint");""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_UserPushSubscriptions_Tenant_User_Active" ON "UserPushSubscriptions" ("TenantId","UserId","IsActive");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_UserPushSubscriptions_Tenant_User_Provider_Active" ON "UserPushSubscriptions" ("TenantId","UserId","Provider","IsActive");""");
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "UserNotificationPreferences" (
             "Id" uuid PRIMARY KEY,

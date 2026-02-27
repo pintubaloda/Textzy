@@ -1,4 +1,6 @@
 const SW_PATH = "/sw.js";
+const FIREBASE_APP_URL = "https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js";
+const FIREBASE_MSG_URL = "https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-compat.js";
 
 export async function ensureServiceWorkerRegistered() {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;
@@ -72,4 +74,52 @@ export async function subscribePush(vapidPublicKey) {
     });
   }
   return sub ? sub.toJSON() : null;
+}
+
+function getFirebaseConfig() {
+  const apiKey = process.env.REACT_APP_FIREBASE_API_KEY || "";
+  const authDomain = process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || "";
+  const projectId = process.env.REACT_APP_FIREBASE_PROJECT_ID || "";
+  const storageBucket = process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || "";
+  const messagingSenderId = process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID || "";
+  const appId = process.env.REACT_APP_FIREBASE_APP_ID || "";
+  if (!apiKey || !projectId || !messagingSenderId || !appId) return null;
+  return { apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId };
+}
+
+async function loadScriptOnce(src, attr) {
+  if (document.querySelector(`script[${attr}='1']`)) return true;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.async = true;
+    s.setAttribute(attr, "1");
+    s.onload = () => resolve(true);
+    s.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(s);
+  });
+  return true;
+}
+
+export async function subscribeFcm(vapidPublicKey) {
+  const cfg = getFirebaseConfig();
+  if (!cfg || !vapidPublicKey) return null;
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;
+  try {
+    await loadScriptOnce(FIREBASE_APP_URL, "data-firebase-app");
+    await loadScriptOnce(FIREBASE_MSG_URL, "data-firebase-msg");
+    if (!window.firebase) return null;
+    let app;
+    if (window.firebase.apps?.length) app = window.firebase.app();
+    else app = window.firebase.initializeApp(cfg);
+    const messaging = window.firebase.messaging(app);
+    const reg = await ensureServiceWorkerRegistered();
+    const token = await messaging.getToken({
+      vapidKey: vapidPublicKey,
+      serviceWorkerRegistration: reg || undefined
+    });
+    return token || null;
+  } catch {
+    return null;
+  }
 }
