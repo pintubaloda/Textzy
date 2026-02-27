@@ -12,9 +12,12 @@ namespace Textzy.Api.Controllers;
 public class TemplateLifecycleController(
     TenantDbContext db,
     TenancyContext tenancy,
+    AuthContext auth,
     RbacService rbac,
     WhatsAppCloudService whatsapp) : ControllerBase
 {
+    private Guid CurrentTenantId => tenancy.IsSet ? tenancy.TenantId : auth.TenantId;
+
     [HttpPost("sync")]
     public async Task<IActionResult> Sync([FromQuery] bool rebuild = false, CancellationToken ct = default)
     {
@@ -26,7 +29,7 @@ public class TemplateLifecycleController(
             {
                 purged = await whatsapp.PurgeTenantWhatsAppTemplatesAsync(ct);
             }
-            var result = await whatsapp.SyncMessageTemplatesAsync(ct);
+            var result = await whatsapp.SyncMessageTemplatesAsync(deepSync: true, ct);
             return Ok(new
             {
                 rebuild,
@@ -44,7 +47,7 @@ public class TemplateLifecycleController(
     public async Task<IActionResult> Submit(Guid id, CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
-        var t = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
+        var t = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == CurrentTenantId, ct);
         if (t is null) return NotFound();
         if (t.Channel == ChannelType.WhatsApp)
         {
@@ -69,7 +72,7 @@ public class TemplateLifecycleController(
     public async Task<IActionResult> Approve(Guid id, CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
-        var t = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
+        var t = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == CurrentTenantId, ct);
         if (t is null) return NotFound();
         if (t.Channel == ChannelType.WhatsApp)
             return BadRequest("WhatsApp template lifecycle is managed by Meta. Use Sync to refresh status.");
@@ -82,7 +85,7 @@ public class TemplateLifecycleController(
     public async Task<IActionResult> Reject(Guid id, CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
-        var t = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
+        var t = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == CurrentTenantId, ct);
         if (t is null) return NotFound();
         if (t.Channel == ChannelType.WhatsApp)
             return BadRequest("WhatsApp template lifecycle is managed by Meta. Use Sync to refresh status.");
@@ -95,7 +98,7 @@ public class TemplateLifecycleController(
     public async Task<IActionResult> Disable(Guid id, CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
-        var t = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
+        var t = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == CurrentTenantId, ct);
         if (t is null) return NotFound();
         t.LifecycleStatus = "disabled";
         await db.SaveChangesAsync(ct);
@@ -106,7 +109,7 @@ public class TemplateLifecycleController(
     public async Task<IActionResult> NewVersion(Guid id, CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
-        var current = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
+        var current = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == CurrentTenantId, ct);
         if (current is null) return NotFound();
         var next = new Textzy.Api.Models.Template
         {

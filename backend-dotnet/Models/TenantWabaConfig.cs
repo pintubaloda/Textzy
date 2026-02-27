@@ -34,4 +34,7 @@ public class TenantWabaConfig
     public string MessagingLimitTier { get; set; } = string.Empty;
     public string AccountHealth { get; set; } = string.Empty;
     public bool PermissionAuditPassed { get; set; }
+    public DateTime? TemplatesSyncedAtUtc { get; set; }
+    public string TemplatesSyncStatus { get; set; } = string.Empty;
+    public int TemplatesSyncFailCount { get; set; }
 }

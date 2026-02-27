@@ -24,5 +24,4 @@ public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbCo
     public DbSet<WebhookReplayGuard> WebhookReplayGuards => Set<WebhookReplayGuard>();
     public DbSet<SecuritySignal> SecuritySignals => Set<SecuritySignal>();
     public DbSet<TenantSecurityControl> TenantSecurityControls => Set<TenantSecurityControl>();
-    public DbSet<TemplateLibraryItem> TemplateLibraryItems => Set<TemplateLibraryItem>();
 }

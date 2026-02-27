@@ -14,7 +14,7 @@ public class TemplateStatusSyncWorker(
     ILogger<TemplateStatusSyncWorker> logger) : BackgroundService
 {
     private readonly TimeSpan _interval = TimeSpan.FromMinutes(Math.Clamp(
-        int.TryParse(configuration["TemplateSync:IntervalMinutes"], out var minutes) ? minutes : 180,
+        int.TryParse(configuration["TemplateSync:IntervalMinutes"], out var minutes) ? minutes : 1440,
         15,
         1440));
 

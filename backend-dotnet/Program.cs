@@ -122,6 +122,7 @@ builder.Services.AddScoped<SecurityControlService>();
 builder.Services.AddScoped<IMessageProvider, MockMessageProvider>();
 builder.Services.AddScoped<MessagingService>();
 builder.Services.AddScoped<TemplateVariableResolverService>();
+builder.Services.AddScoped<TemplateSyncOrchestrator>();
 builder.Services.Configure<WhatsAppOptions>(builder.Configuration.GetSection("WhatsApp"));
 builder.Services.AddHttpClient();
 builder.Services.AddSignalR();
@@ -260,25 +261,7 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_PlatformSettings_Scope_Key" ON "PlatformSettings" ("Scope","Key");""");
-    db.Database.ExecuteSqlRaw("""
-        CREATE TABLE IF NOT EXISTS "TemplateLibraryItems" (
-            "Id" uuid PRIMARY KEY,
-            "Name" text NOT NULL DEFAULT '',
-            "Category" text NOT NULL DEFAULT 'UTILITY',
-            "Language" text NOT NULL DEFAULT 'en',
-            "HeaderType" text NOT NULL DEFAULT 'none',
-            "HeaderText" text NOT NULL DEFAULT '',
-            "Body" text NOT NULL DEFAULT '',
-            "FooterText" text NOT NULL DEFAULT '',
-            "ButtonsJson" text NOT NULL DEFAULT '',
-            "Source" text NOT NULL DEFAULT 'meta_sync',
-            "SourceTenantSlug" text NOT NULL DEFAULT '',
-            "CreatedAtUtc" timestamp with time zone NOT NULL,
-            "UpdatedAtUtc" timestamp with time zone NOT NULL
-        );
-        """);
-    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TemplateLibraryItems_Category_UpdatedAtUtc" ON "TemplateLibraryItems" ("Category","UpdatedAtUtc");""");
-    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TemplateLibraryItems_Name_Language" ON "TemplateLibraryItems" ("Name","Language");""");
+    db.Database.ExecuteSqlRaw("""DROP TABLE IF EXISTS "TemplateLibraryItems";""");
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "AuditLogs" (
             "Id" uuid PRIMARY KEY,
@@ -733,6 +716,9 @@ static void EnsureTenantWabaSchema(TenantDbContext db)
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "PermanentTokenIssuedAtUtc" timestamp with time zone NULL;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "PermanentTokenExpiresAtUtc" timestamp with time zone NULL;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "TokenSource" text NOT NULL DEFAULT 'embedded_exchange';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "TemplatesSyncedAtUtc" timestamp with time zone NULL;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "TemplatesSyncStatus" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "TemplatesSyncFailCount" integer NOT NULL DEFAULT 0;""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantWabaConfigs_TenantId" ON "TenantWabaConfigs" ("TenantId");""");
 }
 

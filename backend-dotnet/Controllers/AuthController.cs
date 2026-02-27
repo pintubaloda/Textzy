@@ -17,7 +17,8 @@ public class AuthController(
     SessionService sessions,
     TenancyContext tenancy,
     AuthContext auth,
-    AuthCookieService authCookie) : ControllerBase
+    AuthCookieService authCookie,
+    TemplateSyncOrchestrator templateSync) : ControllerBase
 {
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
@@ -224,9 +225,10 @@ public class AuthController(
     }
 
     [HttpGet("me")]
-    public IActionResult Me()
+    public async Task<IActionResult> Me(CancellationToken ct)
     {
         if (!auth.IsAuthenticated) return Unauthorized();
+        await templateSync.EnsureInitialOrDailySyncAsync(false, ct);
         return Ok(new { auth.UserId, auth.Email, auth.Role, auth.TenantId, tenantSlug = tenancy.TenantSlug, permissions = auth.Permissions });
     }
 

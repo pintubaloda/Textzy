@@ -651,30 +651,54 @@ public class WhatsAppCloudService(
         }
     }
 
-    public async Task<object> SyncMessageTemplatesAsync(CancellationToken ct = default)
+    public async Task<object> SyncMessageTemplatesAsync(bool deepSync = false, CancellationToken ct = default)
     {
         var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
         if (string.IsNullOrWhiteSpace(cfg.WabaId)) throw new InvalidOperationException("WABA ID missing.");
         var token = UnprotectToken(cfg.AccessToken);
         if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("WABA access token missing.");
 
-        await BootstrapMessageTemplatesAsync(cfg, token, ct);
+        var attempts = deepSync ? 3 : 1;
+        var performedAttempts = 0;
+        for (var i = 0; i < attempts; i++)
+        {
+            performedAttempts++;
+            await BootstrapMessageTemplatesAsync(cfg, token, ct);
+            var pendingNow = await tenantDb.Templates.CountAsync(x =>
+                x.TenantId == tenancy.TenantId &&
+                x.Channel == ChannelType.WhatsApp &&
+                ((x.Status ?? string.Empty).ToLower() == "pending" || (x.Status ?? string.Empty).ToLower() == "in_review"), ct);
+            if (!deepSync || pendingNow == 0 || i == attempts - 1) break;
+            await Task.Delay(TimeSpan.FromSeconds(2), ct);
+        }
+
         var total = await tenantDb.Templates.CountAsync(x => x.TenantId == tenancy.TenantId && x.Channel == ChannelType.WhatsApp, ct);
         var approved = await tenantDb.Templates.CountAsync(x =>
             x.TenantId == tenancy.TenantId &&
             x.Channel == ChannelType.WhatsApp &&
             (x.Status ?? string.Empty).ToLower() == "approved", ct);
+        var pending = await tenantDb.Templates.CountAsync(x =>
+            x.TenantId == tenancy.TenantId &&
+            x.Channel == ChannelType.WhatsApp &&
+            ((x.Status ?? string.Empty).ToLower() == "pending" || (x.Status ?? string.Empty).ToLower() == "in_review"), ct);
         var disabled = await tenantDb.Templates.CountAsync(x =>
             x.TenantId == tenancy.TenantId &&
             x.Channel == ChannelType.WhatsApp &&
             ((x.Status ?? string.Empty).ToLower() == "disabled" || (x.Status ?? string.Empty).ToLower() == "paused"), ct);
 
+        cfg.TemplatesSyncedAtUtc = DateTime.UtcNow;
+        cfg.TemplatesSyncStatus = "ok";
+        cfg.TemplatesSyncFailCount = 0;
+        await tenantDb.SaveChangesAsync(ct);
+
         return new
         {
             synced = true,
             wabaId = cfg.WabaId,
+            attempts = performedAttempts,
             total,
             approved,
+            pending,
             disabled
         };
     }

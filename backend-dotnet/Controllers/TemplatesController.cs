@@ -15,62 +15,19 @@ namespace Textzy.Api.Controllers;
 public class TemplatesController(
     TenantDbContext db,
     TenancyContext tenancy,
+    AuthContext auth,
     RbacService rbac,
     WhatsAppCloudService whatsapp,
-    TemplateVariableResolverService templateVariables) : ControllerBase
+    TemplateVariableResolverService templateVariables,
+    TemplateSyncOrchestrator templateSync) : ControllerBase
 {
-    private sealed class TemplateListRow
-    {
-        public Guid Id { get; init; }
-        public string Name { get; init; } = string.Empty;
-        public int Channel { get; init; }
-        public string Category { get; init; } = string.Empty;
-        public string Language { get; init; } = "en";
-        public string Body { get; init; } = string.Empty;
-        public string Status { get; init; } = string.Empty;
-        public string LifecycleStatus { get; init; } = string.Empty;
-        public string DltEntityId { get; init; } = string.Empty;
-        public string DltTemplateId { get; init; } = string.Empty;
-        public string SmsSenderId { get; init; } = string.Empty;
-        public string HeaderType { get; init; } = "none";
-        public string HeaderText { get; init; } = string.Empty;
-        public string HeaderMediaId { get; init; } = string.Empty;
-        public string HeaderMediaName { get; init; } = string.Empty;
-        public string FooterText { get; init; } = string.Empty;
-        public string ButtonsJson { get; init; } = string.Empty;
-        public string RejectionReason { get; init; } = string.Empty;
-        public DateTime CreatedAtUtc { get; init; }
-    }
+    private Guid CurrentTenantId => tenancy.IsSet ? tenancy.TenantId : auth.TenantId;
 
-    private IQueryable<TemplateListRow> QueryTemplateRows()
-    {
-        return db.Templates
+    private IQueryable<Template> QueryTemplates()
+        => db.Templates
             .AsNoTracking()
-            .Where(x => x.TenantId == tenancy.TenantId)
-            .OrderByDescending(x => x.CreatedAtUtc)
-            .Select(x => new TemplateListRow
-            {
-                Id = x.Id,
-                Name = x.Name,
-                Channel = (int)x.Channel,
-                Category = x.Category,
-                Language = x.Language,
-                Body = x.Body,
-                Status = x.Status,
-                LifecycleStatus = x.LifecycleStatus,
-                DltEntityId = x.DltEntityId,
-                DltTemplateId = x.DltTemplateId,
-                SmsSenderId = x.SmsSenderId,
-                HeaderType = x.HeaderType,
-                HeaderText = x.HeaderText,
-                HeaderMediaId = x.HeaderMediaId,
-                HeaderMediaName = x.HeaderMediaName,
-                FooterText = x.FooterText,
-                ButtonsJson = x.ButtonsJson,
-                RejectionReason = x.RejectionReason,
-                CreatedAtUtc = x.CreatedAtUtc
-            });
-    }
+            .Where(x => x.TenantId == CurrentTenantId)
+            .OrderByDescending(x => x.CreatedAtUtc);
     private static readonly HashSet<string> AllowedCategories = new(StringComparer.OrdinalIgnoreCase)
     {
         "MARKETING", "UTILITY", "AUTHENTICATION"
@@ -268,7 +225,31 @@ public class TemplatesController(
     public async Task<IActionResult> List(CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesRead)) return Forbid();
-        var rows = await QueryTemplateRows().ToListAsync(ct);
+        await templateSync.EnsureInitialOrDailySyncAsync(false, ct);
+        var rows = await QueryTemplates()
+            .Select(x => new
+            {
+                x.Id,
+                x.Name,
+                Channel = (int)x.Channel,
+                x.Category,
+                x.Language,
+                x.Body,
+                x.Status,
+                x.LifecycleStatus,
+                x.DltEntityId,
+                x.DltTemplateId,
+                x.SmsSenderId,
+                x.HeaderType,
+                x.HeaderText,
+                x.HeaderMediaId,
+                x.HeaderMediaName,
+                x.FooterText,
+                x.ButtonsJson,
+                x.RejectionReason,
+                x.CreatedAtUtc
+            })
+            .ToListAsync(ct);
         return Ok(rows);
     }
 
@@ -276,11 +257,35 @@ public class TemplatesController(
     public async Task<IActionResult> ProjectList(CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesRead)) return Forbid();
-        var items = await QueryTemplateRows().ToListAsync(ct);
+        await templateSync.EnsureInitialOrDailySyncAsync(false, ct);
+        var items = await QueryTemplates()
+            .Select(x => new
+            {
+                x.Id,
+                x.Name,
+                Channel = (int)x.Channel,
+                x.Category,
+                x.Language,
+                x.Body,
+                x.Status,
+                x.LifecycleStatus,
+                x.DltEntityId,
+                x.DltTemplateId,
+                x.SmsSenderId,
+                x.HeaderType,
+                x.HeaderText,
+                x.HeaderMediaId,
+                x.HeaderMediaName,
+                x.FooterText,
+                x.ButtonsJson,
+                x.RejectionReason,
+                x.CreatedAtUtc
+            })
+            .ToListAsync(ct);
 
         return Ok(new
         {
-            tenantId = tenancy.TenantId,
+            tenantId = CurrentTenantId,
             tenantSlug = tenancy.TenantSlug,
             total = items.Count,
             items
@@ -296,7 +301,7 @@ public class TemplatesController(
         var item = new Template
         {
             Id = Guid.NewGuid(),
-            TenantId = tenancy.TenantId,
+            TenantId = CurrentTenantId,
             Name = request.Name.Trim(),
             Channel = request.Channel,
             Category = request.Category.ToUpperInvariant(),
@@ -317,7 +322,7 @@ public class TemplatesController(
         };
 
         var duplicateExists = await db.Templates.AnyAsync(x =>
-            x.TenantId == tenancy.TenantId &&
+            x.TenantId == CurrentTenantId &&
             x.Channel == item.Channel &&
             x.Name == item.Name &&
             x.Language == item.Language, ct);
@@ -335,7 +340,7 @@ public class TemplatesController(
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
         var error = ValidateRequest(request);
         if (error is not null) return BadRequest(error);
-        var item = db.Templates.FirstOrDefault(x => x.Id == id && x.TenantId == tenancy.TenantId);
+        var item = db.Templates.FirstOrDefault(x => x.Id == id && x.TenantId == CurrentTenantId);
         if (item is null) return NotFound();
         var requestedName = request.Name.Trim();
         if (item.Channel == ChannelType.WhatsApp &&
@@ -345,7 +350,7 @@ public class TemplatesController(
         }
 
         var duplicateExists = await db.Templates.AnyAsync(x =>
-            x.TenantId == tenancy.TenantId &&
+            x.TenantId == CurrentTenantId &&
             x.Id != item.Id &&
             x.Channel == request.Channel &&
             x.Name == requestedName &&
@@ -381,7 +386,7 @@ public class TemplatesController(
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
-        var item = db.Templates.FirstOrDefault(x => x.Id == id && x.TenantId == tenancy.TenantId);
+        var item = db.Templates.FirstOrDefault(x => x.Id == id && x.TenantId == CurrentTenantId);
         if (item is null) return NotFound();
 
         if (item.Channel == ChannelType.WhatsApp)
@@ -406,7 +411,7 @@ public class TemplatesController(
     public async Task<IActionResult> Presets(Guid id, [FromQuery] string recipient, CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesRead)) return Forbid();
-        var template = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId, ct);
+        var template = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == CurrentTenantId, ct);
         if (template is null) return NotFound();
         if (template.Channel != ChannelType.WhatsApp) return BadRequest("Presets are supported only for WhatsApp templates.");
 
