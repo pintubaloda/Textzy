@@ -17,6 +17,39 @@ public class InboxController(
     RbacService rbac,
     IHubContext<InboxHub> hub) : ControllerBase
 {
+    private async Task AddSystemConversationMessageAsync(Models.Conversation c, string text, CancellationToken ct)
+    {
+        var body = (text ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(body)) return;
+
+        var msg = new Models.Message
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenancy.TenantId,
+            Channel = Models.ChannelType.WhatsApp,
+            Recipient = c.CustomerPhone,
+            Body = body,
+            MessageType = "system_event",
+            Status = "Sent",
+            QueueProvider = "system",
+            ProviderMessageId = string.Empty,
+            IdempotencyKey = $"sys:{c.Id}:{Guid.NewGuid():N}",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        db.Messages.Add(msg);
+        c.LastMessageAtUtc = msg.CreatedAtUtc;
+        await db.SaveChangesAsync(ct);
+
+        await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("message.sent", new
+        {
+            id = msg.Id,
+            recipient = msg.Recipient,
+            body = msg.Body,
+            status = msg.Status,
+            createdAtUtc = msg.CreatedAtUtc
+        }, ct);
+    }
+
     [HttpGet("conversations")]
     public IActionResult Conversations([FromQuery] string? q = null)
     {
@@ -65,6 +98,9 @@ public class InboxController(
         c.AssignedUserId = req.UserId;
         c.AssignedUserName = req.UserName;
         await db.SaveChangesAsync(ct);
+        var actor = string.IsNullOrWhiteSpace(auth.Email) ? "Agent" : auth.Email;
+        var target = string.IsNullOrWhiteSpace(req.UserName) ? "Unassigned" : req.UserName.Trim();
+        await AddSystemConversationMessageAsync(c, $"Conversation assigned to {target} by {actor}.", ct);
         await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("conversation.assigned", new { c.Id, c.AssignedUserId, c.AssignedUserName }, ct);
         return Ok(c);
     }
@@ -79,6 +115,9 @@ public class InboxController(
         c.AssignedUserName = req.UserName;
         c.Status = "Open";
         await db.SaveChangesAsync(ct);
+        var actor = string.IsNullOrWhiteSpace(auth.Email) ? "Agent" : auth.Email;
+        var target = string.IsNullOrWhiteSpace(req.UserName) ? "Unassigned" : req.UserName.Trim();
+        await AddSystemConversationMessageAsync(c, $"Conversation transferred to {target} by {actor}.", ct);
         await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("conversation.transferred", new { c.Id, c.AssignedUserId, c.AssignedUserName }, ct);
         return Ok(c);
     }
@@ -143,7 +182,14 @@ public class InboxController(
     public async Task<IActionResult> Typing([FromBody] TypingEventRequest req, CancellationToken ct)
     {
         if (!rbac.HasPermission(InboxWrite)) return Forbid();
-        await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("conversation.typing", new { req.ConversationId, user = auth.Email, req.IsTyping }, ct);
+        var displayName = string.IsNullOrWhiteSpace(auth.Email) ? "Agent" : auth.Email;
+        await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("conversation.typing", new
+        {
+            req.ConversationId,
+            user = auth.Email,
+            userName = displayName,
+            req.IsTyping
+        }, ct);
         return Ok();
     }
 

@@ -608,23 +608,41 @@ public class WabaWebhookWorker(
             {
                 foreach (var k in keywordsNode.EnumerateArray())
                 {
-                    var keyword = (k.GetString() ?? string.Empty).Trim().ToLowerInvariant();
+                    var keyword = (k.ToString() ?? string.Empty).Trim().ToLowerInvariant();
+                    if (!string.IsNullOrWhiteSpace(keyword) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            if (root.TryGetProperty("keywords", out var keywordsCsvNode) && keywordsCsvNode.ValueKind == JsonValueKind.String)
+            {
+                foreach (var raw in (keywordsCsvNode.GetString() ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var keyword = raw.Trim().ToLowerInvariant();
                     if (!string.IsNullOrWhiteSpace(keyword) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
                         return true;
                 }
             }
             if (root.TryGetProperty("keyword", out var keywordNode))
             {
-                var keyword = (keywordNode.GetString() ?? string.Empty).Trim().ToLowerInvariant();
+                var keyword = (keywordNode.ToString() ?? string.Empty).Trim().ToLowerInvariant();
                 if (!string.IsNullOrWhiteSpace(keyword) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
                     return true;
+            }
+            if (root.TryGetProperty("triggerKeywords", out var triggerKeywordsNode) && triggerKeywordsNode.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var k in triggerKeywordsNode.EnumerateArray())
+                {
+                    var keyword = (k.ToString() ?? string.Empty).Trim().ToLowerInvariant();
+                    if (!string.IsNullOrWhiteSpace(keyword) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
             }
             if (root.TryGetProperty("match", out var matchNode))
             {
                 var match = (matchNode.GetString() ?? string.Empty).Trim().ToLowerInvariant();
                 return match switch
                 {
-                    "exact" => root.TryGetProperty("keyword", out var ek) && string.Equals(text, (ek.GetString() ?? string.Empty).Trim().ToLowerInvariant(), StringComparison.OrdinalIgnoreCase),
+                    "exact" => root.TryGetProperty("keyword", out var ek) && string.Equals(text, (ek.ToString() ?? string.Empty).Trim().ToLowerInvariant(), StringComparison.OrdinalIgnoreCase),
                     _ => false
                 };
             }

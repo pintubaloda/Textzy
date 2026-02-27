@@ -959,15 +959,16 @@ const InboxPage = () => {
       const activeId = activeConversationId();
       if (!e?.conversationId || String(e.conversationId) !== String(activeId)) return;
       if (e.user && meEmailRef.current && String(e.user).toLowerCase() === meEmailRef.current) return;
+      const typingLabel = (e.userName || e.user || "Agent").toString();
       setTypingUsers((prev) => {
         const next = new Set(prev);
-        if (e.isTyping) next.add(e.user || "Agent");
-        else next.delete(e.user || "Agent");
+        if (e.isTyping) next.add(typingLabel);
+        else next.delete(typingLabel);
         return [...next];
       });
       if (e.isTyping) {
         setTimeout(() => {
-          setTypingUsers((prev) => prev.filter((u) => u !== (e.user || "Agent")));
+          setTypingUsers((prev) => prev.filter((u) => u !== typingLabel));
         }, 3000);
       }
     });
@@ -1004,7 +1005,7 @@ const InboxPage = () => {
         connection.invoke("LeaveTenantRoom", s.tenantSlug).catch(() => {});
       }
       Promise.resolve(startPromise).finally(() => {
-        if (connection.state !== signalR.HubConnectionState.Disconnected) {
+        if (connection.state === signalR.HubConnectionState.Connected || connection.state === signalR.HubConnectionState.Reconnecting) {
           connection.stop().catch(() => {});
         }
       });
