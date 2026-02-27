@@ -344,6 +344,15 @@ export async function savePlatformSettings(scope, values) {
   return apiPut(`/api/platform/settings/${scope}`, values)
 }
 
+export async function exportPlatformSqlBackup() {
+  const res = await apiRequest('/api/platform/backup/sql')
+  if (!res.ok) {
+    const msg = await res.text().catch(() => '')
+    throw new Error(msg || `GET /api/platform/backup/sql failed (${res.status})`)
+  }
+  return res.blob()
+}
+
 export async function listSmsSenders() {
   try {
     return await apiGet('/api/sms/senders')

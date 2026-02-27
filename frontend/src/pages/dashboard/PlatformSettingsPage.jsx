@@ -33,7 +33,8 @@ import {
   getPlatformWabaOnboardingSummary,
   cancelPlatformWabaRequest,
   platformLookupByPhone,
-  platformLookupByWaba
+  platformLookupByWaba,
+  exportPlatformSqlBackup
 } from "@/lib/api";
 
 const FEATURE_CATALOG = [
@@ -88,6 +89,7 @@ const PlatformSettingsPage = () => {
     limits: { ...DEFAULT_LIMITS }
   });
   const [loading, setLoading] = useState(false);
+  const [exportingSql, setExportingSql] = useState(false);
   const [queueHealth, setQueueHealth] = useState(null);
   const [wabaPolicies, setWabaPolicies] = useState([]);
   const [policyForm, setPolicyForm] = useState({ code: "", classification: "permanent", description: "", isActive: true });
@@ -344,6 +346,27 @@ const PlatformSettingsPage = () => {
               </Button>
               <Button variant="outline" onClick={() => toast.info("Webhook verification requested")}>
                 Test Webhook
+              </Button>
+              <Button variant="outline" disabled={exportingSql} onClick={async () => {
+                try {
+                  setExportingSql(true);
+                  const blob = await exportPlatformSqlBackup();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `textzy_platform_backup_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "_")}.sql`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  setTimeout(() => URL.revokeObjectURL(url), 30000);
+                  toast.success("SQL backup exported");
+                } catch (e) {
+                  toast.error(e?.message || "Failed to export SQL backup");
+                } finally {
+                  setExportingSql(false);
+                }
+              }}>
+                {exportingSql ? "Exporting..." : "Export SQL Backup"}
               </Button>
             </div>
           </CardContent>
