@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { getPlatformCustomers, getPlatformCustomerDetails, getPlatformCustomerUsage, getPlatformCustomerSubscriptions, getPlatformCustomerInvoices, getPlatformCustomerMembers, getPlatformCustomerActivity } from "@/lib/api";
+import { getPlatformCustomers, getPlatformCustomerDetails, getPlatformCustomerUsage, getPlatformCustomerSubscriptions, getPlatformCustomerInvoices, getPlatformCustomerMembers, getPlatformCustomerActivity, listPlatformBillingPlans, assignPlatformCustomerPlan } from "@/lib/api";
 
 const AdminPage = () => {
   const [q, setQ] = useState("");
@@ -21,6 +21,10 @@ const AdminPage = () => {
   const [invoices, setInvoices] = useState([]);
   const [members, setMembers] = useState([]);
   const [activity, setActivity] = useState([]);
+  const [plans, setPlans] = useState([]);
+  const [assignPlanCode, setAssignPlanCode] = useState("");
+  const [assignCycle, setAssignCycle] = useState("monthly");
+  const [assigningPlan, setAssigningPlan] = useState(false);
 
   const loadCustomers = async (query = "") => {
     try {
@@ -37,6 +41,19 @@ const AdminPage = () => {
 
   useEffect(() => {
     loadCustomers("");
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const p = await listPlatformBillingPlans();
+        const activePlans = Array.isArray(p) ? p.filter((x) => x.isActive) : [];
+        setPlans(activePlans);
+        if (!assignPlanCode && activePlans.length > 0) setAssignPlanCode(activePlans[0].code);
+      } catch {
+        // keep screen usable even if plans endpoint fails
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -123,6 +140,67 @@ const AdminPage = () => {
               <div><p className="text-xs text-slate-500">Slug</p><p className="font-semibold">{details.tenant?.slug}</p></div>
               <div><p className="text-xs text-slate-500">Owner</p><p className="font-semibold">{rows.find(x => x.tenantId === selectedTenantId)?.ownerName || "-"}</p></div>
               <div><p className="text-xs text-slate-500">Plan</p><p className="font-semibold">{details.subscription?.plan?.name || "No Plan"}</p></div>
+            </div>
+          ) : null}
+
+          {selectedTenantId ? (
+            <div className="rounded-lg border border-slate-200 p-4">
+              <p className="text-sm font-semibold text-slate-900 mb-3">Assign Plan to Tenant</p>
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="space-y-1">
+                  <Label>Plan</Label>
+                  <Select value={assignPlanCode} onValueChange={setAssignPlanCode}>
+                    <SelectTrigger><SelectValue placeholder="Select plan" /></SelectTrigger>
+                    <SelectContent>
+                      {plans.map((p) => (
+                        <SelectItem key={p.id} value={p.code}>{p.name} ({p.code})</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Billing Cycle</Label>
+                  <Select value={assignCycle} onValueChange={setAssignCycle}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="monthly">Monthly</SelectItem>
+                      <SelectItem value="yearly">Yearly</SelectItem>
+                      <SelectItem value="lifetime">Lifetime</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="md:col-span-2 flex items-end">
+                  <Button
+                    className="bg-orange-500 hover:bg-orange-600"
+                    disabled={!assignPlanCode || assigningPlan}
+                    onClick={async () => {
+                      try {
+                        setAssigningPlan(true);
+                        await assignPlatformCustomerPlan(selectedTenantId, {
+                          planCode: assignPlanCode,
+                          billingCycle: assignCycle,
+                          status: "active",
+                          resetStartDate: true,
+                        });
+                        toast.success("Plan assigned successfully.");
+                        const [d, s] = await Promise.all([
+                          getPlatformCustomerDetails(selectedTenantId),
+                          getPlatformCustomerSubscriptions(selectedTenantId),
+                        ]);
+                        setDetails(d || null);
+                        setSubs(Array.isArray(s) ? s : []);
+                        await loadCustomers(q);
+                      } catch (e) {
+                        toast.error(e.message || "Failed to assign plan.");
+                      } finally {
+                        setAssigningPlan(false);
+                      }
+                    }}
+                  >
+                    {assigningPlan ? "Assigning..." : "Assign Plan"}
+                  </Button>
+                </div>
+              </div>
             </div>
           ) : null}
 
@@ -259,4 +337,3 @@ const AdminPage = () => {
 };
 
 export default AdminPage;
-

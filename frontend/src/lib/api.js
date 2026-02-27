@@ -526,6 +526,10 @@ export async function getPlatformCustomerActivity(tenantId, limit = 100) {
   return apiGet(`/api/platform/customers/${tenantId}/activity?limit=${encodeURIComponent(limit)}`)
 }
 
+export async function assignPlatformCustomerPlan(tenantId, payload) {
+  return apiPost(`/api/platform/customers/${tenantId}/assign-plan`, payload)
+}
+
 export async function archivePlatformBillingPlan(id) {
   return apiDelete(`/api/platform/billing/plans/${id}`)
 }

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
+using Textzy.Api.Models;
 using Textzy.Api.Services;
 using static Textzy.Api.Services.PermissionCatalog;
 
@@ -12,7 +13,8 @@ namespace Textzy.Api.Controllers;
 public class PlatformCustomersController(
     ControlDbContext db,
     AuthContext auth,
-    RbacService rbac) : ControllerBase
+    RbacService rbac,
+    AuditLogService audit) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] string q = "", CancellationToken ct = default)
@@ -263,6 +265,87 @@ public class PlatformCustomersController(
         }));
     }
 
+    [HttpPost("{tenantId:guid}/assign-plan")]
+    public async Task<IActionResult> AssignPlan(Guid tenantId, [FromBody] AssignPlanRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+
+        var tenant = await db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound("Tenant not found.");
+
+        var planCode = (request.PlanCode ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(planCode)) return BadRequest("planCode is required.");
+        var plan = await db.BillingPlans.FirstOrDefaultAsync(x => x.Code == planCode, ct);
+        if (plan is null) return NotFound("Plan not found.");
+
+        var cycle = string.IsNullOrWhiteSpace(request.BillingCycle) ? "monthly" : request.BillingCycle.Trim().ToLowerInvariant();
+        if (cycle != "monthly" && cycle != "yearly" && cycle != "lifetime")
+            return BadRequest("billingCycle must be monthly, yearly, or lifetime.");
+
+        var sub = await db.TenantSubscriptions
+            .Where(x => x.TenantId == tenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+
+        if (sub is null)
+        {
+            sub = new TenantSubscription
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                PlanId = plan.Id,
+                Status = "active",
+                BillingCycle = cycle,
+                StartedAtUtc = DateTime.UtcNow,
+                RenewAtUtc = cycle switch
+                {
+                    "yearly" => DateTime.UtcNow.AddYears(1),
+                    "monthly" => DateTime.UtcNow.AddMonths(1),
+                    _ => null
+                },
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+            db.TenantSubscriptions.Add(sub);
+        }
+        else
+        {
+            sub.PlanId = plan.Id;
+            sub.Status = string.IsNullOrWhiteSpace(request.Status) ? "active" : request.Status.Trim().ToLowerInvariant();
+            sub.BillingCycle = cycle;
+            if (request.ResetStartDate) sub.StartedAtUtc = DateTime.UtcNow;
+            sub.RenewAtUtc = cycle switch
+            {
+                "yearly" => DateTime.UtcNow.AddYears(1),
+                "monthly" => DateTime.UtcNow.AddMonths(1),
+                _ => null
+            };
+            sub.CancelledAtUtc = null;
+            sub.UpdatedAtUtc = DateTime.UtcNow;
+        }
+
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("platform.customer.assign_plan", $"tenant={tenantId}; plan={plan.Code}; cycle={cycle}", ct);
+
+        return Ok(new
+        {
+            assigned = true,
+            tenantId,
+            plan = new { plan.Id, plan.Code, plan.Name },
+            subscription = new
+            {
+                sub.Id,
+                sub.Status,
+                sub.BillingCycle,
+                sub.StartedAtUtc,
+                sub.RenewAtUtc,
+                sub.CancelledAtUtc,
+                sub.UpdatedAtUtc
+            }
+        });
+    }
+
     private static int RolePriority(string role)
     {
         var r = (role ?? string.Empty).ToLowerInvariant();
@@ -287,5 +370,12 @@ public class PlatformCustomersController(
     {
         try { return JsonSerializer.Deserialize<Dictionary<string, int>>(json) ?? new(); } catch { return new(); }
     }
-}
 
+    public sealed class AssignPlanRequest
+    {
+        public string PlanCode { get; set; } = string.Empty;
+        public string BillingCycle { get; set; } = "monthly";
+        public string Status { get; set; } = "active";
+        public bool ResetStartDate { get; set; } = true;
+    }
+}
