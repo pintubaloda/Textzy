@@ -234,7 +234,12 @@ export async function authAcceptInvite({ token, fullName, password }) {
 export async function initializeMe() {
   try {
     const me = await apiGet('/api/auth/me')
-    setSession({ role: me.role || '', email: me.email || '', tenantSlug: me.tenantSlug || '' })
+    const current = getSession()
+    setSession({
+      role: me.role || '',
+      email: me.email || '',
+      tenantSlug: current.tenantSlug || me.tenantSlug || ''
+    })
     return me
   } catch {
     return null

@@ -25,38 +25,27 @@ public class TemplatesController(
 {
     private Guid CurrentTenantId => tenancy.IsSet ? tenancy.TenantId : auth.TenantId;
 
-    private IQueryable<Template> QueryTemplates()
-        => db.Templates
-            .AsNoTracking()
-            .Where(x => x.TenantId == CurrentTenantId)
-            .OrderByDescending(x => x.CreatedAtUtc);
-
-    private async Task<List<object>> LoadTemplateRowsWithAutoSyncAsync(CancellationToken ct)
+    private Guid[] TenantScopeIds()
     {
-        var rows = await QueryTemplates()
-            .Select(x => (object)new
-            {
-                x.Id,
-                x.Name,
-                Channel = (int)x.Channel,
-                x.Category,
-                x.Language,
-                x.Body,
-                x.Status,
-                x.LifecycleStatus,
-                x.DltEntityId,
-                x.DltTemplateId,
-                x.SmsSenderId,
-                x.HeaderType,
-                x.HeaderText,
-                x.HeaderMediaId,
-                x.HeaderMediaName,
-                x.FooterText,
-                x.ButtonsJson,
-                x.RejectionReason,
-                x.CreatedAtUtc
-            })
-            .ToListAsync(ct);
+        var ids = new List<Guid>(2);
+        if (tenancy.IsSet && tenancy.TenantId != Guid.Empty) ids.Add(tenancy.TenantId);
+        if (auth.TenantId != Guid.Empty && !ids.Contains(auth.TenantId)) ids.Add(auth.TenantId);
+        if (CurrentTenantId != Guid.Empty && !ids.Contains(CurrentTenantId)) ids.Add(CurrentTenantId);
+        return ids.ToArray();
+    }
+
+    private IQueryable<Template> QueryTemplates()
+    {
+        var scope = TenantScopeIds();
+        return db.Templates
+            .AsNoTracking()
+            .Where(x => scope.Contains(x.TenantId))
+            .OrderByDescending(x => x.CreatedAtUtc);
+    }
+
+    private async Task<List<Template>> LoadTemplateRowsWithAutoSyncAsync(CancellationToken ct)
+    {
+        var rows = await QueryTemplates().ToListAsync(ct);
 
         if (rows.Count > 0) return rows;
 
@@ -75,30 +64,7 @@ public class TemplatesController(
             return rows;
         }
 
-        return await QueryTemplates()
-            .Select(x => (object)new
-            {
-                x.Id,
-                x.Name,
-                Channel = (int)x.Channel,
-                x.Category,
-                x.Language,
-                x.Body,
-                x.Status,
-                x.LifecycleStatus,
-                x.DltEntityId,
-                x.DltTemplateId,
-                x.SmsSenderId,
-                x.HeaderType,
-                x.HeaderText,
-                x.HeaderMediaId,
-                x.HeaderMediaName,
-                x.FooterText,
-                x.ButtonsJson,
-                x.RejectionReason,
-                x.CreatedAtUtc
-            })
-            .ToListAsync(ct);
+        return await QueryTemplates().ToListAsync(ct);
     }
     private static readonly HashSet<string> AllowedCategories = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -382,7 +348,8 @@ public class TemplatesController(
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
         var error = ValidateRequest(request);
         if (error is not null) return BadRequest(error);
-        var item = db.Templates.FirstOrDefault(x => x.Id == id && x.TenantId == CurrentTenantId);
+        var scope = TenantScopeIds();
+        var item = db.Templates.FirstOrDefault(x => x.Id == id && scope.Contains(x.TenantId));
         if (item is null) return NotFound();
         var requestedName = request.Name.Trim();
         if (item.Channel == ChannelType.WhatsApp &&
@@ -428,7 +395,8 @@ public class TemplatesController(
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
-        var item = db.Templates.FirstOrDefault(x => x.Id == id && x.TenantId == CurrentTenantId);
+        var scope = TenantScopeIds();
+        var item = db.Templates.FirstOrDefault(x => x.Id == id && scope.Contains(x.TenantId));
         if (item is null) return NotFound();
 
         if (item.Channel == ChannelType.WhatsApp)
@@ -453,7 +421,8 @@ public class TemplatesController(
     public async Task<IActionResult> Presets(Guid id, [FromQuery] string recipient, CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesRead)) return Forbid();
-        var template = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == CurrentTenantId, ct);
+        var scope = TenantScopeIds();
+        var template = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && scope.Contains(x.TenantId), ct);
         if (template is null) return NotFound();
         if (template.Channel != ChannelType.WhatsApp) return BadRequest("Presets are supported only for WhatsApp templates.");
 
