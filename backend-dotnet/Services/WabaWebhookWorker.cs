@@ -14,6 +14,26 @@ public class WabaWebhookWorker(
     SensitiveDataRedactor redactor,
     ILogger<WabaWebhookWorker> logger) : BackgroundService
 {
+    private sealed class TriggerInboundContext
+    {
+        public string MessageId { get; init; } = string.Empty;
+        public string From { get; init; } = string.Empty;
+        public string Name { get; init; } = string.Empty;
+        public string MessageText { get; init; } = string.Empty;
+    }
+
+    private sealed class FlowNode
+    {
+        public string Id { get; init; } = string.Empty;
+        public string Type { get; init; } = string.Empty;
+        public string Next { get; init; } = string.Empty;
+        public string OnTrue { get; init; } = string.Empty;
+        public string OnFalse { get; init; } = string.Empty;
+        public string OnSuccess { get; init; } = string.Empty;
+        public string OnFailure { get; init; } = string.Empty;
+        public Dictionary<string, object?> Config { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
     private sealed class InboundItem
     {
         public string MessageId { get; init; } = string.Empty;
@@ -214,6 +234,7 @@ public class WabaWebhookWorker(
 
                 foreach (var inbound in parse.Inbound)
                 {
+                    TriggerInboundContext? triggerInbound = null;
                     var window = await tenantDb.Set<ConversationWindow>()
                         .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.Recipient == inbound.From, stoppingToken);
                     if (window is null)
@@ -321,6 +342,13 @@ public class WabaWebhookWorker(
                             ProviderMessageId = inboundProviderId,
                             CreatedAtUtc = inbound.AtUtc ?? DateTime.UtcNow
                         });
+                        triggerInbound = new TriggerInboundContext
+                        {
+                            MessageId = inboundProviderId,
+                            From = inbound.From,
+                            Name = inbound.Name,
+                            MessageText = ComposeInboundBody(inbound)
+                        };
                     }
                     tenantDb.MessageEvents.Add(new MessageEvent
                     {
@@ -347,6 +375,18 @@ public class WabaWebhookWorker(
                         RawPayloadJson = inbound.RawJson,
                         CreatedAtUtc = DateTime.UtcNow
                     });
+
+                    if (triggerInbound is not null)
+                    {
+                        await RunTriggeredAutomationsAsync(
+                            scope.ServiceProvider,
+                            tenantDb,
+                            resolved.TenantId,
+                            resolved.TenantSlug,
+                            resolved.DataConnectionString,
+                            triggerInbound,
+                            stoppingToken);
+                    }
                 }
 
                 await tenantDb.SaveChangesAsync(stoppingToken);
@@ -417,6 +457,291 @@ public class WabaWebhookWorker(
                     await controlDb.SaveChangesAsync(stoppingToken);
                 }
             }
+        }
+    }
+
+    private static bool TriggerMatches(AutomationFlow flow, string inboundText)
+    {
+        var triggerType = (flow.TriggerType ?? string.Empty).Trim().ToLowerInvariant();
+        if (triggerType is not ("keyword" or "intent")) return false;
+        var text = (inboundText ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        try
+        {
+            using var cfgDoc = JsonDocument.Parse(string.IsNullOrWhiteSpace(flow.TriggerConfigJson) ? "{}" : flow.TriggerConfigJson);
+            var root = cfgDoc.RootElement;
+            if (root.TryGetProperty("keywords", out var keywordsNode) && keywordsNode.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var k in keywordsNode.EnumerateArray())
+                {
+                    var keyword = (k.GetString() ?? string.Empty).Trim().ToLowerInvariant();
+                    if (!string.IsNullOrWhiteSpace(keyword) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            if (root.TryGetProperty("keyword", out var keywordNode))
+            {
+                var keyword = (keywordNode.GetString() ?? string.Empty).Trim().ToLowerInvariant();
+                if (!string.IsNullOrWhiteSpace(keyword) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            if (root.TryGetProperty("match", out var matchNode))
+            {
+                var match = (matchNode.GetString() ?? string.Empty).Trim().ToLowerInvariant();
+                return match switch
+                {
+                    "exact" => root.TryGetProperty("keyword", out var ek) && string.Equals(text, (ek.GetString() ?? string.Empty).Trim().ToLowerInvariant(), StringComparison.OrdinalIgnoreCase),
+                    _ => false
+                };
+            }
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static Dictionary<string, object?> BuildPayload(TriggerInboundContext inbound)
+    {
+        return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["recipient"] = inbound.From,
+            ["name"] = string.IsNullOrWhiteSpace(inbound.Name) ? inbound.From : inbound.Name,
+            ["message"] = inbound.MessageText,
+            ["inbound_message_id"] = inbound.MessageId
+        };
+    }
+
+    private static (Dictionary<string, FlowNode> nodes, string startNodeId) ParseFlowDefinition(string definitionJson)
+    {
+        var nodes = new Dictionary<string, FlowNode>(StringComparer.OrdinalIgnoreCase);
+        var startNodeId = string.Empty;
+        using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(definitionJson) ? "{}" : definitionJson);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("startNodeId", out var startNode)) startNodeId = startNode.ToString();
+        if (!root.TryGetProperty("nodes", out var nodesNode) || nodesNode.ValueKind != JsonValueKind.Array)
+            return (nodes, startNodeId);
+
+        foreach (var item in nodesNode.EnumerateArray())
+        {
+            var id = item.TryGetProperty("id", out var idNode) ? idNode.ToString() : Guid.NewGuid().ToString("N");
+            var type = item.TryGetProperty("type", out var typeNode) ? typeNode.ToString() : "text";
+            var node = new FlowNode
+            {
+                Id = id,
+                Type = type,
+                Next = item.TryGetProperty("next", out var nextNode) ? nextNode.ToString() : string.Empty,
+                OnTrue = item.TryGetProperty("onTrue", out var onTrueNode) ? onTrueNode.ToString() : string.Empty,
+                OnFalse = item.TryGetProperty("onFalse", out var onFalseNode) ? onFalseNode.ToString() : string.Empty,
+                OnSuccess = item.TryGetProperty("onSuccess", out var onSuccessNode) ? onSuccessNode.ToString() : string.Empty,
+                OnFailure = item.TryGetProperty("onFailure", out var onFailureNode) ? onFailureNode.ToString() : string.Empty,
+                Config = item.TryGetProperty("config", out var cfgNode) && cfgNode.ValueKind == JsonValueKind.Object
+                    ? cfgNode.EnumerateObject().ToDictionary(x => x.Name, x => (object?)x.Value, StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            };
+            nodes[id] = node;
+            if (string.IsNullOrWhiteSpace(startNodeId) && string.Equals(type, "start", StringComparison.OrdinalIgnoreCase))
+                startNodeId = id;
+        }
+        if (string.IsNullOrWhiteSpace(startNodeId) && nodes.Count > 0) startNodeId = nodes.Keys.First();
+        return (nodes, startNodeId);
+    }
+
+    private static bool EvaluateCondition(Dictionary<string, object?> config, Dictionary<string, object?> payload)
+    {
+        var field = config.TryGetValue("field", out var f) ? f?.ToString() ?? string.Empty : string.Empty;
+        var @operator = config.TryGetValue("operator", out var op) ? op?.ToString()?.ToLowerInvariant() ?? "equals" : "equals";
+        var expected = config.TryGetValue("value", out var v) ? v?.ToString() ?? string.Empty : string.Empty;
+        var actual = payload.TryGetValue(field, out var a) ? a?.ToString() ?? string.Empty : string.Empty;
+
+        return @operator switch
+        {
+            "contains" => actual.Contains(expected, StringComparison.OrdinalIgnoreCase),
+            "starts_with" => actual.StartsWith(expected, StringComparison.OrdinalIgnoreCase),
+            "ends_with" => actual.EndsWith(expected, StringComparison.OrdinalIgnoreCase),
+            "not_equals" => !string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase),
+            "regex" => System.Text.RegularExpressions.Regex.IsMatch(actual, expected),
+            _ => string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase)
+        };
+    }
+
+    private static string Interpolate(string text, Dictionary<string, object?> payload)
+    {
+        var output = text ?? string.Empty;
+        foreach (var pair in payload)
+        {
+            output = output.Replace($"{{{{{pair.Key}}}}}", pair.Value?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        }
+        return output;
+    }
+
+    private static string ResolveValue(Dictionary<string, object?> config, Dictionary<string, object?> payload, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (config.TryGetValue(key, out var raw))
+            {
+                var val = raw?.ToString() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(val)) return Interpolate(val, payload);
+            }
+            if (payload.TryGetValue(key, out var fromPayload))
+            {
+                var val = fromPayload?.ToString() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(val)) return val;
+            }
+        }
+        return string.Empty;
+    }
+
+    private async Task RunTriggeredAutomationsAsync(
+        IServiceProvider sp,
+        TenantDbContext tenantDb,
+        Guid tenantId,
+        string tenantSlug,
+        string tenantConnectionString,
+        TriggerInboundContext inbound,
+        CancellationToken ct)
+    {
+        var flows = await tenantDb.AutomationFlows
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.IsActive && x.PublishedVersionId != null && x.Channel == "waba")
+            .ToListAsync(ct);
+        if (flows.Count == 0) return;
+
+        var tenancy = sp.GetRequiredService<TenancyContext>();
+        tenancy.SetTenant(tenantId, tenantSlug, tenantConnectionString);
+        var messaging = sp.GetRequiredService<MessagingService>();
+
+        foreach (var flow in flows)
+        {
+            if (!TriggerMatches(flow, inbound.MessageText)) continue;
+            var idempotencyKey = $"auto:{flow.Id}:{inbound.MessageId}";
+            var existing = await tenantDb.AutomationRuns
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FlowId == flow.Id && x.IdempotencyKey == idempotencyKey, ct);
+            if (existing is not null) continue;
+
+            var version = await tenantDb.AutomationFlowVersions
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FlowId == flow.Id && x.Id == flow.PublishedVersionId, ct);
+            if (version is null) continue;
+
+            var payload = BuildPayload(inbound);
+            var run = new AutomationRun
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                FlowId = flow.Id,
+                VersionId = version.Id,
+                Mode = "live",
+                TriggerType = string.IsNullOrWhiteSpace(flow.TriggerType) ? "keyword" : flow.TriggerType,
+                IdempotencyKey = idempotencyKey,
+                TriggerPayloadJson = JsonSerializer.Serialize(payload),
+                Status = "running",
+                StartedAtUtc = DateTime.UtcNow
+            };
+            tenantDb.AutomationRuns.Add(run);
+            await tenantDb.SaveChangesAsync(ct);
+
+            var (nodes, startNodeId) = ParseFlowDefinition(version.DefinitionJson);
+            var trace = new List<object>();
+            var log = new List<string>();
+            var cursor = startNodeId;
+            var guard = 0;
+            try
+            {
+                while (!string.IsNullOrWhiteSpace(cursor) && guard < 250)
+                {
+                    guard++;
+                    if (!nodes.TryGetValue(cursor, out var node))
+                    {
+                        log.Add($"missing-node:{cursor}");
+                        break;
+                    }
+                    var nodeType = (node.Type ?? string.Empty).Trim().ToLowerInvariant();
+                    var next = node.Next;
+                    if (nodeType is "start")
+                    {
+                        next = node.Next;
+                    }
+                    else if (nodeType is "text" or "send_text")
+                    {
+                        var recipient = ResolveValue(node.Config, payload, "recipient");
+                        var body = ResolveValue(node.Config, payload, "body", "message");
+                        if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(body))
+                        {
+                            await messaging.EnqueueAsync(new DTOs.SendMessageRequest
+                            {
+                                Recipient = recipient,
+                                Body = Interpolate(body, payload),
+                                Channel = ChannelType.WhatsApp,
+                                IdempotencyKey = $"auto-msg:{flow.Id}:{inbound.MessageId}:{node.Id}"
+                            }, ct);
+                        }
+                        next = node.OnSuccess ?? node.Next;
+                    }
+                    else if (nodeType == "template")
+                    {
+                        var recipient = ResolveValue(node.Config, payload, "recipient");
+                        var templateName = ResolveValue(node.Config, payload, "templateName", "template_name");
+                        var languageCode = ResolveValue(node.Config, payload, "languageCode", "language");
+                        var body = ResolveValue(node.Config, payload, "body", "message");
+                        var paramValues = new List<string>();
+                        if (node.Config.TryGetValue("parameters", out var p) && p is JsonElement pElem && pElem.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var item in pElem.EnumerateArray()) paramValues.Add(Interpolate(item.ToString(), payload));
+                        }
+                        if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(templateName))
+                        {
+                            await messaging.EnqueueAsync(new DTOs.SendMessageRequest
+                            {
+                                Recipient = recipient,
+                                Body = body,
+                                Channel = ChannelType.WhatsApp,
+                                UseTemplate = true,
+                                TemplateName = templateName,
+                                TemplateLanguageCode = string.IsNullOrWhiteSpace(languageCode) ? "en" : languageCode,
+                                TemplateParameters = paramValues,
+                                IdempotencyKey = $"auto-tpl:{flow.Id}:{inbound.MessageId}:{node.Id}"
+                            }, ct);
+                        }
+                        next = node.OnSuccess ?? node.Next;
+                    }
+                    else if (nodeType is "condition" or "split")
+                    {
+                        var ok = EvaluateCondition(node.Config, payload);
+                        next = ok ? (node.OnTrue ?? node.OnSuccess ?? node.Next) : (node.OnFalse ?? node.OnFailure ?? node.Next);
+                    }
+                    else if (nodeType == "end")
+                    {
+                        trace.Add(new { nodeId = node.Id, nodeType, nextNodeId = "", status = "ok" });
+                        break;
+                    }
+                    else
+                    {
+                        next = node.OnSuccess ?? node.Next;
+                    }
+                    trace.Add(new { nodeId = node.Id, nodeType, nextNodeId = next, status = "ok" });
+                    log.Add($"{nodeType}:{node.Id}->{next}");
+                    if (string.IsNullOrWhiteSpace(next)) break;
+                    cursor = next;
+                }
+                run.Status = "completed";
+                run.Log = string.Join('\n', log);
+                run.TraceJson = JsonSerializer.Serialize(trace);
+                run.CompletedAtUtc = DateTime.UtcNow;
+            }
+            catch (Exception ex)
+            {
+                run.Status = "failed";
+                run.FailureReason = ex.Message;
+                run.Log = string.Join('\n', log);
+                run.TraceJson = JsonSerializer.Serialize(trace);
+                run.CompletedAtUtc = DateTime.UtcNow;
+            }
+            await tenantDb.SaveChangesAsync(ct);
         }
     }
 
