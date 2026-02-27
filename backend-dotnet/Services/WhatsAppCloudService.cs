@@ -679,6 +679,17 @@ public class WhatsAppCloudService(
         };
     }
 
+    public async Task<int> PurgeTenantWhatsAppTemplatesAsync(CancellationToken ct = default)
+    {
+        var rows = await tenantDb.Templates
+            .Where(x => x.TenantId == tenancy.TenantId && x.Channel == ChannelType.WhatsApp)
+            .ToListAsync(ct);
+        if (rows.Count == 0) return 0;
+        tenantDb.Templates.RemoveRange(rows);
+        await tenantDb.SaveChangesAsync(ct);
+        return rows.Count;
+    }
+
     public async Task<object> SubmitTemplateForApprovalAsync(Guid templateId, CancellationToken ct = default)
     {
         var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");

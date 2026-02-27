@@ -436,8 +436,8 @@ const TemplatesPage = () => {
 
   const syncWhatsAppTemplates = async () => {
     try {
-      await apiPost("/api/template-lifecycle/sync", {});
-      toast.success("WhatsApp templates synced from Meta.");
+      await apiPost("/api/template-lifecycle/sync?rebuild=true", {});
+      toast.success("WhatsApp templates rebuilt and synced from Meta.");
       await loadAll();
     } catch (e) {
       toast.error(e?.message || "Sync failed.");

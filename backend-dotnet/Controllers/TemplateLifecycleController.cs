@@ -16,13 +16,23 @@ public class TemplateLifecycleController(
     WhatsAppCloudService whatsapp) : ControllerBase
 {
     [HttpPost("sync")]
-    public async Task<IActionResult> Sync(CancellationToken ct)
+    public async Task<IActionResult> Sync([FromQuery] bool rebuild = false, CancellationToken ct = default)
     {
         if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
         try
         {
+            var purged = 0;
+            if (rebuild)
+            {
+                purged = await whatsapp.PurgeTenantWhatsAppTemplatesAsync(ct);
+            }
             var result = await whatsapp.SyncMessageTemplatesAsync(ct);
-            return Ok(result);
+            return Ok(new
+            {
+                rebuild,
+                purged,
+                result
+            });
         }
         catch (InvalidOperationException ex)
         {
