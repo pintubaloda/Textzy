@@ -690,6 +690,19 @@ const InboxPage = () => {
         const ch = new BroadcastChannel("textzy_inbox_notifications");
         ch.onmessage = (evt) => {
           const data = evt?.data || {};
+          if (data?.type === "notify_settings_updated" && data?.payload) {
+            const p = data.payload || {};
+            setDesktopNotificationsEnabled(p.desktopEnabled !== false);
+            setNotificationSoundEnabled(p.soundEnabled !== false);
+            if (p.soundStyle) setNotificationStyle(String(p.soundStyle));
+            const nextVol = Number(p.soundVolume ?? 1);
+            if (Number.isFinite(nextVol)) {
+              setNotificationVolumeState(nextVol);
+              setNotificationVolume(nextVol);
+            }
+            setDndUntilUtc(p.dndUntilUtc || null);
+            return;
+          }
           const key = String(data?.key || "");
           if (!key) return;
           if (String(data?.tabId || "") === tabIdRef.current) return;

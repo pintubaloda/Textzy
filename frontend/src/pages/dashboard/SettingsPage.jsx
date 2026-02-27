@@ -22,6 +22,14 @@ import { getCompanySettings, getNotificationSettings, saveCompanySettings, saveN
 import { loadFacebookSdk } from "@/lib/facebookSdk";
 
 const SettingsPage = () => {
+  const notifyBroadcastRef = useState(() => {
+    try {
+      if (typeof BroadcastChannel !== "undefined") return new BroadcastChannel("textzy_inbox_notifications");
+    } catch {
+      // ignore
+    }
+    return null;
+  })[0];
   const [saving, setSaving] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState(searchParams.get("tab") || "profile");
@@ -56,6 +64,7 @@ const SettingsPage = () => {
     inAppSystemAlerts: true,
     dndUntilUtc: null,
   });
+  const [notifyUpdatedAtUtc, setNotifyUpdatedAtUtc] = useState(null);
   const fmt = (v) => (v ? new Date(v).toLocaleString() : "—");
 
   const handleSave = async () => {
@@ -81,6 +90,24 @@ const SettingsPage = () => {
             inAppSystemAlerts: !!saved?.inAppSystemAlerts,
             dndUntilUtc: saved?.dndUntilUtc || null,
           });
+          setNotifyUpdatedAtUtc(saved?.updatedAtUtc || null);
+          try {
+            notifyBroadcastRef?.postMessage?.({
+              type: "notify_settings_updated",
+              payload: {
+                desktopEnabled: !!saved?.desktopEnabled,
+                soundEnabled: !!saved?.soundEnabled,
+                soundStyle: saved?.soundStyle || "whatsapp",
+                soundVolume: Number(saved?.soundVolume ?? 1),
+                inAppNewMessages: !!saved?.inAppNewMessages,
+                inAppSystemAlerts: !!saved?.inAppSystemAlerts,
+                dndUntilUtc: saved?.dndUntilUtc || null,
+                updatedAtUtc: saved?.updatedAtUtc || null,
+              },
+            });
+          } catch {
+            // ignore
+          }
           toast.success("Notification settings saved.");
         } catch (e) {
           toast.error(e.message || "Failed to save notification settings.");
@@ -157,10 +184,21 @@ const SettingsPage = () => {
             inAppSystemAlerts: !!data?.inAppSystemAlerts,
             dndUntilUtc: data?.dndUntilUtc || null,
           });
+          setNotifyUpdatedAtUtc(data?.updatedAtUtc || null);
         })
         .catch(() => {});
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        notifyBroadcastRef?.close?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, [notifyBroadcastRef]);
 
   const ensureEmbeddedConfig = async () => {
     if (embeddedCfg.appId && embeddedCfg.configId) return;
@@ -437,6 +475,7 @@ const SettingsPage = () => {
             <CardContent className="space-y-6">
               <div className="space-y-4">
                 <h4 className="font-medium text-slate-900">Desktop & Sound</h4>
+                <p className="text-xs text-slate-500">Last saved: {fmt(notifyUpdatedAtUtc)}</p>
                 <div className="space-y-4">
                   <div className="flex items-center justify-between py-3 border-b border-slate-100">
                     <div>
