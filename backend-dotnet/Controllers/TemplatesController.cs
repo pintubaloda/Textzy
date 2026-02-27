@@ -19,7 +19,9 @@ public class TemplatesController(
     RbacService rbac,
     WhatsAppCloudService whatsapp,
     TemplateVariableResolverService templateVariables,
-    TemplateSyncOrchestrator templateSync) : ControllerBase
+    TemplateSyncOrchestrator templateSync,
+    SensitiveDataRedactor redactor,
+    ILogger<TemplatesController> logger) : ControllerBase
 {
     private Guid CurrentTenantId => tenancy.IsSet ? tenancy.TenantId : auth.TenantId;
 
@@ -225,7 +227,15 @@ public class TemplatesController(
     public async Task<IActionResult> List(CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesRead)) return Forbid();
-        await templateSync.EnsureInitialOrDailySyncAsync(false, ct);
+        try
+        {
+            await templateSync.EnsureInitialOrDailySyncAsync(false, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Non-blocking template auto-sync failed on /api/templates tenant={TenantId}: {Error}",
+                CurrentTenantId, redactor.RedactText(ex.Message));
+        }
         var rows = await QueryTemplates()
             .Select(x => new
             {
@@ -257,7 +267,15 @@ public class TemplatesController(
     public async Task<IActionResult> ProjectList(CancellationToken ct)
     {
         if (!rbac.HasPermission(TemplatesRead)) return Forbid();
-        await templateSync.EnsureInitialOrDailySyncAsync(false, ct);
+        try
+        {
+            await templateSync.EnsureInitialOrDailySyncAsync(false, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Non-blocking template auto-sync failed on /api/templates/project-list tenant={TenantId}: {Error}",
+                CurrentTenantId, redactor.RedactText(ex.Message));
+        }
         var items = await QueryTemplates()
             .Select(x => new
             {

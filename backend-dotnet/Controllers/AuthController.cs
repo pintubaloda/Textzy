@@ -18,7 +18,9 @@ public class AuthController(
     TenancyContext tenancy,
     AuthContext auth,
     AuthCookieService authCookie,
-    TemplateSyncOrchestrator templateSync) : ControllerBase
+    TemplateSyncOrchestrator templateSync,
+    SensitiveDataRedactor redactor,
+    ILogger<AuthController> logger) : ControllerBase
 {
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
@@ -228,7 +230,16 @@ public class AuthController(
     public async Task<IActionResult> Me(CancellationToken ct)
     {
         if (!auth.IsAuthenticated) return Unauthorized();
-        await templateSync.EnsureInitialOrDailySyncAsync(false, ct);
+        try
+        {
+            await templateSync.EnsureInitialOrDailySyncAsync(false, ct);
+        }
+        catch (Exception ex)
+        {
+            // Keep auth health independent from template sync health.
+            logger.LogWarning("Non-blocking template auto-sync failed on /api/auth/me tenant={TenantId}: {Error}",
+                auth.TenantId, redactor.RedactText(ex.Message));
+        }
         return Ok(new { auth.UserId, auth.Email, auth.Role, auth.TenantId, tenantSlug = tenancy.TenantSlug, permissions = auth.Permissions });
     }
 
