@@ -330,6 +330,19 @@ public class WabaWebhookWorker(
                         var normalizedInboundBody = IsMediaType(inbound.MessageType)
                             ? ComposeInboundMediaBody(inbound)
                             : ComposeInboundBody(inbound);
+                        if (!string.IsNullOrWhiteSpace(inbound.ContextMessageId))
+                        {
+                            var replyPrefix = await BuildInboundReplyPrefixAsync(
+                                tenantDb,
+                                resolved.TenantId,
+                                inbound.ContextMessageId,
+                                string.IsNullOrWhiteSpace(inbound.Name) ? "Customer" : inbound.Name,
+                                stoppingToken);
+                            if (!string.IsNullOrWhiteSpace(replyPrefix) && !IsMediaType(inbound.MessageType))
+                            {
+                                normalizedInboundBody = $"{replyPrefix}\n{normalizedInboundBody}".Trim();
+                            }
+                        }
                         tenantDb.Set<Message>().Add(new Message
                         {
                             Id = Guid.NewGuid(),
@@ -1006,6 +1019,56 @@ public class WabaWebhookWorker(
             fileName = inbound.MediaFileName ?? string.Empty,
             kind = inbound.MessageType ?? "media"
         });
+    }
+
+    private static async Task<string> BuildInboundReplyPrefixAsync(
+        TenantDbContext tenantDb,
+        Guid tenantId,
+        string contextMessageId,
+        string customerName,
+        CancellationToken ct)
+    {
+        var targetProviderId = (contextMessageId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(targetProviderId)) return string.Empty;
+        var target = await tenantDb.Set<Message>()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.ProviderMessageId == targetProviderId, ct);
+        if (target is null) return string.Empty;
+
+        var label = string.Equals(target.Status, "Received", StringComparison.OrdinalIgnoreCase)
+            ? (string.IsNullOrWhiteSpace(customerName) ? "Customer" : customerName)
+            : "Agent";
+        var at = target.CreatedAtUtc.ToLocalTime().ToString("HH:mm");
+        var preview = BuildMessagePreview(target);
+        if (string.IsNullOrWhiteSpace(preview)) preview = "Message";
+        return $"↪ Reply to ({label} {at}): {preview}";
+    }
+
+    private static string BuildMessagePreview(Message message)
+    {
+        if (message.MessageType.StartsWith("media:", StringComparison.OrdinalIgnoreCase))
+        {
+            var kind = message.MessageType["media:".Length..];
+            try
+            {
+                using var doc = JsonDocument.Parse(message.Body ?? "{}");
+                var root = doc.RootElement;
+                var fileName = root.TryGetProperty("fileName", out var fNode) ? (fNode.GetString() ?? string.Empty).Trim() : string.Empty;
+                var caption = root.TryGetProperty("caption", out var cNode) ? (cNode.GetString() ?? string.Empty).Trim() : string.Empty;
+                if (!string.IsNullOrWhiteSpace(caption)) return $"{kind}: {caption}";
+                if (!string.IsNullOrWhiteSpace(fileName)) return $"{kind}: {fileName}";
+                return $"{kind} attachment";
+            }
+            catch
+            {
+                return $"{kind} attachment";
+            }
+        }
+        var body = (message.Body ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(body)) return "Message";
+        var firstLine = body.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(firstLine)) return "Message";
+        return firstLine.Length <= 120 ? firstLine : $"{firstLine[..120]}...";
     }
 
     private static void ApplyStatusTransition(Message msg, StatusItem incoming, ControlDbContext controlDb)

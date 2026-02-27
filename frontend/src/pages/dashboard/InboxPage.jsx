@@ -37,6 +37,7 @@ import {
   Mic,
   Bell,
   X,
+  CornerUpLeft,
 } from "lucide-react";
 import { apiGet, apiGetBlob, apiPost, apiPostForm, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
@@ -71,6 +72,25 @@ const messagePreviewText = (msg) => {
     return mediaKindLabel(kind);
   }
   return body || "Message";
+};
+
+const renderMessageText = (msg) => {
+  const text = String(msg?.text || "");
+  const replyMatch = text.match(/^↪ Reply to \(([^)]+)\):\s*([\s\S]*)$/);
+  if (!replyMatch) {
+    return <p className="text-sm whitespace-pre-wrap break-words">{text}</p>;
+  }
+  const [, replyMeta, replyBodyRaw] = replyMatch;
+  const replyBody = String(replyBodyRaw || "").trimStart();
+  return (
+    <div className="space-y-1">
+      <div className="inline-flex items-center gap-1.5 text-[13px] text-emerald-700 font-medium">
+        <CornerUpLeft className="w-3.5 h-3.5" />
+        <span>Reply to ({replyMeta})</span>
+      </div>
+      <p className="text-sm whitespace-pre-wrap break-words">{replyBody}</p>
+    </div>
+  );
 };
 
 const InboundMediaPreview = ({ msg, onOpen }) => {
@@ -405,6 +425,12 @@ const InboxPage = () => {
   const isStarred = (selectedChat.labels || []).some((x) => String(x).toLowerCase() === "starred");
   const selectedContact = contacts.find((x) => x.phone === selectedChat.phone);
   const selectedTemplate = templates.find((x) => String(x.id) === selectedTemplateId) || templates[0];
+  const agentDisplayName = useMemo(() => {
+    const raw = String(me?.fullName || me?.name || me?.email || "Agent").trim();
+    if (!raw) return "Agent";
+    if (raw.includes("@")) return raw.split("@")[0];
+    return raw;
+  }, [me]);
   const filteredEmojis = useMemo(() => {
     const q = emojiSearch.trim();
     if (!q) return FULL_EMOJI_SET;
@@ -1176,7 +1202,10 @@ const InboxPage = () => {
             {messages.map((msg) => (
               <div key={msg.id} className={`flex ${msg.sender === "agent" ? "justify-end" : "justify-start"}`}>
                 <div className={`group max-w-[70%] ${msg.sender === "agent" ? "chat-bubble-sent text-slate-900" : "chat-bubble-received text-slate-900"} px-4 py-3`} onDoubleClick={() => setReplyTarget(msg)}>
-                  <p className="text-sm whitespace-pre-wrap break-words">{msg.text}</p>
+                  {msg.sender === "agent" ? (
+                    <div className="text-[11px] text-emerald-700 font-medium mb-1">By {agentDisplayName}</div>
+                  ) : null}
+                  {renderMessageText(msg)}
                   {msg.messageType.startsWith("media:") ? <InboundMediaPreview msg={msg} onOpen={() => openInboundMedia(msg)} /> : null}
                   <div className={`flex items-center gap-2 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}>
                     <span className="text-xs text-slate-500">{msg.time}</span>
