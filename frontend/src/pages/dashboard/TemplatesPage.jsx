@@ -43,6 +43,10 @@ function normalizeListPayload(payload) {
   if (Array.isArray(payload?.results)) return payload.results;
   if (Array.isArray(payload?.results?.$values)) return payload.results.$values;
   if (Array.isArray(payload?.$values)) return payload.$values;
+  if (payload && typeof payload === "object") {
+    const values = Object.values(payload);
+    if (values.length > 0 && values.every((v) => v && typeof v === "object")) return values;
+  }
   return [];
 }
 
@@ -83,7 +87,7 @@ function idValue(x) {
 function inSelectedTab(template, tab) {
   const ch = channelValue(template);
   if (tab === "sms") return ch === 1;
-  return ch === 2 || ch === 0;
+  return ch !== 1;
 }
 
 const categoryGuide = {
