@@ -5,14 +5,14 @@ steps:
       - "-f"
       - "backend-dotnet/Dockerfile"
       - "-t"
-      - "us-central1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:$COMMIT_SHA"
+      - "asia-south1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:$COMMIT_SHA"
       - "-t"
-      - "us-central1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:latest"
+      - "asia-south1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:latest"
       - "backend-dotnet"
 
 images:
-  - "us-central1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:$COMMIT_SHA"
-  - "us-central1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:latest"
+  - "asia-south1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:$COMMIT_SHA"
+  - "asia-south1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:latest"
 
 options:
   logging: CLOUD_LOGGING_ONLY
