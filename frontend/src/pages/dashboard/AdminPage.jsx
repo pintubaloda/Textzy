@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { getPlatformCustomers, getPlatformCustomerDetails, getPlatformCustomerUsage, getPlatformCustomerSubscriptions, getPlatformCustomerInvoices, getPlatformCustomerMembers, getPlatformCustomerActivity, listPlatformBillingPlans, assignPlatformCustomerPlan } from "@/lib/api";
+import { getPlatformCustomers, getPlatformCustomerDetails, getPlatformCustomerUsage, getPlatformCustomerSubscriptions, getPlatformCustomerInvoices, getPlatformCustomerMembers, getPlatformCustomerActivity, listPlatformBillingPlans, assignPlatformCustomerPlan, getPlatformUsers, getPlatformUserTenants } from "@/lib/api";
 
 const AdminPage = () => {
   const [q, setQ] = useState("");
@@ -22,6 +22,9 @@ const AdminPage = () => {
   const [members, setMembers] = useState([]);
   const [activity, setActivity] = useState([]);
   const [plans, setPlans] = useState([]);
+  const [platformUsers, setPlatformUsers] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [userTenantReport, setUserTenantReport] = useState(null);
   const [assignPlanCode, setAssignPlanCode] = useState("");
   const [assignCycle, setAssignCycle] = useState("monthly");
   const [assigningPlan, setAssigningPlan] = useState(false);
@@ -55,6 +58,26 @@ const AdminPage = () => {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const users = await getPlatformUsers("");
+        const rows = Array.isArray(users) ? users : [];
+        setPlatformUsers(rows);
+        if (!selectedUserId && rows.length > 0) setSelectedUserId(rows[0].userId);
+      } catch {
+        // keep page usable
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedUserId) return;
+    getPlatformUserTenants(selectedUserId)
+      .then((r) => setUserTenantReport(r || null))
+      .catch(() => setUserTenantReport(null));
+  }, [selectedUserId]);
 
   useEffect(() => {
     if (!selectedTenantId) return;
@@ -131,6 +154,51 @@ const AdminPage = () => {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+            <p className="text-sm font-semibold text-slate-900">User Company/Tenant Plan Status</p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <Label>Select user</Label>
+                <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                  <SelectTrigger><SelectValue placeholder="Select user" /></SelectTrigger>
+                  <SelectContent>
+                    {platformUsers.map((u) => (
+                      <SelectItem key={u.userId} value={u.userId}>{u.name} ({u.email})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="text-sm text-slate-600 flex items-end">
+                {userTenantReport ? `Groups: ${userTenantReport.ownerGroupCount} • Tenants: ${userTenantReport.tenantCount}` : "No user report"}
+              </div>
+            </div>
+            <div className="rounded border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="text-left px-3 py-2">Company</th>
+                    <th className="text-left px-3 py-2">Tenant</th>
+                    <th className="text-left px-3 py-2">Role</th>
+                    <th className="text-left px-3 py-2">Plan</th>
+                    <th className="text-left px-3 py-2">Plan Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(userTenantReport?.groups || []).flatMap((g) => g.companies || []).map((c) => (
+                    <tr key={c.tenantId} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{c.companyName || "-"}</td>
+                      <td className="px-3 py-2">{c.tenantName} ({c.tenantSlug})</td>
+                      <td className="px-3 py-2">{c.role}</td>
+                      <td className="px-3 py-2">{c.planName}</td>
+                      <td className="px-3 py-2"><Badge variant="outline">{c.billingStatus}</Badge></td>
+                    </tr>
+                  ))}
+                  {!((userTenantReport?.groups || []).flatMap((g) => g.companies || []).length) ? <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No tenants for selected user.</td></tr> : null}
+                </tbody>
+              </table>
             </div>
           </div>
 

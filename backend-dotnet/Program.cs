@@ -203,12 +203,50 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "Id" uuid PRIMARY KEY,
             "Name" text NOT NULL,
             "Slug" text NOT NULL,
+            "OwnerGroupId" uuid NULL,
             "DataConnectionString" text NOT NULL,
             "CreatedAtUtc" timestamp with time zone NOT NULL
         );
         """);
 
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_Tenants_Slug" ON "Tenants" ("Slug");""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "Tenants" ADD COLUMN IF NOT EXISTS "OwnerGroupId" uuid NULL;""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_Tenants_OwnerGroupId" ON "Tenants" ("OwnerGroupId");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "TenantOwnerGroups" (
+            "Id" uuid PRIMARY KEY,
+            "OwnerUserId" uuid NOT NULL,
+            "Name" text NOT NULL,
+            "IsActive" boolean NOT NULL DEFAULT true,
+            "CreatedAtUtc" timestamp with time zone NOT NULL,
+            "UpdatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantOwnerGroups_OwnerUserId" ON "TenantOwnerGroups" ("OwnerUserId");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "TenantCompanyProfiles" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NOT NULL,
+            "OwnerGroupId" uuid NULL,
+            "CompanyName" text NOT NULL DEFAULT '',
+            "LegalName" text NOT NULL DEFAULT '',
+            "Industry" text NOT NULL DEFAULT '',
+            "Website" text NOT NULL DEFAULT '',
+            "CompanySize" text NOT NULL DEFAULT '',
+            "Gstin" text NOT NULL DEFAULT '',
+            "Pan" text NOT NULL DEFAULT '',
+            "Address" text NOT NULL DEFAULT '',
+            "BillingEmail" text NOT NULL DEFAULT '',
+            "BillingPhone" text NOT NULL DEFAULT '',
+            "IsActive" boolean NOT NULL DEFAULT true,
+            "CreatedAtUtc" timestamp with time zone NOT NULL,
+            "UpdatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TenantCompanyProfiles_TenantId" ON "TenantCompanyProfiles" ("TenantId");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantCompanyProfiles_OwnerGroupId" ON "TenantCompanyProfiles" ("OwnerGroupId");""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "Users" (

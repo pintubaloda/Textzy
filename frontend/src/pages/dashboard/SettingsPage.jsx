@@ -18,7 +18,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
+import { getCompanySettings, saveCompanySettings, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
 import { loadFacebookSdk } from "@/lib/facebookSdk";
 
 const SettingsPage = () => {
@@ -34,14 +34,48 @@ const SettingsPage = () => {
     appId: process.env.REACT_APP_FACEBOOK_APP_ID || "",
     configId: process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "",
   });
+  const [company, setCompany] = useState({
+    companyName: "",
+    legalName: "",
+    industry: "",
+    website: "",
+    companySize: "",
+    address: "",
+    gstin: "",
+    pan: "",
+    billingEmail: "",
+    billingPhone: "",
+    isActive: true,
+  });
   const fmt = (v) => (v ? new Date(v).toLocaleString() : "—");
 
-  const handleSave = () => {
-    setSaving(true);
-    setTimeout(() => {
-      setSaving(false);
+  const handleSave = async () => {
+    if (activeTab !== "company") {
       toast.success("Settings saved successfully!");
-    }, 1000);
+      return;
+    }
+    setSaving(true);
+    try {
+      const saved = await saveCompanySettings(company);
+      setCompany({
+        companyName: saved?.companyName || "",
+        legalName: saved?.legalName || "",
+        industry: saved?.industry || "",
+        website: saved?.website || "",
+        companySize: saved?.companySize || "",
+        address: saved?.address || "",
+        gstin: saved?.gstin || "",
+        pan: saved?.pan || "",
+        billingEmail: saved?.billingEmail || "",
+        billingPhone: saved?.billingPhone || "",
+        isActive: saved?.isActive ?? true,
+      });
+      toast.success("Company settings saved.");
+    } catch (e) {
+      toast.error(e.message || "Failed to save company settings.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -53,6 +87,25 @@ const SettingsPage = () => {
     if (activeTab === "whatsapp") {
       loadWabaStatus();
       ensureEmbeddedConfig();
+    }
+    if (activeTab === "company") {
+      getCompanySettings()
+        .then((data) => {
+          setCompany({
+            companyName: data?.companyName || "",
+            legalName: data?.legalName || "",
+            industry: data?.industry || "",
+            website: data?.website || "",
+            companySize: data?.companySize || "",
+            address: data?.address || "",
+            gstin: data?.gstin || "",
+            pan: data?.pan || "",
+            billingEmail: data?.billingEmail || "",
+            billingPhone: data?.billingPhone || "",
+            isActive: data?.isActive ?? true,
+          });
+        })
+        .catch(() => {});
     }
   }, [activeTab]);
 
@@ -264,15 +317,16 @@ const SettingsPage = () => {
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label>Company Name</Label>
-                  <Input defaultValue="TechStart India Pvt. Ltd." data-testid="company-name-input" />
+                  <Input value={company.companyName} onChange={(e) => setCompany((p) => ({ ...p, companyName: e.target.value }))} data-testid="company-name-input" />
                 </div>
                 <div className="space-y-2">
                   <Label>Industry</Label>
-                  <Select defaultValue="technology">
+                  <Select value={company.industry || "none"} onValueChange={(v) => setCompany((p) => ({ ...p, industry: v === "none" ? "" : v }))}>
                     <SelectTrigger data-testid="industry-select">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="none">Select industry</SelectItem>
                       <SelectItem value="technology">Technology</SelectItem>
                       <SelectItem value="ecommerce">E-commerce</SelectItem>
                       <SelectItem value="healthcare">Healthcare</SelectItem>
@@ -282,15 +336,16 @@ const SettingsPage = () => {
                 </div>
                 <div className="space-y-2">
                   <Label>Website</Label>
-                  <Input defaultValue="https://techstart.com" data-testid="website-input" />
+                  <Input value={company.website} onChange={(e) => setCompany((p) => ({ ...p, website: e.target.value }))} data-testid="website-input" />
                 </div>
                 <div className="space-y-2">
                   <Label>Company Size</Label>
-                  <Select defaultValue="50-100">
+                  <Select value={company.companySize || "none"} onValueChange={(v) => setCompany((p) => ({ ...p, companySize: v === "none" ? "" : v }))}>
                     <SelectTrigger data-testid="company-size-select">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="none">Select size</SelectItem>
                       <SelectItem value="1-10">1-10 employees</SelectItem>
                       <SelectItem value="11-50">11-50 employees</SelectItem>
                       <SelectItem value="50-100">50-100 employees</SelectItem>
@@ -301,17 +356,18 @@ const SettingsPage = () => {
                 <div className="space-y-2 md:col-span-2">
                   <Label>Address</Label>
                   <Textarea
-                    defaultValue="123 Business Park, Sector 5, Mumbai, Maharashtra 400001"
+                    value={company.address}
+                    onChange={(e) => setCompany((p) => ({ ...p, address: e.target.value }))}
                     data-testid="address-input"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>GSTIN</Label>
-                  <Input defaultValue="27XXXXX1234X1Z5" data-testid="gstin-input" />
+                  <Input value={company.gstin} onChange={(e) => setCompany((p) => ({ ...p, gstin: e.target.value }))} data-testid="gstin-input" />
                 </div>
                 <div className="space-y-2">
                   <Label>PAN</Label>
-                  <Input defaultValue="XXXXX1234X" data-testid="pan-input" />
+                  <Input value={company.pan} onChange={(e) => setCompany((p) => ({ ...p, pan: e.target.value }))} data-testid="pan-input" />
                 </div>
               </div>
             </CardContent>

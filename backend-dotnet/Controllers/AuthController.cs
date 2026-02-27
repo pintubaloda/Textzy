@@ -180,6 +180,12 @@ public class AuthController(
 
         var user = await db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == invite.Email.ToLower(), ct);
         if (user is null) return BadRequest("Invited user not found.");
+        var inviteTenant = await db.Tenants.FirstOrDefaultAsync(t => t.Id == invite.TenantId, ct);
+        if (inviteTenant is null) return BadRequest("Invite tenant not found.");
+        var inviteOwnerGroupId = await EnsureTenantOwnerGroupForInviteAsync(inviteTenant, invite.CreatedByUserId, ct);
+        if (!await CanUserJoinOwnerGroupAsync(user.Id, inviteOwnerGroupId, ct))
+            return BadRequest("User belongs to another tenant owner group and cannot accept this invite.");
+
         var member = await db.TenantUsers.FirstOrDefaultAsync(tu => tu.TenantId == invite.TenantId && tu.UserId == user.Id, ct);
         if (member is null)
         {
@@ -206,12 +212,9 @@ public class AuthController(
         invite.AcceptedAtUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
 
-        var tenant = await db.Tenants.FirstOrDefaultAsync(t => t.Id == invite.TenantId, ct);
-        if (tenant is null) return BadRequest("Invite tenant not found.");
-
         var sessionToken = await sessions.CreateSessionAsync(user.Id, invite.TenantId, ct);
         authCookie.SetToken(HttpContext, sessionToken);
-        return Ok(new { accessToken = sessionToken, tenantSlug = tenant.Slug, projectName = tenant.Name, role = invite.Role });
+        return Ok(new { accessToken = sessionToken, tenantSlug = inviteTenant.Slug, projectName = inviteTenant.Name, role = invite.Role });
     }
 
     [HttpPost("logout")]
@@ -326,6 +329,7 @@ public class AuthController(
             return BadRequest("Unable to resolve project data connection.");
 
         var tenantId = Guid.NewGuid();
+        var ownerGroupId = await EnsureOwnerGroupForUserAsync(auth.UserId, name, ct);
         try
         {
             using var tenantDb = SeedData.CreateTenantDbContext(seedConnection);
@@ -342,6 +346,7 @@ public class AuthController(
             Id = tenantId,
             Name = name,
             Slug = slug,
+            OwnerGroupId = ownerGroupId,
             DataConnectionString = seedConnection
         };
         db.Tenants.Add(tenant);
@@ -391,6 +396,94 @@ public class AuthController(
         var slug = new string(chars);
         while (slug.Contains("--", StringComparison.Ordinal)) slug = slug.Replace("--", "-", StringComparison.Ordinal);
         return slug.Trim('-');
+    }
+
+    private async Task<Guid> EnsureOwnerGroupForUserAsync(Guid userId, string projectName, CancellationToken ct)
+    {
+        var ownerTenantIds = await db.TenantUsers
+            .Where(x => x.UserId == userId && x.Role.ToLower() == "owner")
+            .Select(x => x.TenantId)
+            .ToListAsync(ct);
+
+        var existingGroupId = await db.Tenants
+            .Where(t => ownerTenantIds.Contains(t.Id) && t.OwnerGroupId.HasValue)
+            .Select(t => t.OwnerGroupId)
+            .FirstOrDefaultAsync(ct);
+
+        if (existingGroupId.HasValue && existingGroupId.Value != Guid.Empty)
+            return existingGroupId.Value;
+
+        var group = await db.TenantOwnerGroups
+            .Where(g => g.OwnerUserId == userId && g.IsActive)
+            .OrderBy(g => g.CreatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+
+        if (group is null)
+        {
+            group = new TenantOwnerGroup
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = userId,
+                Name = $"{projectName} Group",
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+            db.TenantOwnerGroups.Add(group);
+            await db.SaveChangesAsync(ct);
+        }
+
+        if (ownerTenantIds.Count > 0)
+        {
+            var tenantsToPatch = await db.Tenants.Where(t => ownerTenantIds.Contains(t.Id) && !t.OwnerGroupId.HasValue).ToListAsync(ct);
+            foreach (var t in tenantsToPatch) t.OwnerGroupId = group.Id;
+            if (tenantsToPatch.Count > 0) await db.SaveChangesAsync(ct);
+        }
+
+        return group.Id;
+    }
+
+    private async Task<Guid> EnsureTenantOwnerGroupForInviteAsync(Tenant tenant, Guid fallbackOwnerUserId, CancellationToken ct)
+    {
+        if (tenant.OwnerGroupId.HasValue && tenant.OwnerGroupId.Value != Guid.Empty) return tenant.OwnerGroupId.Value;
+        var ownerUserId = await db.TenantUsers
+            .Where(x => x.TenantId == tenant.Id && x.Role.ToLower() == "owner")
+            .OrderBy(x => x.CreatedAtUtc)
+            .Select(x => x.UserId)
+            .FirstOrDefaultAsync(ct);
+        if (ownerUserId == Guid.Empty) ownerUserId = fallbackOwnerUserId;
+        var group = await db.TenantOwnerGroups
+            .Where(g => g.OwnerUserId == ownerUserId && g.IsActive)
+            .OrderBy(g => g.CreatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (group is null)
+        {
+            group = new TenantOwnerGroup
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = ownerUserId,
+                Name = $"{tenant.Name} Group",
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+            db.TenantOwnerGroups.Add(group);
+        }
+        tenant.OwnerGroupId = group.Id;
+        await db.SaveChangesAsync(ct);
+        return group.Id;
+    }
+
+    private async Task<bool> CanUserJoinOwnerGroupAsync(Guid userId, Guid tenantOwnerGroupId, CancellationToken ct)
+    {
+        var userTenantIds = await db.TenantUsers.Where(x => x.UserId == userId).Select(x => x.TenantId).Distinct().ToListAsync(ct);
+        if (userTenantIds.Count == 0) return true;
+        var otherGroupIds = await db.Tenants
+            .Where(t => userTenantIds.Contains(t.Id) && t.OwnerGroupId.HasValue)
+            .Select(t => t.OwnerGroupId!.Value)
+            .Distinct()
+            .ToListAsync(ct);
+        return otherGroupIds.Count == 0 || (otherGroupIds.Count == 1 && otherGroupIds[0] == tenantOwnerGroupId);
     }
 
     private static string HashToken(string token)

@@ -90,6 +90,7 @@ public class TeamController(
         var currentMembers = await db.TenantUsers.CountAsync(tu => tu.TenantId == tenancy.TenantId, ct);
         var limit = await billingGuard.CheckLimitAsync(tenancy.TenantId, "teamMembers", currentMembers + 1, ct);
         if (!limit.Allowed) return BadRequest(limit.Message);
+        var tenantOwnerGroupId = await EnsureTenantOwnerGroupAsync(tenancy.TenantId, auth.UserId, ct);
 
         var user = await db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email, ct);
         if (user is null)
@@ -112,6 +113,9 @@ public class TeamController(
         {
             user.FullName = request.Name.Trim();
         }
+
+        if (!await CanUserJoinOwnerGroupAsync(user.Id, tenantOwnerGroupId, ct))
+            return BadRequest("User already belongs to another tenant owner group and cannot be added to this tenant.");
 
         var member = await db.TenantUsers.FirstOrDefaultAsync(tu => tu.TenantId == tenancy.TenantId && tu.UserId == user.Id, ct);
         if (member is null)
@@ -429,5 +433,52 @@ public class TeamController(
     {
         public string Permission { get; set; } = string.Empty;
         public bool IsAllowed { get; set; }
+    }
+
+    private async Task<Guid> EnsureTenantOwnerGroupAsync(Guid tenantId, Guid actorUserId, CancellationToken ct)
+    {
+        var tenant = await db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct) ?? throw new InvalidOperationException("Tenant not found.");
+        if (tenant.OwnerGroupId.HasValue && tenant.OwnerGroupId.Value != Guid.Empty) return tenant.OwnerGroupId.Value;
+
+        var ownerUserId = await db.TenantUsers
+            .Where(x => x.TenantId == tenantId && x.Role.ToLower() == "owner")
+            .OrderBy(x => x.CreatedAtUtc)
+            .Select(x => x.UserId)
+            .FirstOrDefaultAsync(ct);
+        if (ownerUserId == Guid.Empty) ownerUserId = actorUserId;
+
+        var group = await db.TenantOwnerGroups
+            .Where(g => g.OwnerUserId == ownerUserId && g.IsActive)
+            .OrderBy(g => g.CreatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (group is null)
+        {
+            group = new TenantOwnerGroup
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = ownerUserId,
+                Name = $"{tenant.Name} Group",
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+            db.TenantOwnerGroups.Add(group);
+        }
+
+        tenant.OwnerGroupId = group.Id;
+        await db.SaveChangesAsync(ct);
+        return group.Id;
+    }
+
+    private async Task<bool> CanUserJoinOwnerGroupAsync(Guid userId, Guid tenantOwnerGroupId, CancellationToken ct)
+    {
+        var userTenantIds = await db.TenantUsers.Where(x => x.UserId == userId).Select(x => x.TenantId).Distinct().ToListAsync(ct);
+        if (userTenantIds.Count == 0) return true;
+        var otherGroupIds = await db.Tenants
+            .Where(t => userTenantIds.Contains(t.Id) && t.OwnerGroupId.HasValue)
+            .Select(t => t.OwnerGroupId!.Value)
+            .Distinct()
+            .ToListAsync(ct);
+        return otherGroupIds.Count == 0 || (otherGroupIds.Count == 1 && otherGroupIds[0] == tenantOwnerGroupId);
     }
 }

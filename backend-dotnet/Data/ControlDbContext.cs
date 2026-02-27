@@ -6,6 +6,8 @@ namespace Textzy.Api.Data;
 public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbContext(options)
 {
     public DbSet<Tenant> Tenants => Set<Tenant>();
+    public DbSet<TenantOwnerGroup> TenantOwnerGroups => Set<TenantOwnerGroup>();
+    public DbSet<TenantCompanyProfile> TenantCompanyProfiles => Set<TenantCompanyProfile>();
     public DbSet<User> Users => Set<User>();
     public DbSet<TenantUser> TenantUsers => Set<TenantUser>();
     public DbSet<SessionToken> SessionTokens => Set<SessionToken>();

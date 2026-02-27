@@ -500,6 +500,16 @@ export async function getPlatformCustomers(q = '') {
   return apiGet(`/api/platform/customers${qs.toString() ? `?${qs.toString()}` : ''}`)
 }
 
+export async function getPlatformUsers(q = '') {
+  const qs = new URLSearchParams()
+  if (q) qs.set('q', q)
+  return apiGet(`/api/platform/customers/users${qs.toString() ? `?${qs.toString()}` : ''}`)
+}
+
+export async function getPlatformUserTenants(userId) {
+  return apiGet(`/api/platform/customers/user-tenants?userId=${encodeURIComponent(userId)}`)
+}
+
 export async function getPlatformCustomerDetails(tenantId) {
   return apiGet(`/api/platform/customers/${tenantId}`)
 }
@@ -574,4 +584,12 @@ export async function getPublicPlans() {
   const res = await fetch(`${API_BASE}/api/public/plans`)
   if (!res.ok) throw new Error(`GET /api/public/plans failed (${res.status})`)
   return res.json()
+}
+
+export async function getCompanySettings() {
+  return apiGet('/api/settings/company')
+}
+
+export async function saveCompanySettings(payload) {
+  return apiPut('/api/settings/company', payload)
 }

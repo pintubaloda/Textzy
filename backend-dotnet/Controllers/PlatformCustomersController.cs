@@ -35,6 +35,7 @@ public class PlatformCustomersController(
         var users = await db.TenantUsers.Where(x => tenantIds.Contains(x.TenantId)).ToListAsync(ct);
         var userIds = users.Select(x => x.UserId).Distinct().ToList();
         var userMap = await db.Users.Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, ct);
+        var companyProfiles = await db.TenantCompanyProfiles.Where(x => tenantIds.Contains(x.TenantId)).ToDictionaryAsync(x => x.TenantId, ct);
         var subs = await db.TenantSubscriptions.Where(s => tenantIds.Contains(s.TenantId)).ToListAsync(ct);
         var plans = await db.BillingPlans.ToListAsync(ct);
         var planMap = plans.ToDictionary(x => x.Id, x => x);
@@ -56,6 +57,8 @@ public class PlatformCustomersController(
                 tenantId = t.Id,
                 tenantName = t.Name,
                 tenantSlug = t.Slug,
+                companyName = companyProfiles.TryGetValue(t.Id, out var company) ? company.CompanyName : t.Name,
+                ownerGroupId = t.OwnerGroupId,
                 createdAtUtc = t.CreatedAtUtc,
                 ownerName = owner?.FullName ?? owner?.Email ?? "-",
                 ownerEmail = owner?.Email ?? "-",
@@ -73,6 +76,108 @@ public class PlatformCustomersController(
         return Ok(result);
     }
 
+    [HttpGet("users")]
+    public async Task<IActionResult> Users([FromQuery] string q = "", CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+
+        var search = (q ?? string.Empty).Trim().ToLowerInvariant();
+        var query = db.Users.Where(u => !u.IsSuperAdmin);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            query = query.Where(u => u.Email.ToLower().Contains(search) || u.FullName.ToLower().Contains(search));
+        }
+
+        var users = await query
+            .OrderByDescending(u => u.CreatedAtUtc)
+            .Take(500)
+            .ToListAsync(ct);
+
+        var userIds = users.Select(u => u.Id).ToList();
+        var memberships = await db.TenantUsers.Where(x => userIds.Contains(x.UserId)).ToListAsync(ct);
+
+        var rows = users.Select(u =>
+        {
+            var m = memberships.Where(x => x.UserId == u.Id).ToList();
+            return new
+            {
+                userId = u.Id,
+                name = string.IsNullOrWhiteSpace(u.FullName) ? u.Email : u.FullName,
+                email = u.Email,
+                isActive = u.IsActive,
+                tenantCount = m.Select(x => x.TenantId).Distinct().Count(),
+                rolePreview = string.Join(", ", m.Select(x => x.Role).Distinct().OrderBy(x => x))
+            };
+        });
+
+        return Ok(rows);
+    }
+
+    [HttpGet("user-tenants")]
+    public async Task<IActionResult> UserTenants([FromQuery] Guid userId, CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+        if (userId == Guid.Empty) return BadRequest("userId is required.");
+
+        var user = await db.Users.FirstOrDefaultAsync(x => x.Id == userId, ct);
+        if (user is null) return NotFound("User not found.");
+
+        var memberships = await db.TenantUsers.Where(x => x.UserId == userId).ToListAsync(ct);
+        var tenantIds = memberships.Select(x => x.TenantId).Distinct().ToList();
+        var tenants = await db.Tenants.Where(x => tenantIds.Contains(x.Id)).ToListAsync(ct);
+        var profiles = await db.TenantCompanyProfiles.Where(x => tenantIds.Contains(x.TenantId)).ToDictionaryAsync(x => x.TenantId, ct);
+
+        var latestSubs = await db.TenantSubscriptions
+            .Where(x => tenantIds.Contains(x.TenantId))
+            .GroupBy(x => x.TenantId)
+            .Select(g => g.OrderByDescending(x => x.CreatedAtUtc).First())
+            .ToListAsync(ct);
+        var planIds = latestSubs.Select(x => x.PlanId).Distinct().ToList();
+        var planMap = await db.BillingPlans.Where(x => planIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
+
+        var grouped = tenants.GroupBy(t => t.OwnerGroupId).Select(g => new
+        {
+            ownerGroupId = g.Key,
+            companies = g.Select(t =>
+            {
+                var sub = latestSubs.FirstOrDefault(x => x.TenantId == t.Id);
+                var plan = sub is not null && planMap.TryGetValue(sub.PlanId, out var p) ? p : null;
+                var role = memberships.FirstOrDefault(m => m.TenantId == t.Id)?.Role ?? "member";
+                var status = (sub?.Status ?? "inactive").ToLowerInvariant();
+                return new
+                {
+                    tenantId = t.Id,
+                    tenantName = t.Name,
+                    tenantSlug = t.Slug,
+                    role,
+                    isActive = status == "active" || status == "trialing" || status == "trial",
+                    companyName = profiles.TryGetValue(t.Id, out var cp) && !string.IsNullOrWhiteSpace(cp.CompanyName) ? cp.CompanyName : t.Name,
+                    billingStatus = sub?.Status ?? "none",
+                    planCode = plan?.Code ?? "",
+                    planName = plan?.Name ?? "No Plan",
+                    planCycle = sub?.BillingCycle ?? "",
+                    renewAtUtc = sub?.RenewAtUtc
+                };
+            }).OrderBy(x => x.companyName).ToList()
+        }).ToList();
+
+        return Ok(new
+        {
+            user = new
+            {
+                userId = user.Id,
+                name = string.IsNullOrWhiteSpace(user.FullName) ? user.Email : user.FullName,
+                user.Email,
+                user.IsActive
+            },
+            ownerGroupCount = grouped.Count,
+            tenantCount = tenants.Count,
+            groups = grouped
+        });
+    }
+
     [HttpGet("{tenantId:guid}")]
     public async Task<IActionResult> Details(Guid tenantId, CancellationToken ct)
     {
@@ -85,12 +190,30 @@ public class PlatformCustomersController(
         var members = await db.TenantUsers.Where(x => x.TenantId == tenantId).ToListAsync(ct);
         var userIds = members.Select(x => x.UserId).Distinct().ToList();
         var users = await db.Users.Where(u => userIds.Contains(u.Id)).ToListAsync(ct);
+        var company = await db.TenantCompanyProfiles.FirstOrDefaultAsync(x => x.TenantId == tenantId, ct);
         var latestSub = await db.TenantSubscriptions.Where(x => x.TenantId == tenantId).OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(ct);
         var plan = latestSub is null ? null : await db.BillingPlans.FirstOrDefaultAsync(x => x.Id == latestSub.PlanId, ct);
 
         return Ok(new
         {
             tenant = new { tenant.Id, tenant.Name, tenant.Slug, tenant.CreatedAtUtc },
+            company = company is null ? null : new
+            {
+                company.TenantId,
+                company.OwnerGroupId,
+                company.CompanyName,
+                company.LegalName,
+                company.Industry,
+                company.Website,
+                company.CompanySize,
+                company.Gstin,
+                company.Pan,
+                company.Address,
+                company.BillingEmail,
+                company.BillingPhone,
+                company.IsActive,
+                company.UpdatedAtUtc
+            },
             subscription = latestSub is null ? null : new
             {
                 latestSub.Id,
