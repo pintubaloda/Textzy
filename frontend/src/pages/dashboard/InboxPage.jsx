@@ -244,6 +244,8 @@ const InboxPage = () => {
   const seenRealtimeEventsRef = useRef(new Set());
   const signalRConnectionRef = useRef(null);
   const lastSoundAtRef = useRef(0);
+  const faviconBlinkTimerRef = useRef(null);
+  const faviconBlinkStateRef = useRef(false);
 
   const mapConversation = (x) => ({
     id: x.id,
@@ -417,7 +419,22 @@ const InboxPage = () => {
       favicon.setAttribute("rel", "icon");
       document.head.appendChild(favicon);
     }
-    favicon.setAttribute("href", count > 0 ? "/favicon.ico?v=unread" : "/favicon.ico");
+    const unreadSvg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23ffffff'/%3E%3Ccircle cx='32' cy='32' r='20' fill='%23f97316'/%3E%3C/svg%3E";
+    const hidden = typeof document !== "undefined" ? document.hidden : false;
+    if (faviconBlinkTimerRef.current) {
+      clearInterval(faviconBlinkTimerRef.current);
+      faviconBlinkTimerRef.current = null;
+    }
+    faviconBlinkStateRef.current = false;
+    if (count > 0 && hidden) {
+      favicon.setAttribute("href", unreadSvg);
+      faviconBlinkTimerRef.current = window.setInterval(() => {
+        faviconBlinkStateRef.current = !faviconBlinkStateRef.current;
+        favicon.setAttribute("href", faviconBlinkStateRef.current ? unreadSvg : "/favicon.ico");
+      }, 900);
+    } else {
+      favicon.setAttribute("href", "/favicon.ico");
+    }
   }, []);
 
   useEffect(() => {
@@ -432,6 +449,13 @@ const InboxPage = () => {
     const unread = conversations.reduce((sum, c) => sum + Number(c.unread || 0), 0);
     updateTabBadge(unread);
   }, [conversations, updateTabBadge]);
+
+  useEffect(() => () => {
+    if (faviconBlinkTimerRef.current) {
+      clearInterval(faviconBlinkTimerRef.current);
+      faviconBlinkTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     try {

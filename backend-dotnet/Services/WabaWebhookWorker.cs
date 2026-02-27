@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
 using Textzy.Api.Models;
+using WebPush;
 
 namespace Textzy.Api.Services;
 
@@ -10,10 +11,13 @@ public class WabaWebhookWorker(
     WabaWebhookQueueService queue,
     IServiceScopeFactory scopeFactory,
     IHubContext<InboxHub> hub,
+    UserPresenceService presence,
+    IConfiguration config,
     TenantSchemaGuardService schemaGuard,
     SensitiveDataRedactor redactor,
     ILogger<WabaWebhookWorker> logger) : BackgroundService
 {
+    private static readonly TimeSpan PresenceTtl = TimeSpan.FromMinutes(2);
     private sealed class TriggerInboundContext
     {
         public string MessageId { get; init; } = string.Empty;
@@ -420,6 +424,22 @@ public class WabaWebhookWorker(
 
                 await hub.Clients.Group($"tenant:{resolved.TenantSlug}")
                     .SendAsync("webhook.inbound", new { phoneNumberId = parse.PhoneNumberId, inboundCount = parse.Inbound.Count, statusCount = parse.Statuses.Count }, stoppingToken);
+
+                if (parse.Inbound.Count > 0)
+                {
+                    var latestInbound = parse.Inbound
+                        .OrderByDescending(x => x.AtUtc ?? DateTime.MinValue)
+                        .FirstOrDefault();
+                    if (latestInbound is not null)
+                    {
+                        await TrySendBrowserPushAsync(
+                            controlDb,
+                            resolved.TenantId,
+                            resolved.TenantSlug,
+                            latestInbound,
+                            stoppingToken);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -471,6 +491,106 @@ public class WabaWebhookWorker(
                 }
             }
         }
+    }
+
+    private async Task TrySendBrowserPushAsync(
+        ControlDbContext controlDb,
+        Guid tenantId,
+        string tenantSlug,
+        InboundItem inbound,
+        CancellationToken ct)
+    {
+        var vapidPublicKey = (config["Push:VapidPublicKey"] ?? string.Empty).Trim();
+        var vapidPrivateKey = (config["Push:VapidPrivateKey"] ?? string.Empty).Trim();
+        var vapidSubject = (config["Push:VapidSubject"] ?? "mailto:support@textzy.local").Trim();
+        if (string.IsNullOrWhiteSpace(vapidPublicKey) || string.IsNullOrWhiteSpace(vapidPrivateKey)) return;
+
+        var tenantUsers = await controlDb.TenantUsers
+            .Where(x => x.TenantId == tenantId)
+            .Select(x => x.UserId)
+            .Distinct()
+            .ToListAsync(ct);
+        if (tenantUsers.Count == 0) return;
+
+        var users = await controlDb.Users
+            .Where(x => tenantUsers.Contains(x.Id))
+            .Select(x => new { x.Id, x.Email })
+            .ToListAsync(ct);
+        if (users.Count == 0) return;
+
+        var activeMap = BuildPresenceMap(tenantSlug);
+        var targetUserIds = users
+            .Where(u => !IsUserActive(activeMap, u.Email))
+            .Select(u => u.Id)
+            .ToHashSet();
+        if (targetUserIds.Count == 0) return;
+
+        var subscriptions = await controlDb.UserPushSubscriptions
+            .Where(x => x.TenantId == tenantId && x.IsActive && targetUserIds.Contains(x.UserId))
+            .ToListAsync(ct);
+        if (subscriptions.Count == 0) return;
+
+        var bodyText = string.IsNullOrWhiteSpace(inbound.Body)
+            ? (!string.IsNullOrWhiteSpace(inbound.MessageType) ? $"New {inbound.MessageType} message" : "You received a new customer message")
+            : inbound.Body;
+        if (bodyText.Length > 120) bodyText = $"{bodyText[..117]}...";
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            title = inbound.Name,
+            body = bodyText,
+            tag = $"textzy-inbox-{tenantId:N}",
+            data = new
+            {
+                tenantSlug,
+                from = inbound.From,
+                messageId = inbound.MessageId,
+                at = (inbound.AtUtc ?? DateTime.UtcNow).ToString("O")
+            }
+        });
+
+        var client = new WebPushClient();
+        var vapid = new VapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+        foreach (var sub in subscriptions)
+        {
+            try
+            {
+                var pushSub = new PushSubscription(sub.Endpoint, sub.P256dh, sub.Auth);
+                await client.SendNotificationAsync(pushSub, payload, vapid);
+                sub.LastSeenAtUtc = DateTime.UtcNow;
+                sub.UpdatedAtUtc = DateTime.UtcNow;
+            }
+            catch (WebPushException ex) when ((int?)ex.StatusCode is 404 or 410)
+            {
+                sub.IsActive = false;
+                sub.UpdatedAtUtc = DateTime.UtcNow;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning("Push send failed tenant={TenantId} user={UserId}: {Error}",
+                    tenantId, sub.UserId, redactor.RedactText(ex.Message));
+            }
+        }
+
+        await controlDb.SaveChangesAsync(ct);
+    }
+
+    private Dictionary<string, bool> BuildPresenceMap(string tenantSlug)
+    {
+        var now = DateTime.UtcNow;
+        return presence.Snapshot(tenantSlug)
+            .Where(x => !string.IsNullOrWhiteSpace(x.UserKey))
+            .GroupBy(x => x.UserKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Any(x => x.IsOnline && x.IsTabActive && now - x.LastHeartbeatUtc <= PresenceTtl),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUserActive(Dictionary<string, bool> activeMap, string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email)) return false;
+        return activeMap.TryGetValue(email.Trim().ToLowerInvariant(), out var isActive) && isActive;
     }
 
     private static bool TriggerMatches(AutomationFlow flow, string inboundText)
