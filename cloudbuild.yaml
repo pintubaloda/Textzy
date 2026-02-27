@@ -5,14 +5,14 @@ steps:
       - "-f"
       - "backend-dotnet/Dockerfile"
       - "-t"
-      - "gcr.io/$PROJECT_ID/textzy-backend:$COMMIT_SHA"
+      - "us-central1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:$COMMIT_SHA"
       - "-t"
-      - "gcr.io/$PROJECT_ID/textzy-backend:latest"
+      - "us-central1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:latest"
       - "backend-dotnet"
 
 images:
-  - "gcr.io/$PROJECT_ID/textzy-backend:$COMMIT_SHA"
-  - "gcr.io/$PROJECT_ID/textzy-backend:latest"
+  - "us-central1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:$COMMIT_SHA"
+  - "us-central1-docker.pkg.dev/$PROJECT_ID/textzy/textzy-backend:latest"
 
 options:
   logging: CLOUD_LOGGING_ONLY
