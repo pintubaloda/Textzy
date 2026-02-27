@@ -67,6 +67,20 @@ public class TenantSchemaGuardService(IMemoryCache cache, ILogger<TenantSchemaGu
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "TenantWabaConfigs" ADD COLUMN IF NOT EXISTS "TemplatesSyncFailCount" integer NOT NULL DEFAULT 0;""", ct);
         await db.Database.ExecuteSqlRawAsync("""CREATE INDEX IF NOT EXISTS "IX_TenantWabaConfigs_TenantId" ON "TenantWabaConfigs" ("TenantId");""", ct);
 
+        // Templates compatibility for older tenant DBs
+        await db.Database.ExecuteSqlRawAsync("""CREATE TABLE IF NOT EXISTS "Templates" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "Name" text NOT NULL DEFAULT '', "Channel" integer NOT NULL DEFAULT 0, "Category" text NOT NULL DEFAULT 'UTILITY', "Language" text NOT NULL DEFAULT 'en', "Body" text NOT NULL DEFAULT '', "LifecycleStatus" text NOT NULL DEFAULT 'draft', "Version" integer NOT NULL DEFAULT 1, "VariantGroup" text NOT NULL DEFAULT '', "Status" text NOT NULL DEFAULT 'Approved', "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "DltEntityId" text NOT NULL DEFAULT '';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "DltTemplateId" text NOT NULL DEFAULT '';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "SmsSenderId" text NOT NULL DEFAULT '';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "HeaderType" text NOT NULL DEFAULT 'none';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "HeaderText" text NOT NULL DEFAULT '';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "HeaderMediaId" text NOT NULL DEFAULT '';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "HeaderMediaName" text NOT NULL DEFAULT '';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "FooterText" text NOT NULL DEFAULT '';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "ButtonsJson" text NOT NULL DEFAULT '';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "RejectionReason" text NOT NULL DEFAULT '';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""CREATE INDEX IF NOT EXISTS "IX_Templates_Tenant_Channel" ON "Templates" ("TenantId","Channel");""", ct);
+
         cache.Set(CacheKey(tenantId), true, TimeSpan.FromMinutes(30));
         logger.LogInformation("Tenant schema guard applied for tenantId={TenantId}", tenantId);
     }
