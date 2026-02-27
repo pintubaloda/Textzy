@@ -42,11 +42,13 @@ import {
 import { apiGet, apiGetBlob, apiPost, apiPostForm, buildIdempotencyKey, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
 import { playNotificationTone, isNotificationAudioUnlocked, unlockNotificationAudio } from "@/lib/notificationAudio";
+import { requestDesktopNotificationPermission, showDesktopNotification } from "@/lib/browserNotifications";
 import { toast } from "sonner";
 
 const NOTIFICATION_STYLE_KEY = "textzy.inbox.notificationStyle";
 const NOTIFY_LEADER_KEY = "textzy.inbox.notifyLeader";
 const NOTIFY_LEADER_TTL_MS = 15000;
+const DND_UNTIL_KEY = "textzy.inbox.dndUntilUtc";
 const FULL_EMOJI_SET = [
   "😀","😁","😂","🤣","😃","😄","😅","😆","😉","😊","🙂","🙃","😍","🥰","😘","😗","😙","😚","😋","😛","😜","🤪","🤗","🤩","🤔",
   "😐","😶","🙄","😏","😣","😥","😮","🤐","😯","😪","😫","🥱","😴","😌","😛","🫡","🤝","👍","👎","👏","🙌","🙏","💪","🔥","✅",
@@ -207,6 +209,13 @@ const InboxPage = () => {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [voiceMimeType, setVoiceMimeType] = useState("");
   const [audioUnlocked, setAudioUnlocked] = useState(() => isNotificationAudioUnlocked());
+  const [dndUntilUtc, setDndUntilUtc] = useState(() => {
+    try {
+      return Number(localStorage.getItem(DND_UNTIL_KEY) || 0);
+    } catch {
+      return 0;
+    }
+  });
   const [notificationStyle, setNotificationStyle] = useState(() => {
     try {
       return localStorage.getItem(NOTIFICATION_STYLE_KEY) || "classic";
@@ -234,6 +243,7 @@ const InboxPage = () => {
   const broadcastRef = useRef(null);
   const seenRealtimeEventsRef = useRef(new Set());
   const signalRConnectionRef = useRef(null);
+  const lastSoundAtRef = useRef(0);
 
   const mapConversation = (x) => ({
     id: x.id,
@@ -332,12 +342,16 @@ const InboxPage = () => {
     try {
       if (!isNotifyLeaderRef.current) return;
       if (typeof document !== "undefined" && document.hidden) return;
+      if (dndUntilUtc && Date.now() < dndUntilUtc) return;
+      const now = Date.now();
+      if (now - lastSoundAtRef.current < 1200) return;
+      lastSoundAtRef.current = now;
       if (notificationStyle === "off") return;
       playNotificationTone(notificationStyle, frequency);
     } catch {
       // Ignore audio failures (autoplay policy / unsupported browser)
     }
-  }, [notificationStyle]);
+  }, [dndUntilUtc, notificationStyle]);
 
   const acquireNotifyLeadership = useCallback(() => {
     const now = Date.now();
@@ -382,16 +396,28 @@ const InboxPage = () => {
     try {
       if (!isNotifyLeaderRef.current) return;
       if (typeof document !== "undefined" && !document.hidden) return;
-      if (typeof Notification === "undefined") return;
-      if (Notification.permission !== "granted") return;
-      new Notification(title || "New message", {
+      if (dndUntilUtc && Date.now() < dndUntilUtc) return;
+      showDesktopNotification({
+        title: title || "New message",
         body: body || "You have a new message",
-        tag: tag || "textzy-inbox",
-        renotify: false,
-      });
+        tag: tag || "textzy-inbox"
+      }).catch(() => {});
     } catch {
       // ignore
     }
+  }, [dndUntilUtc]);
+
+  const updateTabBadge = useCallback((count) => {
+    if (typeof document === "undefined") return;
+    const baseTitle = "Textzy";
+    document.title = count > 0 ? `(${count}) ${baseTitle}` : baseTitle;
+    let favicon = document.querySelector("link[rel='icon']");
+    if (!favicon) {
+      favicon = document.createElement("link");
+      favicon.setAttribute("rel", "icon");
+      document.head.appendChild(favicon);
+    }
+    favicon.setAttribute("href", count > 0 ? "/favicon.ico?v=unread" : "/favicon.ico");
   }, []);
 
   useEffect(() => {
@@ -403,12 +429,25 @@ const InboxPage = () => {
   }, [playNotificationSound]);
 
   useEffect(() => {
+    const unread = conversations.reduce((sum, c) => sum + Number(c.unread || 0), 0);
+    updateTabBadge(unread);
+  }, [conversations, updateTabBadge]);
+
+  useEffect(() => {
     try {
       localStorage.setItem(NOTIFICATION_STYLE_KEY, notificationStyle);
     } catch {
       // ignore storage issues
     }
   }, [notificationStyle]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DND_UNTIL_KEY, String(dndUntilUtc || 0));
+    } catch {
+      // ignore
+    }
+  }, [dndUntilUtc]);
 
   useEffect(() => {
     Promise.all([
@@ -643,9 +682,7 @@ const InboxPage = () => {
 
   const requestBrowserNotificationAndSound = async () => {
     try {
-      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
-        await Notification.requestPermission();
-      }
+      await requestDesktopNotificationPermission();
       const ok = await unlockNotificationAudio();
       setAudioUnlocked(ok || isNotificationAudioUnlocked());
       if (ok) toast.success("Notification sounds enabled");
@@ -1324,6 +1361,19 @@ const InboxPage = () => {
                 <option value="off">Off</option>
               </select>
             </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="rounded-xl h-9 px-3 border-slate-200 bg-white text-slate-800 hover:bg-slate-50">
+                  DND
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setDndUntilUtc(0)}>Off</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setDndUntilUtc(Date.now() + 15 * 60 * 1000)}>15 min</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setDndUntilUtc(Date.now() + 60 * 60 * 1000)}>1 hour</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setDndUntilUtc(Date.now() + 8 * 60 * 60 * 1000)}>8 hours</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button disabled={assignBusy} variant="outline" size="sm" className="rounded-xl h-9 px-3 border-slate-200 bg-white text-slate-800 hover:bg-slate-50"><UserPlus className="w-4 h-4 mr-1.5" />{assignBusy ? "Assigning..." : "Assign"}</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">{teamMembers.length === 0 ? <DropdownMenuItem disabled>No members</DropdownMenuItem> : teamMembers.map((member) => <DropdownMenuItem key={member.id} disabled={assignBusy} onClick={() => handleAssign(member)}>{member.name} ({member.role})</DropdownMenuItem>)}</DropdownMenuContent>

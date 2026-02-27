@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import "@/index.css";
 import App from "@/App";
+import { ensureServiceWorkerRegistered } from "@/lib/browserNotifications";
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
@@ -9,3 +10,5 @@ root.render(
     <App />
   </React.StrictMode>,
 );
+
+ensureServiceWorkerRegistered().catch(() => {});
