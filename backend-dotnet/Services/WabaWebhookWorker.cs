@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Google.Apis.Auth.OAuth2;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
@@ -18,6 +19,9 @@ public class WabaWebhookWorker(
     ILogger<WabaWebhookWorker> logger) : BackgroundService
 {
     private static readonly TimeSpan PresenceTtl = TimeSpan.FromMinutes(2);
+    private readonly SemaphoreSlim _fcmTokenLock = new(1, 1);
+    private string _fcmAccessToken = string.Empty;
+    private DateTime _fcmAccessTokenExpiryUtc = DateTime.MinValue;
     private sealed class TriggerInboundContext
     {
         public string MessageId { get; init; } = string.Empty;
@@ -503,9 +507,11 @@ public class WabaWebhookWorker(
         var vapidPublicKey = (config["Push:VapidPublicKey"] ?? string.Empty).Trim();
         var vapidPrivateKey = (config["Push:VapidPrivateKey"] ?? string.Empty).Trim();
         var vapidSubject = (config["Push:VapidSubject"] ?? "mailto:support@textzy.local").Trim();
-        var fcmServerKey = (config["Push:FcmServerKey"] ?? string.Empty).Trim();
+        var fcmProjectId = (config["Push:FcmProjectId"] ?? string.Empty).Trim();
+        var fcmSaJson = (config["Push:FcmServiceAccountJson"] ?? string.Empty).Trim();
+        var fcmSaPath = (config["Push:FcmServiceAccountPath"] ?? string.Empty).Trim();
         var webPushEnabled = !string.IsNullOrWhiteSpace(vapidPublicKey) && !string.IsNullOrWhiteSpace(vapidPrivateKey);
-        var fcmEnabled = !string.IsNullOrWhiteSpace(fcmServerKey);
+        var fcmEnabled = !string.IsNullOrWhiteSpace(fcmProjectId) && (!string.IsNullOrWhiteSpace(fcmSaJson) || !string.IsNullOrWhiteSpace(fcmSaPath));
         if (!webPushEnabled && !fcmEnabled) return;
 
         var tenantUsers = await controlDb.TenantUsers
@@ -562,19 +568,23 @@ public class WabaWebhookWorker(
                 if (string.Equals(sub.Provider, "fcm", StringComparison.OrdinalIgnoreCase))
                 {
                     if (http is null) continue;
-                    using var req = new HttpRequestMessage(HttpMethod.Post, "https://fcm.googleapis.com/fcm/send");
-                    req.Headers.TryAddWithoutValidation("Authorization", $"key={fcmServerKey}");
+                    var bearer = await GetFcmBearerTokenAsync(fcmSaJson, fcmSaPath, ct);
+                    if (string.IsNullOrWhiteSpace(bearer)) continue;
+                    using var req = new HttpRequestMessage(HttpMethod.Post, $"https://fcm.googleapis.com/v1/projects/{fcmProjectId}/messages:send");
+                    req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {bearer}");
                     req.Content = new StringContent(JsonSerializer.Serialize(new
                     {
-                        to = sub.Endpoint,
-                        priority = "high",
-                        notification = new { title = inbound.Name, body = bodyText },
-                        data = new
+                        message = new
                         {
-                            tenantSlug,
-                            from = inbound.From,
-                            messageId = inbound.MessageId,
-                            at = (inbound.AtUtc ?? DateTime.UtcNow).ToString("O")
+                            token = sub.Endpoint,
+                            notification = new { title = inbound.Name, body = bodyText },
+                            data = new
+                            {
+                                tenantSlug,
+                                from = inbound.From,
+                                messageId = inbound.MessageId,
+                                at = (inbound.AtUtc ?? DateTime.UtcNow).ToString("O")
+                            }
                         }
                     }));
                     req.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
@@ -582,7 +592,7 @@ public class WabaWebhookWorker(
                     if (!resp.IsSuccessStatusCode)
                     {
                         var txt = await resp.Content.ReadAsStringAsync(ct);
-                        if (txt.Contains("NotRegistered", StringComparison.OrdinalIgnoreCase) || txt.Contains("InvalidRegistration", StringComparison.OrdinalIgnoreCase))
+                        if (txt.Contains("UNREGISTERED", StringComparison.OrdinalIgnoreCase) || txt.Contains("registration-token-not-registered", StringComparison.OrdinalIgnoreCase) || txt.Contains("INVALID_ARGUMENT", StringComparison.OrdinalIgnoreCase))
                         {
                             sub.IsActive = false;
                         }
@@ -615,6 +625,49 @@ public class WabaWebhookWorker(
         }
 
         await controlDb.SaveChangesAsync(ct);
+    }
+
+    private async Task<string> GetFcmBearerTokenAsync(string serviceAccountJson, string serviceAccountPath, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(_fcmAccessToken) && DateTime.UtcNow < _fcmAccessTokenExpiryUtc.AddMinutes(-2))
+            return _fcmAccessToken;
+
+        await _fcmTokenLock.WaitAsync(ct);
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_fcmAccessToken) && DateTime.UtcNow < _fcmAccessTokenExpiryUtc.AddMinutes(-2))
+                return _fcmAccessToken;
+
+            GoogleCredential cred;
+            if (!string.IsNullOrWhiteSpace(serviceAccountJson))
+            {
+                cred = GoogleCredential.FromJson(serviceAccountJson);
+            }
+            else if (!string.IsNullOrWhiteSpace(serviceAccountPath))
+            {
+                cred = GoogleCredential.FromFile(serviceAccountPath);
+            }
+            else
+            {
+                return string.Empty;
+            }
+
+            cred = cred.CreateScoped("https://www.googleapis.com/auth/firebase.messaging");
+            var token = await cred.UnderlyingCredential.GetAccessTokenForRequestAsync(null, ct);
+            if (string.IsNullOrWhiteSpace(token)) return string.Empty;
+            _fcmAccessToken = token;
+            _fcmAccessTokenExpiryUtc = DateTime.UtcNow.AddMinutes(50);
+            return _fcmAccessToken;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("FCM access token fetch failed: {Error}", redactor.RedactText(ex.Message));
+            return string.Empty;
+        }
+        finally
+        {
+            _fcmTokenLock.Release();
+        }
     }
 
     private Dictionary<string, bool> BuildPresenceMap(string tenantSlug)
