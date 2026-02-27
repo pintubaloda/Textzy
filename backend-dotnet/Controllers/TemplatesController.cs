@@ -14,7 +14,6 @@ namespace Textzy.Api.Controllers;
 [Route("api/templates")]
 public class TemplatesController(
     TenantDbContext db,
-    ControlDbContext controlDb,
     TenancyContext tenancy,
     RbacService rbac,
     WhatsAppCloudService whatsapp,
@@ -382,86 +381,4 @@ public class TemplatesController(
         });
     }
 
-    [HttpGet("library")]
-    public async Task<IActionResult> Library([FromQuery] string? category, [FromQuery] string? search, CancellationToken ct)
-    {
-        if (!rbac.HasPermission(TemplatesRead)) return Forbid();
-        var q = controlDb.TemplateLibraryItems.AsNoTracking().AsQueryable();
-        if (!string.IsNullOrWhiteSpace(category))
-        {
-            var c = category.Trim().ToUpperInvariant();
-            q = q.Where(x => x.Category == c);
-        }
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            var s = search.Trim().ToLowerInvariant();
-            q = q.Where(x => x.Name.ToLower().Contains(s) || x.Body.ToLower().Contains(s));
-        }
-
-        var items = await q.OrderByDescending(x => x.UpdatedAtUtc).Take(400).ToListAsync(ct);
-        return Ok(items);
-    }
-
-    [HttpPost("library/sync")]
-    public async Task<IActionResult> SyncLibrary(CancellationToken ct)
-    {
-        if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
-
-        await whatsapp.SyncMessageTemplatesAsync(ct);
-
-        var tenant = await controlDb.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == tenancy.TenantId, ct);
-        var tenantSlug = tenant?.Slug ?? string.Empty;
-        var templates = await db.Templates
-            .Where(x => x.TenantId == tenancy.TenantId && x.Channel == ChannelType.WhatsApp)
-            .OrderByDescending(x => x.CreatedAtUtc)
-            .ToListAsync(ct);
-
-        var upserted = 0;
-        foreach (var t in templates)
-        {
-            var existing = await controlDb.TemplateLibraryItems
-                .FirstOrDefaultAsync(x => x.Name == t.Name && x.Language == t.Language, ct);
-            if (existing is null)
-            {
-                controlDb.TemplateLibraryItems.Add(new TemplateLibraryItem
-                {
-                    Id = Guid.NewGuid(),
-                    Name = t.Name,
-                    Category = (t.Category ?? "UTILITY").ToUpperInvariant(),
-                    Language = t.Language ?? "en",
-                    HeaderType = t.HeaderType ?? "none",
-                    HeaderText = t.HeaderText ?? string.Empty,
-                    Body = t.Body ?? string.Empty,
-                    FooterText = t.FooterText ?? string.Empty,
-                    ButtonsJson = t.ButtonsJson ?? string.Empty,
-                    Source = "meta_sync",
-                    SourceTenantSlug = tenantSlug,
-                    CreatedAtUtc = DateTime.UtcNow,
-                    UpdatedAtUtc = DateTime.UtcNow
-                });
-                upserted++;
-            }
-            else
-            {
-                existing.Category = (t.Category ?? "UTILITY").ToUpperInvariant();
-                existing.HeaderType = t.HeaderType ?? "none";
-                existing.HeaderText = t.HeaderText ?? string.Empty;
-                existing.Body = t.Body ?? string.Empty;
-                existing.FooterText = t.FooterText ?? string.Empty;
-                existing.ButtonsJson = t.ButtonsJson ?? string.Empty;
-                existing.Source = "meta_sync";
-                existing.SourceTenantSlug = tenantSlug;
-                existing.UpdatedAtUtc = DateTime.UtcNow;
-                upserted++;
-            }
-        }
-
-        await controlDb.SaveChangesAsync(ct);
-        return Ok(new
-        {
-            synced = true,
-            sourceCount = templates.Count,
-            upserted
-        });
-    }
 }

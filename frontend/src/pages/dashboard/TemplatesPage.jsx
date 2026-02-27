@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Plus, Filter, MoreVertical, FileText, CheckCircle, XCircle, Clock, AlertCircle, Trash2, MessageSquare, Send, Image as ImageIcon, Video, Paperclip, RefreshCw, Upload } from "lucide-react";
+import { Search, Plus, Filter, MoreVertical, FileText, CheckCircle, XCircle, Clock, AlertCircle, Trash2, MessageSquare, Send, Image as ImageIcon, Video, Paperclip, Upload } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPostForm, listSmsSenders } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -35,9 +35,13 @@ const initialDraft = {
 function normalizeListPayload(payload) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.items?.$values)) return payload.items.$values;
   if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.data?.$values)) return payload.data.$values;
   if (Array.isArray(payload?.templates)) return payload.templates;
+  if (Array.isArray(payload?.templates?.$values)) return payload.templates.$values;
   if (Array.isArray(payload?.results)) return payload.results;
+  if (Array.isArray(payload?.results?.$values)) return payload.results.$values;
   if (Array.isArray(payload?.$values)) return payload.$values;
   return [];
 }
@@ -179,15 +183,10 @@ const TemplatesPage = () => {
   const tab = searchParams.get("tab") === "sms" ? "sms" : "whatsapp";
 
   const [templates, setTemplates] = useState([]);
-  const [libraryItems, setLibraryItems] = useState([]);
-  const [libraryError, setLibraryError] = useState("");
-  const [librarySearch, setLibrarySearch] = useState("");
-  const [libraryCategory, setLibraryCategory] = useState("ALL");
   const [smsSenders, setSmsSenders] = useState([]);
   const [draft, setDraft] = useState(initialDraft);
   const [tableSearch, setTableSearch] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [syncingLibrary, setSyncingLibrary] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
@@ -211,24 +210,10 @@ const TemplatesPage = () => {
       ]);
       setTemplates(normalizeListPayload(tpl));
       setSmsSenders(senders || []);
-      try {
-        const lib = await apiGet("/api/templates/library");
-        setLibraryItems(normalizeListPayload(lib));
-        setLibraryError("");
-      } catch (e) {
-        setLibraryItems([]);
-        const message = e?.message || "";
-        if (message.toLowerCase().includes("unexpected end of json input")) {
-          setLibraryError("");
-        } else {
-          setLibraryError(message || "Library fetch failed");
-        }
-      }
     } catch (e) {
       setTemplates([]);
       setSmsSenders([]);
-      setLibraryItems([]);
-      setLibraryError(e?.message || "Data load failed");
+      toast.error(e?.message || "Template list load failed");
     }
   };
 
@@ -253,16 +238,6 @@ const TemplatesPage = () => {
       return String(nameValue(template)).toLowerCase().includes(q) || String(bodyValue(template)).toLowerCase().includes(q);
     });
   }, [templates, tab, tableSearch]);
-
-  const filteredLibraryItems = useMemo(() => {
-    const q = librarySearch.trim().toLowerCase();
-    return libraryItems.filter((x) => {
-      const byCategory = libraryCategory === "ALL" || String(categoryValue(x) || "").toUpperCase() === libraryCategory;
-      if (!byCategory) return false;
-      if (!q) return true;
-      return String(nameValue(x)).toLowerCase().includes(q) || String(bodyValue(x)).toLowerCase().includes(q);
-    });
-  }, [libraryItems, librarySearch, libraryCategory]);
 
   const validateDraft = () => {
     if (!draft.name.trim()) return "Template name is required.";
@@ -354,24 +329,6 @@ const TemplatesPage = () => {
     }
   };
 
-  const applyLibraryTemplate = (item) => {
-    setDraft((p) => ({
-      ...p,
-      name: `${nameValue(item)}_custom`.toLowerCase().replace(/[^a-z0-9_]/g, "_"),
-      channel: "whatsapp",
-      category: String(categoryValue(item) || "UTILITY").toUpperCase(),
-      language: languageValue(item),
-      headerType: item?.headerType || item?.HeaderType || "none",
-      headerText: item?.headerText || item?.HeaderText || "",
-      body: bodyValue(item),
-      footerText: item?.footerText || item?.FooterText || "",
-      buttonsJson: item?.buttonsJson || item?.ButtonsJson || "",
-      headerMediaId: "",
-      headerMediaName: "",
-    }));
-    setShowCreateDialog(true);
-  };
-
   const applyWizardPreset = (preset) => {
     if (preset === "utility") {
       setDraft((p) => ({
@@ -402,19 +359,6 @@ const TemplatesPage = () => {
         buttonsJson: "[]",
       }));
       setWizardStep(3);
-    }
-  };
-
-  const syncLibrary = async () => {
-    try {
-      setSyncingLibrary(true);
-      const out = await apiPost("/api/templates/library/sync", {});
-      toast.success(`Template library synced. Meta templates: ${out?.sourceCount ?? 0}, upserted: ${out?.upserted ?? 0}`);
-      await loadAll();
-    } catch (e) {
-      toast.error(e?.message || "Library sync failed.");
-    } finally {
-      setSyncingLibrary(false);
     }
   };
 
@@ -533,10 +477,6 @@ const TemplatesPage = () => {
             {tab === "whatsapp" && (
               <>
                 <Button variant="outline" onClick={syncWhatsAppTemplates}>Sync Meta</Button>
-                <Button variant="outline" onClick={syncLibrary} disabled={syncingLibrary}>
-                  <RefreshCw className={`w-4 h-4 mr-2 ${syncingLibrary ? "animate-spin" : ""}`} />
-                  Sync Library
-                </Button>
               </>
             )}
             <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
@@ -731,58 +671,6 @@ const TemplatesPage = () => {
           ))}
         </div>
 
-        {tab === "whatsapp" && (
-          <Card className="border-slate-200">
-            <CardHeader>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-slate-900">Shared Template Library</div>
-                  <div className="text-xs text-slate-500">Synced library is saved in DB and visible across all projects.</div>
-                </div>
-                <div className="flex gap-2">
-                  <Select value={libraryCategory} onValueChange={setLibraryCategory}>
-                    <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ALL">All</SelectItem>
-                      <SelectItem value="MARKETING">Marketing</SelectItem>
-                      <SelectItem value="UTILITY">Utility</SelectItem>
-                      <SelectItem value="AUTHENTICATION">Authentication</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input placeholder="Search library" value={librarySearch} onChange={(e) => setLibrarySearch(e.target.value)} className="w-52" />
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {libraryError ? (
-                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                  {libraryError}
-                </div>
-              ) : null}
-              {filteredLibraryItems.length === 0 ? (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                  No templates in shared library yet. Click <b>Sync Library</b> to fetch from Meta and save to DB.
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {filteredLibraryItems.slice(0, 12).map((item) => (
-                  <div key={idValue(item) || nameValue(item)} className="rounded-xl border border-slate-200 p-3 bg-white">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="font-medium text-slate-900 truncate">{nameValue(item)}</div>
-                      {getCategoryBadge(categoryValue(item))}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1 line-clamp-2">{bodyValue(item)}</div>
-                    <div className="mt-3 flex justify-end">
-                      <Button size="sm" variant="outline" onClick={() => applyLibraryTemplate(item)}>Use template</Button>
-                    </div>
-                  </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
         <Card className="border-slate-200">
           <CardHeader>
             {tab === "sms" && (
@@ -816,7 +704,13 @@ const TemplatesPage = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                  {filteredTemplates.map((template) => (
+                {filteredTemplates.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-slate-500">
+                      No project templates found. Click <b>Sync Meta</b> to fetch WhatsApp templates for this project.
+                    </TableCell>
+                  </TableRow>
+                ) : filteredTemplates.map((template) => (
                   <TableRow key={idValue(template) || nameValue(template)} className="table-row-hover">
                     <TableCell>
                       <div>
