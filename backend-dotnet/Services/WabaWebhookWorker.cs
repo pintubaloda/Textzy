@@ -757,7 +757,7 @@ public class WabaWebhookWorker(
     {
         var flows = await tenantDb.AutomationFlows
             .AsNoTracking()
-            .Where(x => x.TenantId == tenantId && x.IsActive && x.PublishedVersionId != null && x.Channel == "waba")
+            .Where(x => x.TenantId == tenantId && x.IsActive && (x.PublishedVersionId != null || x.CurrentVersionId != null))
             .ToListAsync(ct);
         if (flows.Count == 0) return;
 
@@ -767,6 +767,7 @@ public class WabaWebhookWorker(
 
         foreach (var flow in flows)
         {
+            if (!string.Equals((flow.Channel ?? "waba").Trim(), "waba", StringComparison.OrdinalIgnoreCase)) continue;
             if (!TriggerMatches(flow, inbound.MessageText)) continue;
             var idempotencyKey = $"auto:{flow.Id}:{inbound.MessageId}";
             var existing = await tenantDb.AutomationRuns
@@ -774,9 +775,11 @@ public class WabaWebhookWorker(
                 .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FlowId == flow.Id && x.IdempotencyKey == idempotencyKey, ct);
             if (existing is not null) continue;
 
+            var targetVersionId = flow.PublishedVersionId ?? flow.CurrentVersionId;
+            if (!targetVersionId.HasValue) continue;
             var version = await tenantDb.AutomationFlowVersions
                 .AsNoTracking()
-                .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FlowId == flow.Id && x.Id == flow.PublishedVersionId, ct);
+                .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FlowId == flow.Id && x.Id == targetVersionId.Value, ct);
             if (version is null) continue;
 
             var payload = BuildPayload(inbound);
