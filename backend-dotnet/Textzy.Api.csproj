@@ -16,7 +16,7 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <PackageReference Include="StackExchange.Redis" Version="2.8.24" />
     <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
-    <PackageReference Include="AWSSDK.SQS" Version="3.7.405.15" />
+    <PackageReference Include="AWSSDK.SQS" Version="3.7.500" />
     <PackageReference Include="WebPush" Version="1.0.12" />
     <PackageReference Include="Google.Apis.Auth" Version="1.68.0" />
   </ItemGroup>
