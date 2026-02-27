@@ -45,6 +45,8 @@ import { playNotificationTone, isNotificationAudioUnlocked, unlockNotificationAu
 import { toast } from "sonner";
 
 const NOTIFICATION_STYLE_KEY = "textzy.inbox.notificationStyle";
+const NOTIFY_LEADER_KEY = "textzy.inbox.notifyLeader";
+const NOTIFY_LEADER_TTL_MS = 15000;
 const FULL_EMOJI_SET = [
   "😀","😁","😂","🤣","😃","😄","😅","😆","😉","😊","🙂","🙃","😍","🥰","😘","😗","😙","😚","😋","😛","😜","🤪","🤗","🤩","🤔",
   "😐","😶","🙄","😏","😣","😥","😮","🤐","😯","😪","😫","🥱","😴","😌","😛","🫡","🤝","👍","👎","👏","🙌","🙏","💪","🔥","✅",
@@ -225,6 +227,13 @@ const InboxPage = () => {
   const voiceChunksRef = useRef([]);
   const voiceStreamRef = useRef(null);
   const recordingTimerRef = useRef(null);
+  const tabIdRef = useRef(`tab_${Math.random().toString(36).slice(2)}_${Date.now()}`);
+  const isNotifyLeaderRef = useRef(false);
+  const leaderIntervalRef = useRef(null);
+  const heartbeatIntervalRef = useRef(null);
+  const broadcastRef = useRef(null);
+  const seenRealtimeEventsRef = useRef(new Set());
+  const signalRConnectionRef = useRef(null);
 
   const mapConversation = (x) => ({
     id: x.id,
@@ -321,12 +330,69 @@ const InboxPage = () => {
 
   const playNotificationSound = useCallback((frequency = 880) => {
     try {
+      if (!isNotifyLeaderRef.current) return;
+      if (typeof document !== "undefined" && document.hidden) return;
       if (notificationStyle === "off") return;
       playNotificationTone(notificationStyle, frequency);
     } catch {
       // Ignore audio failures (autoplay policy / unsupported browser)
     }
   }, [notificationStyle]);
+
+  const acquireNotifyLeadership = useCallback(() => {
+    const now = Date.now();
+    const own = { tabId: tabIdRef.current, expiresAt: now + NOTIFY_LEADER_TTL_MS };
+    try {
+      const raw = localStorage.getItem(NOTIFY_LEADER_KEY);
+      const current = raw ? JSON.parse(raw) : null;
+      const expired = !current || Number(current.expiresAt || 0) <= now;
+      if (expired || current.tabId === tabIdRef.current) {
+        localStorage.setItem(NOTIFY_LEADER_KEY, JSON.stringify(own));
+        isNotifyLeaderRef.current = true;
+        return;
+      }
+      isNotifyLeaderRef.current = false;
+    } catch {
+      isNotifyLeaderRef.current = true;
+    }
+  }, []);
+
+  const emitCrossTabEvent = useCallback((kind, key) => {
+    if (!broadcastRef.current || !key) return;
+    try {
+      broadcastRef.current.postMessage({ kind, key, tabId: tabIdRef.current, at: Date.now() });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const markRealtimeEventSeen = useCallback((key) => {
+    if (!key) return false;
+    const cache = seenRealtimeEventsRef.current;
+    if (cache.has(key)) return true;
+    cache.add(key);
+    if (cache.size > 800) {
+      const first = cache.values().next().value;
+      if (first) cache.delete(first);
+    }
+    return false;
+  }, []);
+
+  const notifyDesktop = useCallback((title, body, tag) => {
+    try {
+      if (!isNotifyLeaderRef.current) return;
+      if (typeof document !== "undefined" && !document.hidden) return;
+      if (typeof Notification === "undefined") return;
+      if (Notification.permission !== "granted") return;
+      new Notification(title || "New message", {
+        body: body || "You have a new message",
+        tag: tag || "textzy-inbox",
+        renotify: false,
+      });
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     meEmailRef.current = String(me?.email || "").toLowerCase();
@@ -486,6 +552,40 @@ const InboxPage = () => {
       }
     };
   }, []);
+
+  useEffect(() => {
+    acquireNotifyLeadership();
+    try {
+      if (typeof BroadcastChannel !== "undefined") {
+        const ch = new BroadcastChannel("textzy_inbox_notifications");
+        ch.onmessage = (evt) => {
+          const data = evt?.data || {};
+          const key = String(data?.key || "");
+          if (!key) return;
+          if (String(data?.tabId || "") === tabIdRef.current) return;
+          markRealtimeEventSeen(key);
+        };
+        broadcastRef.current = ch;
+      }
+    } catch {
+      // ignore
+    }
+    leaderIntervalRef.current = setInterval(acquireNotifyLeadership, 5000);
+    return () => {
+      if (leaderIntervalRef.current) clearInterval(leaderIntervalRef.current);
+      try {
+        if (isNotifyLeaderRef.current) {
+          const raw = localStorage.getItem(NOTIFY_LEADER_KEY);
+          const current = raw ? JSON.parse(raw) : null;
+          if (current?.tabId === tabIdRef.current) localStorage.removeItem(NOTIFY_LEADER_KEY);
+        }
+      } catch {
+        // ignore
+      }
+      try { broadcastRef.current?.close?.(); } catch {}
+      broadcastRef.current = null;
+    };
+  }, [acquireNotifyLeadership, markRealtimeEventSeen]);
 
   const handleAttachFaq = (item) => {
     if (!item?.answer) return;
@@ -707,28 +807,43 @@ const InboxPage = () => {
       })
       .withAutomaticReconnect()
       .build();
+    signalRConnectionRef.current = connection;
 
     const joinRoom = () => connection.invoke("JoinTenantRoom", s.tenantSlug).catch(() => {});
     const activeConversationId = () => selectedChatIdRef.current;
+    const markState = () => {
+      const method = typeof document !== "undefined" && document.hidden ? "SetUserInactive" : "SetUserActive";
+      connection.invoke(method, s.tenantSlug, activeConversationId()).catch(() => {});
+    };
 
     const refreshMessageViews = () => {
       loadConversations();
       const activeId = activeConversationId();
       if (activeId) loadThread(activeId);
     };
-    connection.on("message.queued", () => {
+    connection.on("message.queued", (evt) => {
+      const key = `queued:${evt?.id || evt?.recipient || "x"}:${evt?.createdAtUtc || ""}`;
+      if (markRealtimeEventSeen(key)) return;
+      emitCrossTabEvent("message.queued", key);
       refreshMessageViews();
     });
-    connection.on("message.sent", () => {
+    connection.on("message.sent", (evt) => {
+      const key = `sent:${evt?.id || evt?.recipient || "x"}:${evt?.createdAtUtc || ""}`;
+      if (markRealtimeEventSeen(key)) return;
+      emitCrossTabEvent("message.sent", key);
       refreshMessageViews();
       playNotificationSoundRef.current?.(980);
     });
-    connection.on("webhook.inbound", () => {
+    connection.on("webhook.inbound", (evt) => {
+      const key = `inbound:${evt?.phoneNumberId || "x"}:${evt?.inboundCount || 0}:${Date.now() / 1000 | 0}`;
+      if (markRealtimeEventSeen(key)) return;
+      emitCrossTabEvent("webhook.inbound", key);
       loadConversations();
       const activeId = activeConversationId();
       if (activeId) loadThread(activeId);
       loadSla();
       playNotificationSoundRef.current?.(760);
+      notifyDesktop("New WhatsApp message", "You received a new customer message.", `inbound:${evt?.phoneNumberId || "tenant"}`);
     });
     connection.on("conversation.assigned", () => loadConversations());
     connection.on("conversation.transferred", () => loadConversations());
@@ -739,6 +854,7 @@ const InboxPage = () => {
     });
     connection.onreconnected(() => {
       joinRoom();
+      markState();
       loadConversations();
       const activeId = activeConversationId();
       if (activeId) loadThread(activeId);
@@ -769,6 +885,11 @@ const InboxPage = () => {
         if (disposed) return connection.stop().catch(() => {});
         return joinRoom().then(() => {
           joined = true;
+          markState();
+          if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+          heartbeatIntervalRef.current = setInterval(() => {
+            connection.invoke("Heartbeat", s.tenantSlug, activeConversationId()).catch(() => {});
+          }, 30000);
         });
       })
       .catch(() => {
@@ -778,7 +899,12 @@ const InboxPage = () => {
 
     return () => {
       disposed = true;
+      signalRConnectionRef.current = null;
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", markState);
+      }
       if (joined) {
         connection.invoke("LeaveTenantRoom", s.tenantSlug).catch(() => {});
       }
@@ -788,7 +914,33 @@ const InboxPage = () => {
         }
       });
     };
-  }, [loadConversations, loadNotes, loadSla, loadThread]);
+  }, [emitCrossTabEvent, loadConversations, loadNotes, loadSla, loadThread, markRealtimeEventSeen, notifyDesktop]);
+
+  useEffect(() => {
+    const conn = signalRConnectionRef.current;
+    const s = getSession();
+    if (!conn || !s?.tenantSlug) return;
+    conn.invoke(typeof document !== "undefined" && document.hidden ? "SetUserInactive" : "SetUserActive", s.tenantSlug, selectedChatIdRef.current || "")
+      .catch(() => {});
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    const handler = () => {
+      const conn = signalRConnectionRef.current;
+      const s = getSession();
+      if (!conn || !s?.tenantSlug) return;
+      conn.invoke(document.hidden ? "SetUserInactive" : "SetUserActive", s.tenantSlug, selectedChatIdRef.current || "")
+        .catch(() => {});
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handler);
+    }
+    return () => {
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handler);
+      }
+    };
+  }, []);
 
   const emitTyping = useCallback((isTyping) => {
     if (!selectedChat?.id) return;
