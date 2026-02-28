@@ -845,6 +845,30 @@ public class WabaWebhookWorker(
             if (string.IsNullOrWhiteSpace(startNodeId) && string.Equals(type, "start", StringComparison.OrdinalIgnoreCase))
                 startNodeId = id;
         }
+        if (root.TryGetProperty("edges", out var edgesNode) && edgesNode.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var edge in edgesNode.EnumerateArray())
+            {
+                var from = edge.TryGetProperty("from", out var fromNode) ? fromNode.ToString() : string.Empty;
+                var to = edge.TryGetProperty("to", out var toNode) ? toNode.ToString() : string.Empty;
+                if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to)) continue;
+                if (!nodes.TryGetValue(from, out var source)) continue;
+                var label = edge.TryGetProperty("label", out var labelNode)
+                    ? (labelNode.ToString() ?? string.Empty).Trim().ToLowerInvariant()
+                    : string.Empty;
+                if (label is "true")
+                {
+                    if (string.IsNullOrWhiteSpace(source.OnTrue)) source.OnTrue = to;
+                    continue;
+                }
+                if (label is "false")
+                {
+                    if (string.IsNullOrWhiteSpace(source.OnFalse)) source.OnFalse = to;
+                    continue;
+                }
+                if (string.IsNullOrWhiteSpace(source.Next)) source.Next = to;
+            }
+        }
         if (string.IsNullOrWhiteSpace(startNodeId) && nodes.Count > 0) startNodeId = nodes.Keys.First();
         return (nodes, startNodeId);
     }
@@ -1051,15 +1075,16 @@ public class WabaWebhookWorker(
                         log.Add($"missing-node:{cursor}");
                         break;
                     }
-                    var nodeType = (node.Type ?? string.Empty).Trim().ToLowerInvariant();
+                    var nodeType = (node.Type ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_");
                     var next = node.Next;
                     if (nodeType is "start")
                     {
                         next = node.Next;
                     }
-                    else if (nodeType is "text" or "send_text" or "bot_reply" or "buttons" or "list" or "cta_url" or "media")
+                    else if (nodeType is "text" or "send_text" or "bot_reply" or "botreply" or "buttons" or "list" or "cta_url" or "media")
                     {
                         var recipient = ResolveValue(node.Config, payload, "recipient");
+                        if (string.IsNullOrWhiteSpace(recipient)) recipient = inbound.From;
                         var body = ResolveNodeReplyText(nodeType, node.Config, payload);
                         if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(body))
                         {
@@ -1070,6 +1095,19 @@ public class WabaWebhookWorker(
                                 Channel = ChannelType.WhatsApp,
                                 IdempotencyKey = $"auto-msg:{flow.Id}:{inbound.MessageId}:{node.Id}"
                             }, ct);
+                        }
+                        else
+                        {
+                            controlDb.AuditLogs.Add(new AuditLog
+                            {
+                                Id = Guid.NewGuid(),
+                                TenantId = tenantId,
+                                ActorUserId = Guid.Empty,
+                                Action = "waba.workflow.send_skipped",
+                                Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; nodeType={nodeType}; reason=empty_recipient_or_body",
+                                CreatedAtUtc = DateTime.UtcNow
+                            });
+                            await controlDb.SaveChangesAsync(ct);
                         }
                         next = node.OnSuccess ?? node.Next;
                     }
@@ -1131,6 +1169,16 @@ public class WabaWebhookWorker(
                 run.Log = string.Join('\n', log);
                 run.TraceJson = JsonSerializer.Serialize(trace);
                 run.CompletedAtUtc = DateTime.UtcNow;
+                controlDb.AuditLogs.Add(new AuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenantId,
+                    ActorUserId = Guid.Empty,
+                    Action = "waba.workflow.execution_failed",
+                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; error={redactor.RedactText(ex.Message)}",
+                    CreatedAtUtc = DateTime.UtcNow
+                });
+                await controlDb.SaveChangesAsync(ct);
             }
             await tenantDb.SaveChangesAsync(ct);
         }
