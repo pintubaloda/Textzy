@@ -838,7 +838,7 @@ public class WabaWebhookWorker(
                 OnSuccess = item.TryGetProperty("onSuccess", out var onSuccessNode) ? onSuccessNode.ToString() : string.Empty,
                 OnFailure = item.TryGetProperty("onFailure", out var onFailureNode) ? onFailureNode.ToString() : string.Empty,
                 Config = item.TryGetProperty("config", out var cfgNode) && cfgNode.ValueKind == JsonValueKind.Object
-                    ? cfgNode.EnumerateObject().ToDictionary(x => x.Name, x => (object?)x.Value, StringComparer.OrdinalIgnoreCase)
+                    ? cfgNode.EnumerateObject().ToDictionary(x => x.Name, x => ToClrValue(x.Value), StringComparer.OrdinalIgnoreCase)
                     : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             };
             nodes[id] = node;
@@ -871,6 +871,24 @@ public class WabaWebhookWorker(
         }
         if (string.IsNullOrWhiteSpace(startNodeId) && nodes.Count > 0) startNodeId = nodes.Keys.First();
         return (nodes, startNodeId);
+    }
+
+    private static object? ToClrValue(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.Object => element.EnumerateObject()
+                .ToDictionary(x => x.Name, x => ToClrValue(x.Value), StringComparer.OrdinalIgnoreCase),
+            JsonValueKind.Array => element.EnumerateArray().Select(ToClrValue).ToList(),
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Number => element.TryGetInt64(out var l) ? l :
+                                    element.TryGetDecimal(out var d) ? d :
+                                    element.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            _ => element.ToString()
+        };
     }
 
     private static bool EvaluateCondition(Dictionary<string, object?> config, Dictionary<string, object?> payload)
@@ -1155,9 +1173,18 @@ public class WabaWebhookWorker(
                         var languageCode = ResolveValue(node.Config, payload, "languageCode", "language");
                         var body = ResolveValue(node.Config, payload, "body", "message");
                         var paramValues = new List<string>();
-                        if (node.Config.TryGetValue("parameters", out var p) && p is JsonElement pElem && pElem.ValueKind == JsonValueKind.Array)
+                        if (node.Config.TryGetValue("parameters", out var p))
                         {
-                            foreach (var item in pElem.EnumerateArray()) paramValues.Add(Interpolate(item.ToString(), payload));
+                            if (p is IEnumerable<object?> arr)
+                            {
+                                foreach (var item in arr)
+                                    paramValues.Add(Interpolate(item?.ToString() ?? string.Empty, payload));
+                            }
+                            else if (p is JsonElement pElem && pElem.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var item in pElem.EnumerateArray())
+                                    paramValues.Add(Interpolate(item.ToString(), payload));
+                            }
                         }
                         if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(templateName))
                         {
