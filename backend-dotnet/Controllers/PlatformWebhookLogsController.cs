@@ -17,7 +17,9 @@ public class PlatformWebhookLogsController(ControlDbContext db, AuthContext auth
         if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
         limit = Math.Clamp(limit, 1, 500);
 
-        var auditQuery = db.AuditLogs.Where(x => x.Action.Contains("webhook"));
+        var auditQuery = db.AuditLogs.Where(x =>
+            x.Action.Contains("webhook") ||
+            x.Action == "waba.workflow.trigger_eval");
         if (!string.IsNullOrWhiteSpace(provider))
             auditQuery = auditQuery.Where(x => x.Details.Contains($"provider={provider}"));
 
