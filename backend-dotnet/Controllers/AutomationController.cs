@@ -722,12 +722,33 @@ public class AutomationController(
         var config = node.config ?? new Dictionary<string, object?>();
         var nodeType = (node.type ?? string.Empty).Trim().ToLowerInvariant();
 
-        if (nodeType is "text" or "send_text")
+        string resolveReplyText()
+        {
+            if (nodeType == "bot_reply")
+            {
+                var replyMode = ResolveValue(config, payload, "replyMode");
+                if (string.Equals(replyMode, "media", StringComparison.OrdinalIgnoreCase))
+                {
+                    var mediaText = ResolveValue(config, payload, "mediaText", "body", "message");
+                    if (!string.IsNullOrWhiteSpace(mediaText)) return mediaText;
+                }
+                var simpleText = ResolveValue(config, payload, "simpleText", "body", "message", "question", "prompt");
+                if (!string.IsNullOrWhiteSpace(simpleText)) return simpleText;
+            }
+            if (nodeType is "buttons" or "list" or "cta_url" or "media")
+            {
+                var uiBody = ResolveValue(config, payload, "body", "message", "question", "prompt");
+                if (!string.IsNullOrWhiteSpace(uiBody)) return uiBody;
+            }
+            return ResolveValue(config, payload, "body", "message", "question", "prompt");
+        }
+
+        if (nodeType is "text" or "send_text" or "bot_reply" or "buttons" or "list" or "cta_url" or "media")
         {
             if (mode == "live")
             {
                 var recipient = ResolveValue(config, payload, "recipient", "recipient");
-                var body = ResolveValue(config, payload, "body", "message");
+                var body = resolveReplyText();
                 if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(body))
                 {
                     await messaging.EnqueueAsync(new SendMessageRequest

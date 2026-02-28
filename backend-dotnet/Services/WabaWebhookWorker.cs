@@ -841,6 +841,29 @@ public class WabaWebhookWorker(
         return string.Empty;
     }
 
+    private static string ResolveNodeReplyText(string nodeType, Dictionary<string, object?> config, Dictionary<string, object?> payload)
+    {
+        if (nodeType == "bot_reply")
+        {
+            var replyMode = ResolveValue(config, payload, "replyMode");
+            if (string.Equals(replyMode, "media", StringComparison.OrdinalIgnoreCase))
+            {
+                var mediaText = ResolveValue(config, payload, "mediaText", "body", "message");
+                if (!string.IsNullOrWhiteSpace(mediaText)) return mediaText;
+            }
+            var simpleText = ResolveValue(config, payload, "simpleText", "body", "message", "question", "prompt");
+            if (!string.IsNullOrWhiteSpace(simpleText)) return simpleText;
+        }
+
+        if (nodeType is "buttons" or "list" or "cta_url" or "media")
+        {
+            var body = ResolveValue(config, payload, "body", "message", "question", "prompt");
+            if (!string.IsNullOrWhiteSpace(body)) return body;
+        }
+
+        return ResolveValue(config, payload, "body", "message", "question", "prompt");
+    }
+
     private async Task RunTriggeredAutomationsAsync(
         IServiceProvider sp,
         TenantDbContext tenantDb,
@@ -915,10 +938,10 @@ public class WabaWebhookWorker(
                     {
                         next = node.Next;
                     }
-                    else if (nodeType is "text" or "send_text")
+                    else if (nodeType is "text" or "send_text" or "bot_reply" or "buttons" or "list" or "cta_url" or "media")
                     {
                         var recipient = ResolveValue(node.Config, payload, "recipient");
-                        var body = ResolveValue(node.Config, payload, "body", "message");
+                        var body = ResolveNodeReplyText(nodeType, node.Config, payload);
                         if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(body))
                         {
                             await messaging.EnqueueAsync(new DTOs.SendMessageRequest
