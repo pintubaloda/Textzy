@@ -119,7 +119,7 @@ public class InboxController(
             };
         }).ToList();
 
-        var nextCursor = data.Count == safeTake ? data.Last().LastMessageAtUtc?.ToString("O") : string.Empty;
+        var nextCursor = data.Count == safeTake ? data.Last().LastMessageAtUtc.ToString("O") : string.Empty;
         if (!string.IsNullOrWhiteSpace(nextCursor)) Response.Headers["X-Next-Cursor"] = nextCursor;
         var json = JsonSerializer.Serialize(data);
         await cache.SetStringAsync(cacheKey, json, new DistributedCacheEntryOptions
