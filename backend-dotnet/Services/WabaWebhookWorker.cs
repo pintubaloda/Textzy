@@ -688,58 +688,101 @@ public class WabaWebhookWorker(
         return activeMap.TryGetValue(email.Trim().ToLowerInvariant(), out var isActive) && isActive;
     }
 
-    private static bool TriggerMatches(AutomationFlow flow, string inboundText)
+    private static string NormalizeMatchText(string value)
+    {
+        var s = (value ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+        var chars = s.Where(c => char.IsLetterOrDigit(c) || char.IsWhiteSpace(c)).ToArray();
+        return new string(chars).Trim();
+    }
+
+    private static bool MatchByMode(string text, string keyword, string mode)
+    {
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(keyword)) return false;
+        var t = NormalizeMatchText(text);
+        var k = NormalizeMatchText(keyword);
+        if (string.IsNullOrWhiteSpace(t) || string.IsNullOrWhiteSpace(k)) return false;
+        return mode switch
+        {
+            "exact" => string.Equals(t, k, StringComparison.OrdinalIgnoreCase),
+            "starts" or "starts_with" => t.StartsWith(k, StringComparison.OrdinalIgnoreCase),
+            _ => t.Contains(k, StringComparison.OrdinalIgnoreCase)
+        };
+    }
+
+    private static bool TriggerMatches(AutomationFlow flow, string inboundText, string? definitionJson = null)
     {
         var triggerType = (flow.TriggerType ?? string.Empty).Trim().ToLowerInvariant();
         if (triggerType is not ("keyword" or "intent")) return false;
-        var text = (inboundText ?? string.Empty).Trim().ToLowerInvariant();
+        var text = (inboundText ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(text)) return false;
 
-        try
+        static bool TryMatchFromJson(string json, string inbound, out bool matched)
         {
-            using var cfgDoc = JsonDocument.Parse(string.IsNullOrWhiteSpace(flow.TriggerConfigJson) ? "{}" : flow.TriggerConfigJson);
+            matched = false;
+            using var cfgDoc = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
             var root = cfgDoc.RootElement;
+            var mode = root.TryGetProperty("match", out var modeNode)
+                ? (modeNode.GetString() ?? string.Empty).Trim().ToLowerInvariant()
+                : "contains";
+
             if (root.TryGetProperty("keywords", out var keywordsNode) && keywordsNode.ValueKind == JsonValueKind.Array)
             {
                 foreach (var k in keywordsNode.EnumerateArray())
                 {
-                    var keyword = (k.ToString() ?? string.Empty).Trim().ToLowerInvariant();
-                    if (!string.IsNullOrWhiteSpace(keyword) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                    if (MatchByMode(inbound, k.ToString() ?? string.Empty, mode))
+                    {
+                        matched = true;
                         return true;
+                    }
                 }
             }
             if (root.TryGetProperty("keywords", out var keywordsCsvNode) && keywordsCsvNode.ValueKind == JsonValueKind.String)
             {
                 foreach (var raw in (keywordsCsvNode.GetString() ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 {
-                    var keyword = raw.Trim().ToLowerInvariant();
-                    if (!string.IsNullOrWhiteSpace(keyword) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                    if (MatchByMode(inbound, raw, mode))
+                    {
+                        matched = true;
                         return true;
+                    }
                 }
             }
             if (root.TryGetProperty("keyword", out var keywordNode))
             {
-                var keyword = (keywordNode.ToString() ?? string.Empty).Trim().ToLowerInvariant();
-                if (!string.IsNullOrWhiteSpace(keyword) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                if (MatchByMode(inbound, keywordNode.ToString() ?? string.Empty, mode))
+                {
+                    matched = true;
                     return true;
+                }
             }
             if (root.TryGetProperty("triggerKeywords", out var triggerKeywordsNode) && triggerKeywordsNode.ValueKind == JsonValueKind.Array)
             {
                 foreach (var k in triggerKeywordsNode.EnumerateArray())
                 {
-                    var keyword = (k.ToString() ?? string.Empty).Trim().ToLowerInvariant();
-                    if (!string.IsNullOrWhiteSpace(keyword) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                    if (MatchByMode(inbound, k.ToString() ?? string.Empty, mode))
+                    {
+                        matched = true;
                         return true;
+                    }
                 }
             }
-            if (root.TryGetProperty("match", out var matchNode))
+            return true;
+        }
+
+        try
+        {
+            if (TryMatchFromJson(flow.TriggerConfigJson, text, out var byFlow) && byFlow) return true;
+
+            // Fallback: some flows keep trigger keywords inside definitionJson.trigger
+            if (!string.IsNullOrWhiteSpace(definitionJson))
             {
-                var match = (matchNode.GetString() ?? string.Empty).Trim().ToLowerInvariant();
-                return match switch
+                using var defDoc = JsonDocument.Parse(definitionJson);
+                var root = defDoc.RootElement;
+                if (root.TryGetProperty("trigger", out var triggerNode))
                 {
-                    "exact" => root.TryGetProperty("keyword", out var ek) && string.Equals(text, (ek.ToString() ?? string.Empty).Trim().ToLowerInvariant(), StringComparison.OrdinalIgnoreCase),
-                    _ => false
-                };
+                    if (TryMatchFromJson(triggerNode.GetRawText(), text, out var byDef) && byDef) return true;
+                }
             }
             return false;
         }
@@ -885,20 +928,20 @@ public class WabaWebhookWorker(
 
         foreach (var flow in flows)
         {
-            if (!string.Equals((flow.Channel ?? "waba").Trim(), "waba", StringComparison.OrdinalIgnoreCase)) continue;
-            if (!TriggerMatches(flow, inbound.MessageText)) continue;
-            var idempotencyKey = $"auto:{flow.Id}:{inbound.MessageId}";
-            var existing = await tenantDb.AutomationRuns
-                .AsNoTracking()
-                .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FlowId == flow.Id && x.IdempotencyKey == idempotencyKey, ct);
-            if (existing is not null) continue;
-
             var targetVersionId = flow.PublishedVersionId ?? flow.CurrentVersionId;
             if (!targetVersionId.HasValue) continue;
             var version = await tenantDb.AutomationFlowVersions
                 .AsNoTracking()
                 .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FlowId == flow.Id && x.Id == targetVersionId.Value, ct);
             if (version is null) continue;
+            if (!string.Equals((flow.Channel ?? "waba").Trim(), "waba", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!TriggerMatches(flow, inbound.MessageText, version.DefinitionJson)) continue;
+
+            var idempotencyKey = $"auto:{flow.Id}:{inbound.MessageId}";
+            var existing = await tenantDb.AutomationRuns
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FlowId == flow.Id && x.IdempotencyKey == idempotencyKey, ct);
+            if (existing is not null) continue;
 
             var payload = BuildPayload(inbound);
             var run = new AutomationRun
