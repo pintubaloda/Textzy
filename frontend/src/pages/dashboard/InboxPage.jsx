@@ -257,50 +257,63 @@ const InboxPage = () => {
   const faviconBlinkTimerRef = useRef(null);
   const faviconBlinkStateRef = useRef(false);
 
-  const mapConversation = (x) => ({
-    id: x.id,
-    name: x.customerName || x.customerPhone,
-    phone: x.customerPhone,
-    lastMessage: x.status || "Conversation",
-    time: x.lastMessageAtUtc || x.createdAtUtc || null,
-    unread: Number(x.unreadCount || 0),
+  const mapConversation = (x) => {
+    const id = x.id ?? x.Id ?? "";
+    const customerName = x.customerName ?? x.CustomerName ?? "";
+    const customerPhone = x.customerPhone ?? x.CustomerPhone ?? "";
+    const status = x.status ?? x.Status ?? "";
+    const lastMessageAtUtc = x.lastMessageAtUtc ?? x.LastMessageAtUtc ?? null;
+    const createdAtUtc = x.createdAtUtc ?? x.CreatedAtUtc ?? null;
+    const assignedUserId = x.assignedUserId ?? x.AssignedUserId ?? "";
+    const assignedUserName = x.assignedUserName ?? x.AssignedUserName ?? "";
+    const labelsCsv = x.labelsCsv ?? x.LabelsCsv ?? "";
+    const canReply = x.canReply ?? x.CanReply ?? false;
+    const hoursSinceInbound = x.hoursSinceInbound ?? x.HoursSinceInbound ?? 999;
+    return {
+    id,
+    name: customerName || customerPhone || "Conversation",
+    phone: customerPhone,
+    lastMessage: status || "Conversation",
+    time: lastMessageAtUtc || createdAtUtc || null,
+    unread: Number(x.unreadCount ?? x.UnreadCount ?? 0),
     starred: false,
     channel: "whatsapp",
-    avatar: (x.customerName || x.customerPhone || "U").slice(0, 2).toUpperCase(),
-    assignedUserId: x.assignedUserId || "",
-    assignedUserName: x.assignedUserName || "",
-    labels: (x.labelsCsv || "").split(",").map((z) => z.trim()).filter(Boolean),
-    canReply: !!x.canReply,
-    hoursSinceInbound: Number(x.hoursSinceInbound || 999),
-  });
+    avatar: (customerName || customerPhone || "U").slice(0, 2).toUpperCase(),
+    assignedUserId,
+    assignedUserName,
+    labels: String(labelsCsv).split(",").map((z) => z.trim()).filter(Boolean),
+    canReply: !!canReply,
+    hoursSinceInbound: Number(hoursSinceInbound),
+  };
+  };
   const mapMessage = (x) => {
-    const rawStatus = String(x.status || "").toLowerCase();
+    const rawStatus = String(x.status ?? x.Status ?? "").toLowerCase();
     const sender = rawStatus === "received" ? "customer" : "agent";
     const normalizedStatus = sender === "agent" ? (rawStatus || "sent") : "received";
-    const messageType = String(x.messageType || "session");
-    let text = x.body || "";
+    const messageType = String(x.messageType ?? x.MessageType ?? "session");
+    let text = x.body ?? x.Body ?? "";
     let media = null;
     if (messageType.startsWith("media:")) {
       const kind = messageType.split(":")[1] || "media";
       try {
-        media = JSON.parse(x.body || "{}");
+        media = JSON.parse(String(x.body ?? x.Body ?? "{}"));
         text = `${kind === "audio" ? "🎤" : "📎"} ${kind.toUpperCase()}${media.caption ? ` - ${media.caption}` : ""}`;
       } catch {
         text = `📎 ${kind.toUpperCase()} attachment`;
       }
     } else if (messageType === "template") {
-      const name = String(x.body || "").split("|")[0] || "template";
+      const name = String(x.body ?? x.Body ?? "").split("|")[0] || "template";
       text = `🧩 Template: ${name}`;
     }
     return {
-    id: x.id,
+    id: x.id ?? x.Id ?? crypto.randomUUID(),
     sender,
     text,
-    time: x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
-    retryCount: Number(x.retryCount || 0),
-    nextRetryAtUtc: x.nextRetryAtUtc || null,
-    lastError: x.lastError || "",
-    queueProvider: x.queueProvider || "memory",
+    time: (x.createdAtUtc ?? x.CreatedAtUtc) ? new Date(x.createdAtUtc ?? x.CreatedAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now",
+    retryCount: Number(x.retryCount ?? x.RetryCount ?? 0),
+    nextRetryAtUtc: x.nextRetryAtUtc ?? x.NextRetryAtUtc ?? null,
+    lastError: x.lastError ?? x.LastError ?? "",
+    queueProvider: x.queueProvider ?? x.QueueProvider ?? "memory",
     status: normalizedStatus,
     messageType,
     media,
