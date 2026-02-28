@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using Textzy.Api.Data;
 using Textzy.Api.DTOs;
 using Textzy.Api.Services;
@@ -15,8 +17,26 @@ public class InboxController(
     TenancyContext tenancy,
     AuthContext auth,
     RbacService rbac,
-    IHubContext<InboxHub> hub) : ControllerBase
+    IHubContext<InboxHub> hub,
+    IDistributedCache cache) : ControllerBase
 {
+    private string ConversationCacheKey(int take, string q, string cursor)
+        => $"inbox:conv:v2:{tenancy.TenantId}:{take}:{q}:{cursor}";
+
+    private async Task InvalidateConversationCacheAsync(CancellationToken ct)
+    {
+        try
+        {
+            await cache.RemoveAsync($"inbox:conv:v2:{tenancy.TenantId}:100::", ct);
+            await cache.RemoveAsync($"inbox:conv:v2:{tenancy.TenantId}:200::", ct);
+            await cache.RemoveAsync($"inbox:conv:v2:{tenancy.TenantId}:300::", ct);
+        }
+        catch
+        {
+            // no-op
+        }
+    }
+
     private async Task AddSystemConversationMessageAsync(Models.Conversation c, string text, CancellationToken ct)
     {
         var body = (text ?? string.Empty).Trim();
@@ -51,13 +71,26 @@ public class InboxController(
     }
 
     [HttpGet("conversations")]
-    public IActionResult Conversations([FromQuery] string? q = null)
+    public async Task<IActionResult> Conversations([FromQuery] string? q = null, [FromQuery] int take = 100, [FromQuery] string? cursor = null, CancellationToken ct = default)
     {
         if (!rbac.HasPermission(InboxRead)) return Forbid();
-        var query = db.Conversations.Where(x => x.TenantId == tenancy.TenantId);
+        var safeTake = Math.Clamp(take, 10, 300);
+        var cursorNorm = (cursor ?? string.Empty).Trim();
+        var qNorm = (q ?? string.Empty).Trim().ToLowerInvariant();
+        var cacheKey = ConversationCacheKey(safeTake, qNorm, cursorNorm);
+        var cached = await cache.GetStringAsync(cacheKey, ct);
+        if (!string.IsNullOrWhiteSpace(cached))
+        {
+            Response.Headers["X-Next-Cursor"] = cursorNorm;
+            return Content(cached, "application/json");
+        }
+
+        var query = db.Conversations.AsNoTracking().Where(x => x.TenantId == tenancy.TenantId);
         if (!string.IsNullOrWhiteSpace(q))
             query = query.Where(x => x.CustomerPhone.Contains(q) || x.CustomerName.Contains(q));
-        var items = query.OrderByDescending(x => x.LastMessageAtUtc).Take(200).ToList();
+        if (DateTime.TryParse(cursorNorm, out var beforeUtc))
+            query = query.Where(x => x.LastMessageAtUtc < beforeUtc.ToUniversalTime());
+        var items = query.OrderByDescending(x => x.LastMessageAtUtc).Take(safeTake).ToList();
         var phones = items.Select(x => x.CustomerPhone).Distinct().ToList();
         var windows = db.ConversationWindows
             .Where(x => x.TenantId == tenancy.TenantId && phones.Contains(x.Recipient))
@@ -86,7 +119,14 @@ public class InboxController(
             };
         }).ToList();
 
-        return Ok(data);
+        var nextCursor = data.Count == safeTake ? data.Last().LastMessageAtUtc?.ToString("O") : string.Empty;
+        if (!string.IsNullOrWhiteSpace(nextCursor)) Response.Headers["X-Next-Cursor"] = nextCursor;
+        var json = JsonSerializer.Serialize(data);
+        await cache.SetStringAsync(cacheKey, json, new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(15)
+        }, ct);
+        return Content(json, "application/json");
     }
 
     [HttpPost("conversations/{id:guid}/assign")]
@@ -98,6 +138,7 @@ public class InboxController(
         c.AssignedUserId = req.UserId;
         c.AssignedUserName = req.UserName;
         await db.SaveChangesAsync(ct);
+        await InvalidateConversationCacheAsync(ct);
         var actor = !string.IsNullOrWhiteSpace(auth.FullName)
             ? auth.FullName.Trim()
             : (string.IsNullOrWhiteSpace(auth.Email) ? "Agent" : auth.Email);
@@ -117,6 +158,7 @@ public class InboxController(
         c.AssignedUserName = req.UserName;
         c.Status = "Open";
         await db.SaveChangesAsync(ct);
+        await InvalidateConversationCacheAsync(ct);
         var actor = !string.IsNullOrWhiteSpace(auth.FullName)
             ? auth.FullName.Trim()
             : (string.IsNullOrWhiteSpace(auth.Email) ? "Agent" : auth.Email);
@@ -134,6 +176,7 @@ public class InboxController(
         if (c is null) return NotFound();
         c.LabelsCsv = string.Join(",", (req.Labels ?? []).Select(x => (x ?? string.Empty).Trim()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase));
         await db.SaveChangesAsync(ct);
+        await InvalidateConversationCacheAsync(ct);
         await hub.Clients.Group($"tenant:{tenancy.TenantSlug}").SendAsync("conversation.labels", new { c.Id, c.LabelsCsv }, ct);
         return Ok(c);
     }
@@ -161,24 +204,34 @@ public class InboxController(
     }
 
     [HttpGet("conversations/{id:guid}/notes")]
-    public IActionResult Notes(Guid id)
+    public IActionResult Notes(Guid id, [FromQuery] int take = 50)
     {
         if (!rbac.HasPermission(InboxRead)) return Forbid();
-        return Ok(db.ConversationNotes.Where(x => x.TenantId == tenancy.TenantId && x.ConversationId == id).OrderByDescending(x => x.CreatedAtUtc).ToList());
+        var safeTake = Math.Clamp(take, 10, 200);
+        return Ok(db.ConversationNotes.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId && x.ConversationId == id)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(safeTake)
+            .ToList());
     }
 
     [HttpGet("conversations/{id:guid}/messages")]
-    public IActionResult ConversationMessages(Guid id)
+    public IActionResult ConversationMessages(Guid id, [FromQuery] int take = 80, [FromQuery] string? cursor = null)
     {
         if (!rbac.HasPermission(InboxRead)) return Forbid();
-        var c = db.Conversations.FirstOrDefault(x => x.Id == id && x.TenantId == tenancy.TenantId);
+        var safeTake = Math.Clamp(take, 20, 300);
+        var c = db.Conversations.AsNoTracking().FirstOrDefault(x => x.Id == id && x.TenantId == tenancy.TenantId);
         if (c is null) return NotFound();
 
-        var items = db.Messages
-            .Where(m => m.TenantId == tenancy.TenantId && m.Recipient == c.CustomerPhone && m.Channel == Models.ChannelType.WhatsApp)
-            .OrderBy(m => m.CreatedAtUtc)
-            .Take(500)
-            .ToList();
+        var query = db.Messages
+            .AsNoTracking()
+            .Where(m => m.TenantId == tenancy.TenantId && m.Recipient == c.CustomerPhone && m.Channel == Models.ChannelType.WhatsApp);
+        if (DateTime.TryParse((cursor ?? string.Empty).Trim(), out var beforeUtc))
+            query = query.Where(m => m.CreatedAtUtc < beforeUtc.ToUniversalTime());
+
+        var items = query.OrderByDescending(m => m.CreatedAtUtc).Take(safeTake).ToList();
+        if (items.Count == safeTake) Response.Headers["X-Next-Cursor"] = items.Last().CreatedAtUtc.ToString("O");
+        items.Reverse();
         return Ok(items);
     }
 

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.ResponseCompression;
 using Npgsql;
 using System.Text.RegularExpressions;
 using Textzy.Api.Data;
@@ -25,6 +26,12 @@ if (builder.Environment.IsProduction())
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.Providers.Add<BrotliCompressionProvider>();
+    options.Providers.Add<GzipCompressionProvider>();
+});
 
 var allowedOrigins = builder.Configuration["AllowedOrigins"]?
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -105,7 +112,18 @@ builder.Services.AddDbContext<TenantDbContext>((sp, opt) =>
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMemoryCache();
-builder.Services.AddDistributedMemoryCache();
+var redisCacheConn = FirstNonEmpty(
+    builder.Configuration["Redis__ConnectionString"],
+    builder.Configuration["REDIS_CONNECTION_STRING"],
+    builder.Configuration["REDIS_URL"]);
+if (!string.IsNullOrWhiteSpace(redisCacheConn))
+{
+    builder.Services.AddStackExchangeRedisCache(options => { options.Configuration = redisCacheConn; });
+}
+else
+{
+    builder.Services.AddDistributedMemoryCache();
+}
 builder.Services.AddScoped<TenancyContext>();
 builder.Services.AddScoped<AuthContext>();
 builder.Services.AddScoped<PasswordHasher>();
@@ -188,6 +206,7 @@ if (!app.Environment.IsProduction())
 {
     app.UseHttpsRedirection();
 }
+app.UseResponseCompression();
 app.UseCors("frontend");
 app.UseMiddleware<PlatformRequestLoggingMiddleware>();
 app.UseMiddleware<TenantMiddleware>();

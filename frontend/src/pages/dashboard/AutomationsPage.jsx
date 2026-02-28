@@ -1237,19 +1237,24 @@ export default function AutomationsPage() {
   /* ── API ── */
   const loadAll = async () => {
     try {
-      const [f, l, q, usageRes, planRes] = await Promise.all([
+      const [f, l] = await Promise.all([
         apiGet("/api/automation/flows"),
         apiGet("/api/automation/limits"),
-        apiGet("/api/automation/faq"),
-        getBillingUsage().catch(() => ({ values: {} })),
-        getCurrentBillingPlan().catch(() => ({ plan: { limits: {} } })),
       ]);
       setFlows(f || []);
       setLimits(l || null);
-      setFaqItems(q || []);
-      setBillingUsage(usageRes?.values || {});
-      setBillingLimits(planRes?.plan?.limits || {});
       if (!selectedFlowId && f?.length) setSelectedFlowId(String(f[0].id));
+
+      // Load secondary data in background to keep first paint fast.
+      Promise.all([
+        apiGet("/api/automation/faq").catch(() => []),
+        getBillingUsage().catch(() => ({ values: {} })),
+        getCurrentBillingPlan().catch(() => ({ plan: { limits: {} } })),
+      ]).then(([q, usageRes, planRes]) => {
+        setFaqItems(q || []);
+        setBillingUsage(usageRes?.values || {});
+        setBillingLimits(planRes?.plan?.limits || {});
+      }).catch(() => {});
     } catch { toast.error("Failed to load automations"); }
   };
 

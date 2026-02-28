@@ -215,12 +215,14 @@ public class AutomationController(
         try
         {
             var flows = await db.AutomationFlows
+                .AsNoTracking()
                 .Where(x => x.TenantId == tenancy.TenantId)
                 .OrderByDescending(x => x.UpdatedAtUtc)
                 .ToListAsync(ct);
 
             var flowIds = flows.Select(x => x.Id).ToList();
             var versions = await db.AutomationFlowVersions
+                .AsNoTracking()
                 .Where(x => x.TenantId == tenancy.TenantId && flowIds.Contains(x.FlowId))
                 .GroupBy(x => x.FlowId)
                 .Select(g => new
@@ -232,6 +234,7 @@ public class AutomationController(
                 .ToListAsync(ct);
 
             var runs = await db.AutomationRuns
+                .AsNoTracking()
                 .Where(x => x.TenantId == tenancy.TenantId && flowIds.Contains(x.FlowId))
                 .GroupBy(x => x.FlowId)
                 .Select(g => new

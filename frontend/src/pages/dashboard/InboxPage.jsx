@@ -332,17 +332,17 @@ const InboxPage = () => {
   };
 
   const loadConversations = useCallback(
-    () => apiGet("/api/inbox/conversations").then((c) => setConversations((c || []).map(mapConversation))).catch(() => {}),
+    () => apiGet("/api/inbox/conversations?take=100").then((c) => setConversations((c || []).map(mapConversation))).catch(() => {}),
     []
   );
   const loadThread = useCallback(
     (conversationId) =>
-      apiGet(`/api/inbox/conversations/${conversationId}/messages`).then((rows) => setMessages((rows || []).map(mapMessage))).catch(() => setMessages([])),
+      apiGet(`/api/inbox/conversations/${conversationId}/messages?take=80`).then((rows) => setMessages((rows || []).map(mapMessage))).catch(() => setMessages([])),
     []
   );
   const loadNotes = useCallback(
     (conversationId) =>
-      apiGet(`/api/inbox/conversations/${conversationId}/notes`).then((rows) => setNotes(rows || [])).catch(() => setNotes([])),
+      apiGet(`/api/inbox/conversations/${conversationId}/notes?take=50`).then((rows) => setNotes(rows || [])).catch(() => setNotes([])),
     []
   );
   const loadSla = useCallback(
@@ -542,18 +542,24 @@ const InboxPage = () => {
     return () => window.removeEventListener("pointerdown", handler);
   }, [audioUnlocked]);
 
+  const loadApprovedTemplates = useCallback(async () => {
+    const tpl = await apiGet("/api/templates").catch(() => []);
+    const approved = (tpl || []).filter((x) => String(x.status || "").toLowerCase() === "approved" && Number(x.channel) === 2);
+    setTemplates(approved);
+    if (approved.length > 0) setSelectedTemplateId((prev) => prev || String(approved[0].id));
+  }, []);
+
   useEffect(() => {
     Promise.all([
-      apiGet("/api/inbox/conversations"),
+      apiGet("/api/inbox/conversations?take=100"),
       apiGet("/api/contacts"),
       apiGet("/api/auth/team-members").catch(() => []),
       apiGet("/api/auth/me").catch(() => null),
-      apiGet("/api/templates").catch(() => []),
       apiGet("/api/automation/faq").catch(() => []),
       wabaGetOnboardingStatus().catch(() => null),
       getNotificationSettings().catch(() => null),
     ])
-      .then(([c, ct, tm, meData, tpl, faqRows, waba, notifyCfg]) => {
+      .then(([c, ct, tm, meData, faqRows, waba, notifyCfg]) => {
         const mapped = (c || []).map(mapConversation);
         setConversations(mapped);
         setSelectedConversationId((prev) => prev || mapped[0]?.id || null);
@@ -561,9 +567,6 @@ const InboxPage = () => {
         setContacts(ct || []);
         setTeamMembers(tm || []);
         setMe(meData);
-        const approved = (tpl || []).filter((x) => String(x.status || "").toLowerCase() === "approved" && Number(x.channel) === 2);
-        setTemplates(approved);
-        if (approved.length > 0) setSelectedTemplateId(String(approved[0].id));
         setFaqs((faqRows || []).filter((f) => f.isActive !== false));
         setWabaDetails(waba);
         if (notifyCfg) {
@@ -586,6 +589,12 @@ const InboxPage = () => {
         setMessages([]);
       });
   }, [loadSla]);
+
+  useEffect(() => {
+    if (!showTemplateAttach) return;
+    if (templates.length > 0) return;
+    loadApprovedTemplates().catch(() => {});
+  }, [showTemplateAttach, templates.length, loadApprovedTemplates]);
 
   const formatAgo = (value) => {
     if (!value) return "just now";
