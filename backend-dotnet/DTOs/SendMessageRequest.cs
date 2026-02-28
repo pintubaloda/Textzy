@@ -17,4 +17,7 @@ public class SendMessageRequest
     public string MediaType { get; set; } = string.Empty; // image | video | audio | document
     public string MediaId { get; set; } = string.Empty;
     public string MediaCaption { get; set; } = string.Empty;
+    public bool IsInteractive { get; set; }
+    public string InteractiveType { get; set; } = string.Empty; // button
+    public List<string> InteractiveButtons { get; set; } = [];
 }

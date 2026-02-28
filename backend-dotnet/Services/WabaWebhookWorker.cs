@@ -1027,6 +1027,43 @@ public class WabaWebhookWorker(
         return ResolveValue(config, payload, "body", "message", "question", "prompt");
     }
 
+    private static List<string> ReadStringOptions(object? raw, int max = 3)
+    {
+        var result = new List<string>();
+        if (raw is null) return result;
+        if (raw is IEnumerable<object?> objList)
+        {
+            foreach (var item in objList)
+            {
+                if (result.Count >= max) break;
+                if (item is IDictionary<string, object?> map)
+                {
+                    var title = map.TryGetValue("title", out var t) ? t?.ToString() : null;
+                    var subtitle = map.TryGetValue("subtitle", out var s) ? s?.ToString() : null;
+                    var merged = string.IsNullOrWhiteSpace(subtitle) ? title : $"{title} - {subtitle}";
+                    if (!string.IsNullOrWhiteSpace(merged)) result.Add(merged.Trim());
+                    continue;
+                }
+                var v = item?.ToString()?.Trim() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(v)) result.Add(v);
+            }
+            return result.Distinct(StringComparer.OrdinalIgnoreCase).Take(max).ToList();
+        }
+        if (raw is JsonElement j && j.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var it in j.EnumerateArray())
+            {
+                if (result.Count >= max) break;
+                var v = (it.ValueKind == JsonValueKind.Object && it.TryGetProperty("title", out var title))
+                    ? title.ToString()
+                    : it.ToString();
+                if (!string.IsNullOrWhiteSpace(v)) result.Add(v.Trim());
+            }
+            return result.Distinct(StringComparer.OrdinalIgnoreCase).Take(max).ToList();
+        }
+        return result;
+    }
+
     private async Task RunTriggeredAutomationsAsync(
         IServiceProvider sp,
         ControlDbContext controlDb,
@@ -1181,17 +1218,43 @@ public class WabaWebhookWorker(
                         var recipient = ResolveValue(node.Config, payload, "recipient");
                         if (string.IsNullOrWhiteSpace(recipient)) recipient = inbound.From;
                         var body = ResolveNodeReplyText(nodeType, node.Config, payload);
+                        var interactiveButtons = new List<string>();
+                        if (nodeType is "buttons")
+                        {
+                            if (node.Config.TryGetValue("buttons", out var btns))
+                                interactiveButtons = ReadStringOptions(btns, 3);
+                            body = ResolveValue(node.Config, payload, "body", "message", "question", "prompt");
+                        }
+                        else if (nodeType is "bot_reply" or "botreply")
+                        {
+                            var replyMode = ResolveValue(node.Config, payload, "replyMode");
+                            var advancedType = ResolveValue(node.Config, payload, "advancedType");
+                            if (string.Equals(replyMode, "advanced", StringComparison.OrdinalIgnoreCase) &&
+                                string.Equals(advancedType, "quick_reply", StringComparison.OrdinalIgnoreCase) &&
+                                node.Config.TryGetValue("buttons", out var btns))
+                            {
+                                interactiveButtons = ReadStringOptions(btns, 3);
+                                body = ResolveValue(node.Config, payload, "simpleText", "body", "message", "question", "prompt");
+                            }
+                        }
                         if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(body))
                         {
                             try
                             {
-                                var msg = await messaging.EnqueueAsync(new DTOs.SendMessageRequest
+                                var req = new DTOs.SendMessageRequest
                                 {
                                     Recipient = recipient,
                                     Body = Interpolate(body, payload),
                                     Channel = ChannelType.WhatsApp,
                                     IdempotencyKey = $"auto-msg:{flow.Id}:{inbound.MessageId}:{node.Id}"
-                                }, ct);
+                                };
+                                if (interactiveButtons.Count > 0)
+                                {
+                                    req.IsInteractive = true;
+                                    req.InteractiveType = "button";
+                                    req.InteractiveButtons = interactiveButtons.Select(x => Interpolate(x, payload)).ToList();
+                                }
+                                var msg = await messaging.EnqueueAsync(req, ct);
                                 controlDb.AuditLogs.Add(new AuditLog
                                 {
                                     Id = Guid.NewGuid(),

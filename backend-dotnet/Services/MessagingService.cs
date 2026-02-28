@@ -39,6 +39,25 @@ public class MessagingService(
             if (request.MediaCaption.Length > 1024)
                 throw new InvalidOperationException("Media caption is too long.");
         }
+        else if (request.IsInteractive)
+        {
+            if (request.Channel != ChannelType.WhatsApp)
+                throw new InvalidOperationException("Interactive messages are supported only for WhatsApp.");
+            var interactiveType = (request.InteractiveType ?? string.Empty).Trim().ToLowerInvariant();
+            if (interactiveType != "button")
+                throw new InvalidOperationException("Only WhatsApp button interactive type is supported.");
+            request.Body = InputGuardService.RequireTrimmed(request.Body, "Message body", 1024);
+            var buttons = (request.InteractiveButtons ?? [])
+                .Select(x => (x ?? string.Empty).Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .ToList();
+            if (buttons.Count == 0)
+                throw new InvalidOperationException("At least one interactive button is required.");
+            request.InteractiveButtons = buttons;
+            request.InteractiveType = interactiveType;
+        }
         else if (!request.UseTemplate)
         {
             request.Body = InputGuardService.RequireTrimmed(request.Body, "Message body", 4096);
@@ -149,6 +168,8 @@ public class MessagingService(
 
         var messageBody = request.UseTemplate
             ? $"{request.TemplateName}|{string.Join(",", request.TemplateParameters)}|{request.TemplateLanguageCode}"
+            : request.IsInteractive
+                ? request.Body
             : request.IsMedia
                 ? JsonSerializer.Serialize(new
                 {
@@ -156,6 +177,14 @@ public class MessagingService(
                     caption = request.MediaCaption
                 })
                 : request.Body;
+
+        var messageType = request.UseTemplate
+            ? "template"
+            : request.IsInteractive
+                ? $"interactive:{request.InteractiveType}:{string.Join("~", request.InteractiveButtons.Select(x => x.Replace("~", " "))).Trim()}"
+                : request.IsMedia
+                    ? $"media:{request.MediaType}"
+                    : "session";
 
         var message = new Message
         {
@@ -165,7 +194,7 @@ public class MessagingService(
             Channel = request.Channel,
             Recipient = request.Recipient,
             Body = messageBody,
-            MessageType = request.UseTemplate ? "template" : request.IsMedia ? $"media:{request.MediaType}" : "session",
+            MessageType = messageType,
             IdempotencyKey = idempotencyKey,
             RetryCount = 0,
             LastError = string.Empty,

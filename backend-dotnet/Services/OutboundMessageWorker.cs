@@ -114,6 +114,21 @@ public class OutboundMessageWorker(
                                 mediaPayload.caption,
                                 stoppingToken);
                         }
+                        else if (message.MessageType.StartsWith("interactive:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var interactive = ParseInteractivePayload(message.MessageType, message.Body);
+                            if (interactive.buttons.Count == 0)
+                                throw new InvalidOperationException("Interactive message has no buttons.");
+                            providerId = await SendWhatsAppInteractiveButtonsAsync(
+                                httpClientFactory,
+                                waOptions,
+                                wabaCfg.PhoneNumberId,
+                                accessToken,
+                                message.Recipient,
+                                interactive.body,
+                                interactive.buttons,
+                                stoppingToken);
+                        }
                         else
                         {
                             var window = await tenantDb.Set<ConversationWindow>()
@@ -330,6 +345,30 @@ public class OutboundMessageWorker(
         }
     }
 
+    private static (string body, List<string> buttons) ParseInteractivePayload(string messageType, string body)
+    {
+        var buttons = new List<string>();
+        try
+        {
+            // Format: interactive:button:Support~Sales~Accounts
+            var parts = (messageType ?? string.Empty).Split(':', 3, StringSplitOptions.TrimEntries);
+            if (parts.Length >= 3 && !string.IsNullOrWhiteSpace(parts[2]))
+            {
+                buttons = parts[2]
+                    .Split('~', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(3)
+                    .ToList();
+            }
+        }
+        catch
+        {
+            buttons = [];
+        }
+        return (body ?? string.Empty, buttons);
+    }
+
     private static async Task<string> SendWhatsAppSessionAsync(
         IHttpClientFactory httpClientFactory,
         WhatsAppOptions options,
@@ -349,6 +388,61 @@ public class OutboundMessageWorker(
         if (!resp.IsSuccessStatusCode) throw new InvalidOperationException($"WhatsApp send failed ({(int)resp.StatusCode}): {responseBody}");
         using var doc = JsonDocument.Parse(responseBody);
         return doc.RootElement.GetProperty("messages")[0].GetProperty("id").GetString() ?? $"wa_{Guid.NewGuid():N}";
+    }
+
+    private static async Task<string> SendWhatsAppInteractiveButtonsAsync(
+        IHttpClientFactory httpClientFactory,
+        WhatsAppOptions options,
+        string phoneNumberId,
+        string accessToken,
+        string recipient,
+        string body,
+        IReadOnlyList<string> buttons,
+        CancellationToken ct)
+    {
+        var url = $"{options.GraphApiBase}/{options.ApiVersion}/{phoneNumberId}/messages";
+        var interactiveButtons = buttons
+            .Select((x, i) => new
+            {
+                type = "reply",
+                reply = new
+                {
+                    id = BuildInteractiveReplyId(i + 1, x),
+                    title = x.Length > 20 ? x[..20] : x
+                }
+            })
+            .ToArray();
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            messaging_product = "whatsapp",
+            to = recipient,
+            type = "interactive",
+            interactive = new
+            {
+                type = "button",
+                body = new { text = string.IsNullOrWhiteSpace(body) ? "Please choose an option:" : body },
+                action = new { buttons = interactiveButtons }
+            }
+        });
+        var http = httpClientFactory.CreateClient();
+        using var req = new HttpRequestMessage(HttpMethod.Post, url);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        req.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var resp = await http.SendAsync(req, ct);
+        var responseBody = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode) throw new InvalidOperationException($"WhatsApp interactive send failed ({(int)resp.StatusCode}): {responseBody}");
+        using var doc = JsonDocument.Parse(responseBody);
+        var id = doc.RootElement.GetProperty("messages")[0].GetProperty("id").GetString();
+        return id ?? string.Empty;
+    }
+
+    private static string BuildInteractiveReplyId(int index, string title)
+    {
+        var raw = Regex.Replace((title ?? string.Empty).ToLowerInvariant(), "[^a-z0-9]+", "_").Trim('_');
+        if (string.IsNullOrWhiteSpace(raw)) raw = $"opt{index}";
+        var value = $"btn_{index}_{raw}";
+        return value.Length <= 24 ? value : value[..24].TrimEnd('_');
     }
 
     private static async Task<string> SendWhatsAppTemplateAsync(
