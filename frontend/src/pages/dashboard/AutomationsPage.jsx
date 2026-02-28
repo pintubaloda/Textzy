@@ -1585,11 +1585,19 @@ export default function AutomationsPage() {
     return () => window.removeEventListener("mouseup", stopInteractions);
   }, []);
 
-  const onWheel = (e) => {
+  const onWheel = useCallback((e) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     setZoom((z) => Math.max(0.3, Math.min(2, z * delta)));
-  };
+  }, []);
+
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const wheelHandler = (evt) => onWheel(evt);
+    el.addEventListener("wheel", wheelHandler, { passive: false });
+    return () => el.removeEventListener("wheel", wheelHandler);
+  }, [onWheel]);
 
   const fitToScreen = () => {
     if (!nodes.length) return;
@@ -2093,7 +2101,6 @@ function WorkflowCanvas({
             onMouseDown={onCanvasMouseDown}
             onMouseMove={onCanvasMouseMove}
             onMouseUp={onCanvasMouseUp}
-            onWheel={onWheel}
           >
             {/* Empty state */}
             {nodes.length === 0 && (
