@@ -34,9 +34,9 @@ public class WabaWebhookWorker(
     {
         public string Id { get; init; } = string.Empty;
         public string Type { get; init; } = string.Empty;
-        public string Next { get; init; } = string.Empty;
-        public string OnTrue { get; init; } = string.Empty;
-        public string OnFalse { get; init; } = string.Empty;
+        public string Next { get; set; } = string.Empty;
+        public string OnTrue { get; set; } = string.Empty;
+        public string OnFalse { get; set; } = string.Empty;
         public string OnSuccess { get; init; } = string.Empty;
         public string OnFailure { get; init; } = string.Empty;
         public Dictionary<string, object?> Config { get; init; } = new(StringComparer.OrdinalIgnoreCase);
