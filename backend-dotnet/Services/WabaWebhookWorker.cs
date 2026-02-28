@@ -939,6 +939,49 @@ public class WabaWebhookWorker(
 
     private static string ResolveNodeReplyText(string nodeType, Dictionary<string, object?> config, Dictionary<string, object?> payload)
     {
+        static List<string> normalizeOptions(object? raw)
+        {
+            if (raw is null) return [];
+            if (raw is IEnumerable<object?> objList)
+            {
+                var list = new List<string>();
+                foreach (var item in objList)
+                {
+                    if (item is IDictionary<string, object?> map)
+                    {
+                        var title = map.TryGetValue("title", out var t) ? t?.ToString() : null;
+                        var subtitle = map.TryGetValue("subtitle", out var s) ? s?.ToString() : null;
+                        var merged = string.IsNullOrWhiteSpace(subtitle) ? title : $"{title} - {subtitle}";
+                        if (!string.IsNullOrWhiteSpace(merged)) list.Add(merged.Trim());
+                        continue;
+                    }
+                    var v = item?.ToString()?.Trim() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(v)) list.Add(v);
+                }
+                return list;
+            }
+            if (raw is JsonElement j && j.ValueKind == JsonValueKind.Array)
+            {
+                var list = new List<string>();
+                foreach (var it in j.EnumerateArray())
+                {
+                    var v = (it.ValueKind == JsonValueKind.Object && it.TryGetProperty("title", out var title))
+                        ? title.ToString()
+                        : it.ToString();
+                    if (!string.IsNullOrWhiteSpace(v)) list.Add(v.Trim());
+                }
+                return list;
+            }
+            return [];
+        }
+
+        static string appendOptions(string baseText, IReadOnlyList<string> options)
+        {
+            if (options.Count == 0) return baseText;
+            var lines = string.Join("\n", options.Select((x, i) => $"{i + 1}. {x}"));
+            return string.IsNullOrWhiteSpace(baseText) ? lines : $"{baseText}\n\n{lines}";
+        }
+
         if (nodeType == "bot_reply")
         {
             var replyMode = ResolveValue(config, payload, "replyMode");
@@ -948,13 +991,37 @@ public class WabaWebhookWorker(
                 if (!string.IsNullOrWhiteSpace(mediaText)) return mediaText;
             }
             var simpleText = ResolveValue(config, payload, "simpleText", "body", "message", "question", "prompt");
-            if (!string.IsNullOrWhiteSpace(simpleText)) return simpleText;
+            if (!string.IsNullOrWhiteSpace(simpleText))
+            {
+                var advancedType = ResolveValue(config, payload, "advancedType");
+                var options = new List<string>();
+                if (string.Equals(replyMode, "advanced", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.Equals(advancedType, "list", StringComparison.OrdinalIgnoreCase)
+                        && config.TryGetValue("listItems", out var listItems))
+                    {
+                        options = normalizeOptions(listItems);
+                    }
+                    else if (config.TryGetValue("buttons", out var buttons))
+                    {
+                        options = normalizeOptions(buttons);
+                    }
+                }
+                return appendOptions(simpleText, options);
+            }
         }
 
         if (nodeType is "buttons" or "list" or "cta_url" or "media")
         {
             var body = ResolveValue(config, payload, "body", "message", "question", "prompt");
-            if (!string.IsNullOrWhiteSpace(body)) return body;
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                if (nodeType is "buttons" && config.TryGetValue("buttons", out var buttons))
+                    return appendOptions(body, normalizeOptions(buttons));
+                if (nodeType is "list" && config.TryGetValue("listItems", out var listItems))
+                    return appendOptions(body, normalizeOptions(listItems));
+                return body;
+            }
         }
 
         return ResolveValue(config, payload, "body", "message", "question", "prompt");
