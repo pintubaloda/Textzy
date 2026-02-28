@@ -19,7 +19,7 @@ public class PlatformWebhookLogsController(ControlDbContext db, AuthContext auth
 
         var auditQuery = db.AuditLogs.Where(x =>
             x.Action.Contains("webhook") ||
-            x.Action == "waba.workflow.trigger_eval");
+            x.Action.StartsWith("waba.workflow."));
         if (!string.IsNullOrWhiteSpace(provider))
             auditQuery = auditQuery.Where(x => x.Details.Contains($"provider={provider}"));
 
