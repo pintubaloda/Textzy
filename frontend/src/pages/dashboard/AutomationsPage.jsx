@@ -1223,6 +1223,36 @@ export default function AutomationsPage() {
   const [faqForm, setFaqForm] = useState({ question: "", answer: "", category: "", isActive: true });
   const [editingFaqId, setEditingFaqId] = useState(null);
 
+  const normalizeFlow = useCallback((f) => ({
+    id: f?.id ?? f?.Id ?? "",
+    name: f?.name ?? f?.Name ?? "",
+    description: f?.description ?? f?.Description ?? "",
+    channel: f?.channel ?? f?.Channel ?? "waba",
+    triggerType: f?.triggerType ?? f?.TriggerType ?? "keyword",
+    triggerConfigJson: f?.triggerConfigJson ?? f?.TriggerConfigJson ?? "{}",
+    isActive: !!(f?.isActive ?? f?.IsActive),
+    lifecycleStatus: f?.lifecycleStatus ?? f?.LifecycleStatus ?? "draft",
+    createdAtUtc: f?.createdAtUtc ?? f?.CreatedAtUtc ?? null,
+    updatedAtUtc: f?.updatedAtUtc ?? f?.UpdatedAtUtc ?? null,
+    runs: Number(f?.runs ?? f?.Runs ?? 0),
+    failedRuns: Number(f?.failedRuns ?? f?.FailedRuns ?? 0),
+    successRate: Number(f?.successRate ?? f?.SuccessRate ?? 0),
+    lastRunAtUtc: f?.lastRunAtUtc ?? f?.LastRunAtUtc ?? null,
+    versions: Number(f?.versions ?? f?.Versions ?? 0),
+    latestVersion: Number(f?.latestVersion ?? f?.LatestVersion ?? 0),
+  }), []);
+
+  const normalizeVersion = useCallback((v) => ({
+    id: v?.id ?? v?.Id ?? "",
+    flowId: v?.flowId ?? v?.FlowId ?? "",
+    versionNumber: Number(v?.versionNumber ?? v?.VersionNumber ?? 0),
+    status: v?.status ?? v?.Status ?? "draft",
+    definitionJson: v?.definitionJson ?? v?.DefinitionJson ?? "{}",
+    changeNote: v?.changeNote ?? v?.ChangeNote ?? "",
+    createdAtUtc: v?.createdAtUtc ?? v?.CreatedAtUtc ?? null,
+    publishedAtUtc: v?.publishedAtUtc ?? v?.PublishedAtUtc ?? null,
+  }), []);
+
   const selectedFlow = useMemo(() => flows.find((f) => String(f.id) === String(selectedFlowId)) || null, [flows, selectedFlowId]);
   const selectedNode = useMemo(() => nodes.find((n) => n.id === selectedNodeId) || null, [nodes, selectedNodeId]);
   const edges = useMemo(() => computeEdges(nodes), [nodes]);
@@ -1241,9 +1271,10 @@ export default function AutomationsPage() {
         apiGet("/api/automation/flows"),
         apiGet("/api/automation/limits"),
       ]);
-      setFlows(f || []);
+      const normalizedFlows = (f || []).map(normalizeFlow);
+      setFlows(normalizedFlows);
       setLimits(l || null);
-      if (!selectedFlowId && f?.length) setSelectedFlowId(String(f[0].id));
+      if (!selectedFlowId && normalizedFlows.length) setSelectedFlowId(String(normalizedFlows[0].id));
 
       // Load secondary data in background to keep first paint fast.
       Promise.all([
@@ -1261,8 +1292,9 @@ export default function AutomationsPage() {
   const loadFlowDetails = async (flowId) => {
     if (!flowId) return;
     try {
-      const vers = await apiGet(`/api/automation/flows/${flowId}/versions`);
-      setVersions(vers || []);
+      const versRaw = await apiGet(`/api/automation/flows/${flowId}/versions`);
+      const vers = (versRaw || []).map(normalizeVersion);
+      setVersions(vers);
       if (vers?.[0]?.definitionJson) {
         const def = JSON.parse(vers[0].definitionJson);
         const loadedNodes = Array.isArray(def.nodes) ? def.nodes : [];
@@ -1311,7 +1343,8 @@ export default function AutomationsPage() {
       setShowCreate(false);
       setCreateForm({ name: "", description: "", companyName: "" });
       await loadAll();
-      if (res?.flow?.id) { setSelectedFlowId(String(res.flow.id)); navigate("/dashboard/automations/workflow"); }
+      const createdFlowId = res?.flow?.id ?? res?.flow?.Id;
+      if (createdFlowId) { setSelectedFlowId(String(createdFlowId)); navigate("/dashboard/automations/workflow"); }
     } catch (e) { toast.error(e?.message || "Create failed"); }
   };
 
@@ -1352,7 +1385,9 @@ export default function AutomationsPage() {
     const sel = flows.find((x) => String(x.id) === String(flowId));
     if (!canPublishBot && sel?.lifecycleStatus !== "published") return toast.error("Active bot limit reached. Upgrade plan.");
     try {
-      const vers = String(flowId) === String(selectedFlowId) ? versions : await apiGet(`/api/automation/flows/${flowId}/versions`);
+      const vers = String(flowId) === String(selectedFlowId)
+        ? versions
+        : ((await apiGet(`/api/automation/flows/${flowId}/versions`)) || []).map(normalizeVersion);
       if (!vers?.length) return toast.error("Save the workflow first");
       await apiPost(`/api/automation/flows/${flowId}/versions/${vers[0].id}/publish`, { requireApproval: false });
       toast.success("Published successfully! 🚀");
