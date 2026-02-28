@@ -401,10 +401,12 @@ public class WabaWebhookWorker(
                     {
                         await RunTriggeredAutomationsAsync(
                             scope.ServiceProvider,
+                            controlDb,
                             tenantDb,
                             resolved.TenantId,
                             resolved.TenantSlug,
                             resolved.DataConnectionString,
+                            parse.PhoneNumberId,
                             triggerInbound,
                             stoppingToken);
                     }
@@ -710,16 +712,17 @@ public class WabaWebhookWorker(
         };
     }
 
-    private static bool TriggerMatches(AutomationFlow flow, string inboundText, string? definitionJson = null)
+    private static (bool Matched, string Reason) EvaluateTriggerMatch(AutomationFlow flow, string inboundText, string? definitionJson = null)
     {
         var triggerType = (flow.TriggerType ?? string.Empty).Trim().ToLowerInvariant();
-        if (triggerType is not ("keyword" or "intent")) return false;
+        if (triggerType is not ("keyword" or "intent")) return (false, "unsupported_trigger_type");
         var text = (inboundText ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (string.IsNullOrWhiteSpace(text)) return (false, "empty_inbound_text");
 
-        static bool TryMatchFromJson(string json, string inbound, out bool matched)
+        static bool TryMatchFromJson(string json, string inbound, out bool matched, out string reason)
         {
             matched = false;
+            reason = "no_match";
             using var cfgDoc = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
             var root = cfgDoc.RootElement;
             var mode = root.TryGetProperty("match", out var modeNode)
@@ -733,6 +736,7 @@ public class WabaWebhookWorker(
                     if (MatchByMode(inbound, k.ToString() ?? string.Empty, mode))
                     {
                         matched = true;
+                        reason = $"matched_keywords_array:{mode}";
                         return true;
                     }
                 }
@@ -744,6 +748,7 @@ public class WabaWebhookWorker(
                     if (MatchByMode(inbound, raw, mode))
                     {
                         matched = true;
+                        reason = $"matched_keywords_csv:{mode}";
                         return true;
                     }
                 }
@@ -753,6 +758,7 @@ public class WabaWebhookWorker(
                 if (MatchByMode(inbound, keywordNode.ToString() ?? string.Empty, mode))
                 {
                     matched = true;
+                    reason = $"matched_keyword:{mode}";
                     return true;
                 }
             }
@@ -763,32 +769,37 @@ public class WabaWebhookWorker(
                     if (MatchByMode(inbound, k.ToString() ?? string.Empty, mode))
                     {
                         matched = true;
+                        reason = $"matched_trigger_keywords:{mode}";
                         return true;
                     }
                 }
             }
+            reason = $"no_keyword_match:{mode}";
             return true;
         }
 
         try
         {
-            if (TryMatchFromJson(flow.TriggerConfigJson, text, out var byFlow) && byFlow) return true;
+            if (TryMatchFromJson(flow.TriggerConfigJson, text, out var byFlow, out var flowReason) && byFlow)
+                return (true, flowReason);
 
-            // Fallback: some flows keep trigger keywords inside definitionJson.trigger
             if (!string.IsNullOrWhiteSpace(definitionJson))
             {
                 using var defDoc = JsonDocument.Parse(definitionJson);
                 var root = defDoc.RootElement;
                 if (root.TryGetProperty("trigger", out var triggerNode))
                 {
-                    if (TryMatchFromJson(triggerNode.GetRawText(), text, out var byDef) && byDef) return true;
+                    if (TryMatchFromJson(triggerNode.GetRawText(), text, out var byDef, out var defReason) && byDef)
+                        return (true, $"fallback_definition:{defReason}");
+                    return (false, $"no_match_in_definition:{defReason}");
                 }
+                return (false, $"no_match_in_flow_config:{flowReason}");
             }
-            return false;
+            return (false, $"no_match_in_flow_config:{flowReason}");
         }
         catch
         {
-            return false;
+            return (false, "trigger_parse_error");
         }
     }
 
@@ -909,10 +920,12 @@ public class WabaWebhookWorker(
 
     private async Task RunTriggeredAutomationsAsync(
         IServiceProvider sp,
+        ControlDbContext controlDb,
         TenantDbContext tenantDb,
         Guid tenantId,
         string tenantSlug,
         string tenantConnectionString,
+        string phoneNumberId,
         TriggerInboundContext inbound,
         CancellationToken ct)
     {
@@ -929,13 +942,76 @@ public class WabaWebhookWorker(
         foreach (var flow in flows)
         {
             var targetVersionId = flow.PublishedVersionId ?? flow.CurrentVersionId;
-            if (!targetVersionId.HasValue) continue;
+            if (!targetVersionId.HasValue)
+            {
+                controlDb.AuditLogs.Add(new AuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenantId,
+                    ActorUserId = Guid.Empty,
+                    Action = "waba.workflow.trigger_eval",
+                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; matched=false; reason=missing_target_version; matched_flow_id=",
+                    CreatedAtUtc = DateTime.UtcNow
+                });
+                await controlDb.SaveChangesAsync(ct);
+                continue;
+            }
             var version = await tenantDb.AutomationFlowVersions
                 .AsNoTracking()
                 .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FlowId == flow.Id && x.Id == targetVersionId.Value, ct);
-            if (version is null) continue;
-            if (!string.Equals((flow.Channel ?? "waba").Trim(), "waba", StringComparison.OrdinalIgnoreCase)) continue;
-            if (!TriggerMatches(flow, inbound.MessageText, version.DefinitionJson)) continue;
+            if (version is null)
+            {
+                controlDb.AuditLogs.Add(new AuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenantId,
+                    ActorUserId = Guid.Empty,
+                    Action = "waba.workflow.trigger_eval",
+                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; matched=false; reason=version_not_found; matched_flow_id=",
+                    CreatedAtUtc = DateTime.UtcNow
+                });
+                await controlDb.SaveChangesAsync(ct);
+                continue;
+            }
+            if (!string.Equals((flow.Channel ?? "waba").Trim(), "waba", StringComparison.OrdinalIgnoreCase))
+            {
+                controlDb.AuditLogs.Add(new AuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenantId,
+                    ActorUserId = Guid.Empty,
+                    Action = "waba.workflow.trigger_eval",
+                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; matched=false; reason=channel_not_waba; matched_flow_id=",
+                    CreatedAtUtc = DateTime.UtcNow
+                });
+                await controlDb.SaveChangesAsync(ct);
+                continue;
+            }
+            var triggerEval = EvaluateTriggerMatch(flow, inbound.MessageText, version.DefinitionJson);
+            if (!triggerEval.Matched)
+            {
+                controlDb.AuditLogs.Add(new AuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenantId,
+                    ActorUserId = Guid.Empty,
+                    Action = "waba.workflow.trigger_eval",
+                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; matched=false; reason={triggerEval.Reason}; matched_flow_id=",
+                    CreatedAtUtc = DateTime.UtcNow
+                });
+                await controlDb.SaveChangesAsync(ct);
+                continue;
+            }
+            controlDb.AuditLogs.Add(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                ActorUserId = Guid.Empty,
+                Action = "waba.workflow.trigger_eval",
+                Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; matched=true; reason={triggerEval.Reason}; matched_flow_id={flow.Id}",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await controlDb.SaveChangesAsync(ct);
 
             var idempotencyKey = $"auto:{flow.Id}:{inbound.MessageId}";
             var existing = await tenantDb.AutomationRuns
