@@ -1076,6 +1076,16 @@ public class WabaWebhookWorker(
                         break;
                     }
                     var nodeType = (node.Type ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_");
+                    controlDb.AuditLogs.Add(new AuditLog
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = tenantId,
+                        ActorUserId = Guid.Empty,
+                        Action = "waba.workflow.node_exec",
+                        Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; nodeType={nodeType}",
+                        CreatedAtUtc = DateTime.UtcNow
+                    });
+                    await controlDb.SaveChangesAsync(ct);
                     var next = node.Next;
                     if (nodeType is "start")
                     {
@@ -1088,13 +1098,40 @@ public class WabaWebhookWorker(
                         var body = ResolveNodeReplyText(nodeType, node.Config, payload);
                         if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(body))
                         {
-                            await messaging.EnqueueAsync(new DTOs.SendMessageRequest
+                            try
                             {
-                                Recipient = recipient,
-                                Body = Interpolate(body, payload),
-                                Channel = ChannelType.WhatsApp,
-                                IdempotencyKey = $"auto-msg:{flow.Id}:{inbound.MessageId}:{node.Id}"
-                            }, ct);
+                                var msg = await messaging.EnqueueAsync(new DTOs.SendMessageRequest
+                                {
+                                    Recipient = recipient,
+                                    Body = Interpolate(body, payload),
+                                    Channel = ChannelType.WhatsApp,
+                                    IdempotencyKey = $"auto-msg:{flow.Id}:{inbound.MessageId}:{node.Id}"
+                                }, ct);
+                                controlDb.AuditLogs.Add(new AuditLog
+                                {
+                                    Id = Guid.NewGuid(),
+                                    TenantId = tenantId,
+                                    ActorUserId = Guid.Empty,
+                                    Action = "waba.workflow.enqueued",
+                                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; messageId={msg.Id}; recipient={recipient}",
+                                    CreatedAtUtc = DateTime.UtcNow
+                                });
+                                await controlDb.SaveChangesAsync(ct);
+                            }
+                            catch (Exception ex)
+                            {
+                                controlDb.AuditLogs.Add(new AuditLog
+                                {
+                                    Id = Guid.NewGuid(),
+                                    TenantId = tenantId,
+                                    ActorUserId = Guid.Empty,
+                                    Action = "waba.workflow.enqueue_failed",
+                                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; error={redactor.RedactText(ex.Message)}",
+                                    CreatedAtUtc = DateTime.UtcNow
+                                });
+                                await controlDb.SaveChangesAsync(ct);
+                                throw;
+                            }
                         }
                         else
                         {
@@ -1124,17 +1161,44 @@ public class WabaWebhookWorker(
                         }
                         if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(templateName))
                         {
-                            await messaging.EnqueueAsync(new DTOs.SendMessageRequest
+                            try
                             {
-                                Recipient = recipient,
-                                Body = body,
-                                Channel = ChannelType.WhatsApp,
-                                UseTemplate = true,
-                                TemplateName = templateName,
-                                TemplateLanguageCode = string.IsNullOrWhiteSpace(languageCode) ? "en" : languageCode,
-                                TemplateParameters = paramValues,
-                                IdempotencyKey = $"auto-tpl:{flow.Id}:{inbound.MessageId}:{node.Id}"
-                            }, ct);
+                                var msg = await messaging.EnqueueAsync(new DTOs.SendMessageRequest
+                                {
+                                    Recipient = recipient,
+                                    Body = body,
+                                    Channel = ChannelType.WhatsApp,
+                                    UseTemplate = true,
+                                    TemplateName = templateName,
+                                    TemplateLanguageCode = string.IsNullOrWhiteSpace(languageCode) ? "en" : languageCode,
+                                    TemplateParameters = paramValues,
+                                    IdempotencyKey = $"auto-tpl:{flow.Id}:{inbound.MessageId}:{node.Id}"
+                                }, ct);
+                                controlDb.AuditLogs.Add(new AuditLog
+                                {
+                                    Id = Guid.NewGuid(),
+                                    TenantId = tenantId,
+                                    ActorUserId = Guid.Empty,
+                                    Action = "waba.workflow.enqueued",
+                                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; messageId={msg.Id}; recipient={recipient}; template={templateName}",
+                                    CreatedAtUtc = DateTime.UtcNow
+                                });
+                                await controlDb.SaveChangesAsync(ct);
+                            }
+                            catch (Exception ex)
+                            {
+                                controlDb.AuditLogs.Add(new AuditLog
+                                {
+                                    Id = Guid.NewGuid(),
+                                    TenantId = tenantId,
+                                    ActorUserId = Guid.Empty,
+                                    Action = "waba.workflow.enqueue_failed",
+                                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; error={redactor.RedactText(ex.Message)}",
+                                    CreatedAtUtc = DateTime.UtcNow
+                                });
+                                await controlDb.SaveChangesAsync(ct);
+                                throw;
+                            }
                         }
                         next = node.OnSuccess ?? node.Next;
                     }
