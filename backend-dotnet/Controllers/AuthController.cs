@@ -150,11 +150,18 @@ public class AuthController(
     public async Task<IActionResult> Refresh(CancellationToken ct)
     {
         var header = Request.Headers.Authorization.ToString();
-        var token = header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+        var bearerToken = header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
             ? header["Bearer ".Length..].Trim()
-            : (authCookie.ReadToken(HttpContext) ?? string.Empty);
-        if (string.IsNullOrWhiteSpace(token)) return Unauthorized("Missing bearer token.");
-        var rotated = await sessions.RotateAsync(token, ct);
+            : string.Empty;
+        var cookieToken = authCookie.ReadToken(HttpContext) ?? string.Empty;
+
+        string? rotated = null;
+        if (!string.IsNullOrWhiteSpace(bearerToken))
+            rotated = await sessions.RotateAsync(bearerToken, ct);
+        // Fallback to cookie token when bearer is stale/missing.
+        if (rotated is null && !string.IsNullOrWhiteSpace(cookieToken))
+            rotated = await sessions.RotateAsync(cookieToken, ct);
+
         if (rotated is null) return Unauthorized("Invalid or expired session.");
         authCookie.SetToken(HttpContext, rotated);
         return Ok(new AuthTokenResponse { AccessToken = rotated });

@@ -8,6 +8,7 @@ const API_BASE =
 let getSession = () => ({ tenantSlug: '' })
 let onSessionUpdate = () => {}
 let onAuthFailure = () => {}
+let refreshPromise = null
 
 export function configureApiClient({ getSessionFn, onSessionUpdateFn, onAuthFailureFn }) {
   getSession = getSessionFn || getSession
@@ -16,11 +17,12 @@ export function configureApiClient({ getSessionFn, onSessionUpdateFn, onAuthFail
 }
 
 async function baseFetch(path, options = {}, useAuth = true) {
-  const { tenantSlug } = getSession()
+  const { tenantSlug, accessToken, token } = getSession()
   const headers = {
     ...(options.headers || {})
   }
   if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
+  if ((accessToken || token) && !headers['Authorization']) headers['Authorization'] = `Bearer ${accessToken || token}`
 
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
 
@@ -28,10 +30,18 @@ async function baseFetch(path, options = {}, useAuth = true) {
 }
 
 async function refreshToken() {
-  const res = await baseFetch('/api/auth/refresh', { method: 'POST' }, true)
-  if (!res.ok) return false
-  await res.json().catch(() => ({}))
-  return true
+  if (refreshPromise) return refreshPromise
+  refreshPromise = (async () => {
+    const res = await baseFetch('/api/auth/refresh', { method: 'POST' }, true)
+    if (!res.ok) return false
+    await res.json().catch(() => ({}))
+    return true
+  })()
+  try {
+    return await refreshPromise
+  } finally {
+    refreshPromise = null
+  }
 }
 
 export async function apiRequest(path, options = {}) {

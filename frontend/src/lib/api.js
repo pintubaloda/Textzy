@@ -9,6 +9,8 @@ const API_BASE =
 const STORAGE_KEY = 'textzy.session'
 const WABA_STATUS_CACHE_PREFIX = 'textzy.wabaStatus'
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
+let refreshPromise = null
+let authRedirected = false
 
 export function getSession() {
   try {
@@ -89,6 +91,7 @@ async function baseFetch(path, options = {}, useAuth = true) {
   ]
   const requiresTenant = useAuth && !tenantOptionalPrefixes.some((p) => path.startsWith(p))
   if (s.tenantSlug) headers['X-Tenant-Slug'] = s.tenantSlug
+  if (s.accessToken && !headers['Authorization']) headers['Authorization'] = `Bearer ${s.accessToken}`
   if (requiresTenant && !headers['X-Tenant-Slug']) {
     if (typeof window !== 'undefined' && window.location.pathname !== '/projects') {
       window.location.assign('/projects')
@@ -104,19 +107,41 @@ async function baseFetch(path, options = {}, useAuth = true) {
 }
 
 async function refresh() {
-  const res = await baseFetch('/api/auth/refresh', { method: 'POST' }, true)
-  if (!res.ok) return false
-  const data = await res.json().catch(() => ({}))
-  if (data?.accessToken) setSession({ accessToken: data.accessToken })
-  return true
+  if (refreshPromise) return refreshPromise
+  refreshPromise = (async () => {
+    const res = await baseFetch('/api/auth/refresh', { method: 'POST' }, true)
+    if (!res.ok) return false
+    const data = await res.json().catch(() => ({}))
+    if (data?.accessToken) setSession({ accessToken: data.accessToken })
+    return true
+  })()
+  try {
+    return await refreshPromise
+  } finally {
+    refreshPromise = null
+  }
 }
 
 export async function apiRequest(path, options = {}) {
   let res = await baseFetch(path, options, true)
   if (res.status !== 401) return res
   const ok = await refresh()
-  if (!ok) return res
+  if (!ok) {
+    clearSession()
+    if (!authRedirected && typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      authRedirected = true
+      window.location.assign('/login')
+    }
+    return res
+  }
   res = await baseFetch(path, options, true)
+  if (res.status === 401) {
+    clearSession()
+    if (!authRedirected && typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      authRedirected = true
+      window.location.assign('/login')
+    }
+  }
   return res
 }
 
