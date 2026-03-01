@@ -178,6 +178,16 @@ public class WhatsAppCloudService(
     {
         var config = await GetOrCreateTenantConfigAsync(ct);
 
+        // Safety: do not downgrade an already connected mapping if user clicks
+        // "Start onboarding" again from UI.
+        var alreadyConnected = config.IsActive
+            && !string.IsNullOrWhiteSpace(config.WabaId)
+            && !string.IsNullOrWhiteSpace(config.PhoneNumberId);
+        if (alreadyConnected)
+        {
+            return config;
+        }
+
         config.OnboardingState = "requested";
         config.OnboardingStartedAtUtc = DateTime.UtcNow;
         config.LastError = string.Empty;
