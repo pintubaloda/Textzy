@@ -93,9 +93,11 @@ public class WorkflowExecutionEngine(
                 await controlDb.SaveChangesAsync(ct);
 
                 var next = node.Next;
+                var outputData = "{}";
                 if (nodeType is "start")
                 {
                     next = node.Next;
+                    outputData = JsonSerializer.Serialize(new { nextNodeId = next });
                 }
                 else if (nodeType is "text" or "text_message" or "textmessage" or "send_text" or "message" or "ask_question" or "capture_input" or "bot_reply" or "botreply" or "buttons" or "list" or "cta_url" or "media")
                 {
@@ -150,6 +152,14 @@ public class WorkflowExecutionEngine(
                                 messageReq.InteractiveButtons = interactiveButtons.Select(x => Interpolate(x, req.Payload)).ToList();
                             }
                             var msg = await messaging.EnqueueAsync(messageReq, ct);
+                            outputData = JsonSerializer.Serialize(new
+                            {
+                                recipient,
+                                enqueuedMessageId = msg.Id,
+                                providerMessageId = msg.ProviderMessageId,
+                                interactive = interactiveButtons.Count > 0,
+                                buttons = interactiveButtons
+                            });
                             controlDb.AuditLogs.Add(new AuditLog
                             {
                                 Id = Guid.NewGuid(),
@@ -178,6 +188,13 @@ public class WorkflowExecutionEngine(
                     }
                     else
                     {
+                        outputData = JsonSerializer.Serialize(new
+                        {
+                            recipient,
+                            bodyLength = body?.Length ?? 0,
+                            skipped = true,
+                            reason = "empty_recipient_or_body"
+                        });
                         controlDb.AuditLogs.Add(new AuditLog
                         {
                             Id = Guid.NewGuid(),
@@ -224,6 +241,15 @@ public class WorkflowExecutionEngine(
                             TemplateParameters = paramValues,
                             IdempotencyKey = $"auto-tpl:{req.FlowId}:{req.InboundMessageId}:{node.Id}"
                         }, ct);
+                        outputData = JsonSerializer.Serialize(new
+                        {
+                            recipient,
+                            templateName,
+                            languageCode = string.IsNullOrWhiteSpace(languageCode) ? "en" : languageCode,
+                            paramCount = paramValues.Count,
+                            enqueuedMessageId = msg.Id,
+                            providerMessageId = msg.ProviderMessageId
+                        });
                         controlDb.AuditLogs.Add(new AuditLog
                         {
                             Id = Guid.NewGuid(),
@@ -235,17 +261,42 @@ public class WorkflowExecutionEngine(
                         });
                         await controlDb.SaveChangesAsync(ct);
                     }
+                    else
+                    {
+                        outputData = JsonSerializer.Serialize(new
+                        {
+                            recipient,
+                            templateName,
+                            skipped = true,
+                            reason = "empty_recipient_or_template"
+                        });
+                    }
                     next = node.OnSuccess ?? node.Next;
                 }
                 else if (nodeType is "condition" or "split")
                 {
                     var ok = EvaluateCondition(node.Config, req.Payload);
                     next = ok ? (node.OnTrue ?? node.OnSuccess ?? node.Next) : (node.OnFalse ?? node.OnFailure ?? node.Next);
+                    outputData = JsonSerializer.Serialize(new
+                    {
+                        field = ResolveValue(node.Config, req.Payload, "field"),
+                        @operator = ResolveValue(node.Config, req.Payload, "operator"),
+                        value = ResolveValue(node.Config, req.Payload, "value"),
+                        matched = ok,
+                        nextNodeId = next
+                    });
                 }
                 else if (nodeType is "assign_agent" or "assignagent" or "handoff")
                 {
                     await TryAssignConversationAsync(req, node, ct);
                     next = node.OnSuccess ?? node.Next;
+                    outputData = JsonSerializer.Serialize(new
+                    {
+                        queue = ResolveValue(node.Config, req.Payload, "queue", "team", "department"),
+                        assignedUserId = ResolveValue(node.Config, req.Payload, "userId", "agentId", "assignedUserId"),
+                        assignedUserName = ResolveValue(node.Config, req.Payload, "userName", "agentName", "assignedUserName"),
+                        nextNodeId = next
+                    });
                 }
                 else if (nodeType is "delay" or "wait")
                 {
@@ -253,37 +304,48 @@ public class WorkflowExecutionEngine(
                     if (delaySeconds <= 0)
                     {
                         next = node.OnSuccess ?? node.Next;
+                        outputData = JsonSerializer.Serialize(new { delaySeconds, inline = false, skipped = true, nextNodeId = next });
                     }
                     else if (delaySeconds <= runtimeOptions.Value.InlineDelayMaxSeconds)
                     {
                         await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
                         next = node.OnSuccess ?? node.Next;
+                        outputData = JsonSerializer.Serialize(new { delaySeconds, inline = true, nextNodeId = next });
                     }
                     else
                     {
                         await TryScheduleResumeAsync(req, node, delaySeconds, node.OnSuccess ?? node.Next, ct);
+                        outputData = JsonSerializer.Serialize(new
+                        {
+                            delaySeconds,
+                            scheduled = true,
+                            nextNodeId = node.OnSuccess ?? node.Next
+                        });
                         req.Run.Status = "scheduled";
                         req.Run.Log = string.Join('\n', log.Append($"delay:{node.Id}:{delaySeconds}s"));
                         req.Run.TraceJson = JsonSerializer.Serialize(trace);
                         req.Run.CompletedAtUtc = DateTime.UtcNow;
                         await TryWriteExecutionStateAsync(req, node.Id, "scheduled", string.Empty, ct);
+                        await TryWriteExecutionLogAsync(req, node, "completed", 0, "{}", outputData, string.Empty, ct);
                         break;
                     }
                 }
                 else if (nodeType == "end")
                 {
                     trace.Add(new { nodeId = node.Id, nodeType, nextNodeId = "", status = "ok" });
-                    await TryWriteExecutionLogAsync(req, node, "completed", 0, "{}", "{}", string.Empty, ct);
+                    outputData = JsonSerializer.Serialize(new { ended = true });
+                    await TryWriteExecutionLogAsync(req, node, "completed", 0, "{}", outputData, string.Empty, ct);
                     break;
                 }
                 else
                 {
                     next = node.OnSuccess ?? node.Next;
+                    outputData = JsonSerializer.Serialize(new { nextNodeId = next });
                 }
 
                 trace.Add(new { nodeId = node.Id, nodeType, nextNodeId = next, status = "ok" });
                 log.Add($"{nodeType}:{node.Id}->{next}");
-                await TryWriteExecutionLogAsync(req, node, "completed", 0, "{}", "{}", string.Empty, ct);
+                await TryWriteExecutionLogAsync(req, node, "completed", 0, "{}", outputData, string.Empty, ct);
                 if (string.IsNullOrWhiteSpace(next)) break;
                 cursor = next;
             }

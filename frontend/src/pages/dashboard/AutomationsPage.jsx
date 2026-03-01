@@ -1222,6 +1222,7 @@ export default function AutomationsPage() {
   const [faqItems, setFaqItems] = useState([]);
   const [faqForm, setFaqForm] = useState({ question: "", answer: "", category: "", isActive: true });
   const [editingFaqId, setEditingFaqId] = useState(null);
+  const [triggerAuditSummary, setTriggerAuditSummary] = useState(null);
 
   const normalizeFlow = useCallback((f) => ({
     id: f?.id ?? f?.Id ?? "",
@@ -1281,10 +1282,12 @@ export default function AutomationsPage() {
         apiGet("/api/automation/faq").catch(() => []),
         getBillingUsage().catch(() => ({ values: {} })),
         getCurrentBillingPlan().catch(() => ({ plan: { limits: {} } })),
-      ]).then(([q, usageRes, planRes]) => {
+        apiGet("/api/automation/trigger-audit/summary?days=7").catch(() => null),
+      ]).then(([q, usageRes, planRes, triggerSummary]) => {
         setFaqItems(q || []);
         setBillingUsage(usageRes?.values || {});
         setBillingLimits(planRes?.plan?.limits || {});
+        setTriggerAuditSummary(triggerSummary || null);
       }).catch(() => {});
     } catch { toast.error("Failed to load automations"); }
   };
@@ -1693,7 +1696,7 @@ export default function AutomationsPage() {
 
         {/* ── Page content ── */}
         <div className="flex-1 overflow-hidden">
-          {mode === "overview" && <OverviewPage flows={flows} limits={limits} flowUsed={flowUsed} flowLimit={flowLimit} activeBots={activeBots} chatbotLimit={chatbotLimit} canCreateFlow={canCreateFlow} canPublishBot={canPublishBot} showCreate={showCreate} setShowCreate={setShowCreate} createForm={createForm} setCreateForm={setCreateForm} createFlow={createFlow} setSelectedFlowId={setSelectedFlowId} navigate={navigate} publish={publish} unpublish={unpublish} deleteFlow={deleteFlow} />}
+          {mode === "overview" && <OverviewPage flows={flows} limits={limits} flowUsed={flowUsed} flowLimit={flowLimit} activeBots={activeBots} chatbotLimit={chatbotLimit} canCreateFlow={canCreateFlow} canPublishBot={canPublishBot} showCreate={showCreate} setShowCreate={setShowCreate} createForm={createForm} setCreateForm={setCreateForm} createFlow={createFlow} setSelectedFlowId={setSelectedFlowId} navigate={navigate} publish={publish} unpublish={unpublish} deleteFlow={deleteFlow} triggerAuditSummary={triggerAuditSummary} />}
           {mode === "workflow" && <WorkflowCanvas
             flows={flows} selectedFlowId={selectedFlowId} setSelectedFlowId={setSelectedFlowId}
             selectedFlow={selectedFlow} nodes={nodes} edges={edges} selectedNodeId={selectedNodeId}
@@ -1729,7 +1732,7 @@ export default function AutomationsPage() {
 /* ═══════════════════════════════════════════════════════════════════════════════
    OVERVIEW PAGE
 ═══════════════════════════════════════════════════════════════════════════════ */
-function OverviewPage({ flows, limits, flowUsed, flowLimit, activeBots, chatbotLimit, canCreateFlow, canPublishBot, showCreate, setShowCreate, createForm, setCreateForm, createFlow, setSelectedFlowId, navigate, publish, unpublish, deleteFlow }) {
+function OverviewPage({ flows, limits, flowUsed, flowLimit, activeBots, chatbotLimit, canCreateFlow, canPublishBot, showCreate, setShowCreate, createForm, setCreateForm, createFlow, setSelectedFlowId, navigate, publish, unpublish, deleteFlow, triggerAuditSummary }) {
   return (
     <div className="p-6 space-y-6 overflow-auto h-full">
       {/* Stats */}
@@ -1751,6 +1754,43 @@ function OverviewPage({ flows, limits, flowUsed, flowLimit, activeBots, chatbotL
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Trigger Evaluation Summary */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-slate-800">Trigger Health (Last 7 days)</h3>
+          <Badge variant="outline" className="text-xs">
+            Match Rate {Number(triggerAuditSummary?.matchRate ?? 0).toFixed(1)}%
+          </Badge>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+          <div className="rounded-xl border border-slate-200 p-3">
+            <div className="text-xs text-slate-500">Total Evaluations</div>
+            <div className="text-xl font-semibold text-slate-900">{triggerAuditSummary?.total ?? 0}</div>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+            <div className="text-xs text-emerald-700">Matched</div>
+            <div className="text-xl font-semibold text-emerald-700">{triggerAuditSummary?.matched ?? 0}</div>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3">
+            <div className="text-xs text-amber-700">Unmatched</div>
+            <div className="text-xl font-semibold text-amber-700">{triggerAuditSummary?.unmatched ?? 0}</div>
+          </div>
+        </div>
+        {!!triggerAuditSummary?.reasons?.length && (
+          <div className="rounded-xl border border-slate-200 overflow-hidden">
+            <div className="px-3 py-2 text-xs font-semibold text-slate-600 bg-slate-50">Top Reasons</div>
+            <div className="divide-y divide-slate-100">
+              {triggerAuditSummary.reasons.slice(0, 6).map((r) => (
+                <div key={r.reason} className="px-3 py-2 text-xs flex items-center justify-between">
+                  <span className="text-slate-600 truncate">{r.reason}</span>
+                  <span className="font-semibold text-slate-800">{r.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bot List */}
