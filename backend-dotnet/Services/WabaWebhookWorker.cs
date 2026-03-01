@@ -28,6 +28,8 @@ public class WabaWebhookWorker(
         public string From { get; init; } = string.Empty;
         public string Name { get; init; } = string.Empty;
         public string MessageText { get; init; } = string.Empty;
+        public string ContextMessageId { get; init; } = string.Empty;
+        public bool IsInteractiveReply { get; init; }
     }
 
     private sealed class FlowNode
@@ -368,7 +370,13 @@ public class WabaWebhookWorker(
                             MessageId = inboundProviderId,
                             From = inbound.From,
                             Name = inbound.Name,
-                            MessageText = ComposeInboundBody(inbound)
+                            MessageText = ComposeInboundBody(inbound),
+                            ContextMessageId = inbound.ContextMessageId,
+                            IsInteractiveReply =
+                                !string.IsNullOrWhiteSpace(inbound.ButtonText) ||
+                                !string.IsNullOrWhiteSpace(inbound.ListReplyTitle) ||
+                                string.Equals(inbound.InteractiveType, "button_reply", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(inbound.InteractiveType, "list_reply", StringComparison.OrdinalIgnoreCase)
                         };
                     }
                     tenantDb.MessageEvents.Add(new MessageEvent
@@ -827,6 +835,38 @@ public class WabaWebhookWorker(
         return value;
     }
 
+    private static Guid? TryResolveFlowIdFromIdempotencyKey(string? idempotencyKey)
+    {
+        var key = (idempotencyKey ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(key)) return null;
+        // auto-msg:{flowId}:{inboundMessageId}:{nodeId}
+        if (!key.StartsWith("auto-msg:", StringComparison.OrdinalIgnoreCase)) return null;
+        var parts = key.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length < 2) return null;
+        return Guid.TryParse(parts[1], out var flowId) ? flowId : null;
+    }
+
+    private static string ResolveResumeNodeId(
+        IReadOnlyDictionary<string, FlowNode> nodes,
+        string startNodeId,
+        bool isInteractiveReply)
+    {
+        if (!isInteractiveReply) return startNodeId;
+        if (string.IsNullOrWhiteSpace(startNodeId) || !nodes.ContainsKey(startNodeId)) return startNodeId;
+        var cursor = startNodeId;
+        var guard = 0;
+        while (!string.IsNullOrWhiteSpace(cursor) && guard < 64)
+        {
+            guard++;
+            if (!nodes.TryGetValue(cursor, out var node)) break;
+            var nodeType = (node.Type ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_");
+            if (nodeType is "condition" or "split") return node.Id;
+            if (string.IsNullOrWhiteSpace(node.Next)) break;
+            cursor = node.Next;
+        }
+        return startNodeId;
+    }
+
     private static (Dictionary<string, FlowNode> nodes, string startNodeId) ParseFlowDefinition(string definitionJson)
     {
         var nodes = new Dictionary<string, FlowNode>(StringComparer.OrdinalIgnoreCase);
@@ -1117,12 +1157,23 @@ public class WabaWebhookWorker(
             .ToListAsync(ct);
         if (flows.Count == 0) return;
 
+        Guid? resumeFlowId = null;
+        if (inbound.IsInteractiveReply && !string.IsNullOrWhiteSpace(inbound.ContextMessageId))
+        {
+            var contextOutMessage = await tenantDb.Set<Message>()
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.ProviderMessageId == inbound.ContextMessageId, ct);
+            resumeFlowId = TryResolveFlowIdFromIdempotencyKey(contextOutMessage?.IdempotencyKey);
+        }
+
         var tenancy = sp.GetRequiredService<TenancyContext>();
         tenancy.SetTenant(tenantId, tenantSlug, tenantConnectionString);
         var messaging = sp.GetRequiredService<MessagingService>();
 
         foreach (var flow in flows)
         {
+            if (resumeFlowId.HasValue && flow.Id != resumeFlowId.Value) continue;
+
             var targetVersionId = flow.PublishedVersionId ?? flow.CurrentVersionId;
             if (!targetVersionId.HasValue)
             {
@@ -1170,7 +1221,8 @@ public class WabaWebhookWorker(
                 continue;
             }
             var triggerEval = EvaluateTriggerMatch(flow, inbound.MessageText, version.DefinitionJson);
-            if (!triggerEval.Matched)
+            var bypassTriggerForResume = inbound.IsInteractiveReply && resumeFlowId.HasValue && resumeFlowId.Value == flow.Id;
+            if (!triggerEval.Matched && !bypassTriggerForResume)
             {
                 controlDb.AuditLogs.Add(new AuditLog
                 {
@@ -1190,7 +1242,7 @@ public class WabaWebhookWorker(
                 TenantId = tenantId,
                 ActorUserId = Guid.Empty,
                 Action = "waba.workflow.trigger_eval",
-                Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; matched=true; reason={triggerEval.Reason}; matched_flow_id={flow.Id}",
+                Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; matched=true; reason={(bypassTriggerForResume ? "interactive_resume_context" : triggerEval.Reason)}; matched_flow_id={flow.Id}",
                 CreatedAtUtc = DateTime.UtcNow
             });
             await controlDb.SaveChangesAsync(ct);
@@ -1221,7 +1273,7 @@ public class WabaWebhookWorker(
             var (nodes, startNodeId) = ParseFlowDefinition(version.DefinitionJson);
             var trace = new List<object>();
             var log = new List<string>();
-            var cursor = startNodeId;
+            var cursor = ResolveResumeNodeId(nodes, startNodeId, bypassTriggerForResume);
             var guard = 0;
             try
             {
