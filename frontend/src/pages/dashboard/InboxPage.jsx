@@ -79,6 +79,19 @@ const messagePreviewText = (msg) => {
   return body || "Message";
 };
 
+const parseInteractiveButtonsFromType = (messageType) => {
+  const raw = String(messageType || "");
+  if (!raw.startsWith("interactive:")) return [];
+  const parts = raw.split(":");
+  if (parts.length < 3) return [];
+  const encoded = parts.slice(2).join(":");
+  return encoded
+    .split("~")
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+};
+
 const renderMessageText = (msg, customerName = "Customer", agentName = "Agent") => {
   const text = String(msg?.text || "");
   const replyMatch = text.match(/^↪ Reply to \(([^)]+)\):\s*([\s\S]*)$/);
@@ -305,6 +318,7 @@ const InboxPage = () => {
       const name = String(x.body ?? x.Body ?? "").split("|")[0] || "template";
       text = `🧩 Template: ${name}`;
     }
+    const interactiveButtons = parseInteractiveButtonsFromType(messageType);
     return {
     id: x.id ?? x.Id ?? crypto.randomUUID(),
     sender,
@@ -317,6 +331,7 @@ const InboxPage = () => {
     status: normalizedStatus,
     messageType,
     media,
+    interactiveButtons,
   };
   };
 
@@ -1616,6 +1631,18 @@ const InboxPage = () => {
                     <div className="text-[11px] text-emerald-700 font-medium mb-1">By {agentDisplayName}</div>
                   ) : null}
                     {renderMessageText(msg, selectedChat?.name || "Customer", agentDisplayName)}
+                  {Array.isArray(msg.interactiveButtons) && msg.interactiveButtons.length > 0 ? (
+                    <div className="mt-2 space-y-1.5">
+                      {msg.interactiveButtons.map((btn, idx) => (
+                        <div
+                          key={`${msg.id}-btn-${idx}`}
+                          className="h-8 rounded-md border border-sky-200 bg-sky-50 text-sky-700 text-xs font-medium flex items-center justify-center"
+                        >
+                          ↩ {btn}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                   {msg.messageType.startsWith("media:") ? <InboundMediaPreview msg={msg} onOpen={() => openInboundMedia(msg)} /> : null}
                   <div className={`flex items-center gap-2 mt-1 ${msg.sender === "agent" ? "justify-end" : ""}`}>
                     <span className="text-xs text-slate-500">{msg.time}</span>

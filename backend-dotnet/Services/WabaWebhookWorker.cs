@@ -805,13 +805,26 @@ public class WabaWebhookWorker(
 
     private static Dictionary<string, object?> BuildPayload(TriggerInboundContext inbound)
     {
+        var normalizedMessage = NormalizeInboundMessageText(inbound.MessageText);
         return new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
             ["recipient"] = inbound.From,
             ["name"] = string.IsNullOrWhiteSpace(inbound.Name) ? inbound.From : inbound.Name,
-            ["message"] = inbound.MessageText,
+            ["message"] = normalizedMessage,
+            ["message_raw"] = inbound.MessageText,
             ["inbound_message_id"] = inbound.MessageId
         };
+    }
+
+    private static string NormalizeInboundMessageText(string? input)
+    {
+        var value = (input ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        if (value.StartsWith("Button reply:", StringComparison.OrdinalIgnoreCase))
+            return value["Button reply:".Length..].Trim();
+        if (value.StartsWith("Interactive reply:", StringComparison.OrdinalIgnoreCase))
+            return value["Interactive reply:".Length..].Trim();
+        return value;
     }
 
     private static (Dictionary<string, FlowNode> nodes, string startNodeId) ParseFlowDefinition(string definitionJson)
@@ -897,15 +910,18 @@ public class WabaWebhookWorker(
         var @operator = config.TryGetValue("operator", out var op) ? op?.ToString()?.ToLowerInvariant() ?? "equals" : "equals";
         var expected = config.TryGetValue("value", out var v) ? v?.ToString() ?? string.Empty : string.Empty;
         var actual = payload.TryGetValue(field, out var a) ? a?.ToString() ?? string.Empty : string.Empty;
+        var normalizedActual = string.Equals(field, "message", StringComparison.OrdinalIgnoreCase)
+            ? NormalizeInboundMessageText(actual)
+            : actual;
 
         return @operator switch
         {
-            "contains" => actual.Contains(expected, StringComparison.OrdinalIgnoreCase),
-            "starts_with" => actual.StartsWith(expected, StringComparison.OrdinalIgnoreCase),
-            "ends_with" => actual.EndsWith(expected, StringComparison.OrdinalIgnoreCase),
-            "not_equals" => !string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase),
-            "regex" => System.Text.RegularExpressions.Regex.IsMatch(actual, expected),
-            _ => string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase)
+            "contains" => normalizedActual.Contains(expected, StringComparison.OrdinalIgnoreCase),
+            "starts_with" => normalizedActual.StartsWith(expected, StringComparison.OrdinalIgnoreCase),
+            "ends_with" => normalizedActual.EndsWith(expected, StringComparison.OrdinalIgnoreCase),
+            "not_equals" => !string.Equals(normalizedActual, expected, StringComparison.OrdinalIgnoreCase),
+            "regex" => System.Text.RegularExpressions.Regex.IsMatch(normalizedActual, expected),
+            _ => string.Equals(normalizedActual, expected, StringComparison.OrdinalIgnoreCase)
         };
     }
 
@@ -960,17 +976,27 @@ public class WabaWebhookWorker(
                 }
                 return list;
             }
-            if (raw is JsonElement j && j.ValueKind == JsonValueKind.Array)
+            if (raw is JsonElement j)
             {
-                var list = new List<string>();
-                foreach (var it in j.EnumerateArray())
+                try
                 {
-                    var v = (it.ValueKind == JsonValueKind.Object && it.TryGetProperty("title", out var title))
-                        ? title.ToString()
-                        : it.ToString();
-                    if (!string.IsNullOrWhiteSpace(v)) list.Add(v.Trim());
+                    if (j.ValueKind == JsonValueKind.Array)
+                    {
+                        var list = new List<string>();
+                        foreach (var it in j.EnumerateArray())
+                        {
+                            var v = (it.ValueKind == JsonValueKind.Object && it.TryGetProperty("title", out var title))
+                                ? title.ToString()
+                                : it.ToString();
+                            if (!string.IsNullOrWhiteSpace(v)) list.Add(v.Trim());
+                        }
+                        return list;
+                    }
                 }
-                return list;
+                catch
+                {
+                    return [];
+                }
             }
             return [];
         }
@@ -1049,17 +1075,27 @@ public class WabaWebhookWorker(
             }
             return result.Distinct(StringComparer.OrdinalIgnoreCase).Take(max).ToList();
         }
-        if (raw is JsonElement j && j.ValueKind == JsonValueKind.Array)
+        if (raw is JsonElement j)
         {
-            foreach (var it in j.EnumerateArray())
+            try
             {
-                if (result.Count >= max) break;
-                var v = (it.ValueKind == JsonValueKind.Object && it.TryGetProperty("title", out var title))
-                    ? title.ToString()
-                    : it.ToString();
-                if (!string.IsNullOrWhiteSpace(v)) result.Add(v.Trim());
+                if (j.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var it in j.EnumerateArray())
+                    {
+                        if (result.Count >= max) break;
+                        var v = (it.ValueKind == JsonValueKind.Object && it.TryGetProperty("title", out var title))
+                            ? title.ToString()
+                            : it.ToString();
+                        if (!string.IsNullOrWhiteSpace(v)) result.Add(v.Trim());
+                    }
+                    return result.Distinct(StringComparer.OrdinalIgnoreCase).Take(max).ToList();
+                }
             }
-            return result.Distinct(StringComparer.OrdinalIgnoreCase).Take(max).ToList();
+            catch
+            {
+                return result;
+            }
         }
         return result;
     }
@@ -1213,7 +1249,7 @@ public class WabaWebhookWorker(
                     {
                         next = node.Next;
                     }
-                    else if (nodeType is "text" or "send_text" or "bot_reply" or "botreply" or "buttons" or "list" or "cta_url" or "media")
+                    else if (nodeType is "text" or "text_message" or "textmessage" or "send_text" or "message" or "ask_question" or "capture_input" or "bot_reply" or "botreply" or "buttons" or "list" or "cta_url" or "media")
                     {
                         var recipient = ResolveValue(node.Config, payload, "recipient");
                         if (string.IsNullOrWhiteSpace(recipient)) recipient = inbound.From;
