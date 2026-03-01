@@ -1611,19 +1611,16 @@ public class WhatsAppCloudService(
 
     private async Task<TenantWabaConfig?> GetTenantConfigRowAsync(bool onlyActive, CancellationToken ct)
     {
-        var rows = await tenantDb.Set<TenantWabaConfig>()
+        return await tenantDb.Set<TenantWabaConfig>()
             .Where(x => x.TenantId == tenancy.TenantId && (!onlyActive || x.IsActive))
-            .OrderByDescending(x => x.ConnectedAtUtc)
+            // Prefer active mapping first. This avoids showing "disconnected" when a newer
+            // inactive/requested row exists alongside an already connected active row.
+            .OrderByDescending(x => x.IsActive)
+            .ThenByDescending(x => x.ConnectedAtUtc)
             .ThenByDescending(x => x.OnboardingStartedAtUtc)
-            .ToListAsync(ct);
-
-        if (rows.Count <= 1) return rows.FirstOrDefault();
-
-        // Keep latest row only to avoid legacy duplicate records leaking inconsistent state.
-        var keep = rows[0];
-        tenantDb.Set<TenantWabaConfig>().RemoveRange(rows.Skip(1));
-        await tenantDb.SaveChangesAsync(ct);
-        return keep;
+            .ThenByDescending(x => x.CodeReceivedAtUtc)
+            .ThenByDescending(x => x.ExchangedAtUtc)
+            .FirstOrDefaultAsync(ct);
     }
 
     private async Task<TenantWabaConfig> GetOrCreateTenantConfigAsync(CancellationToken ct)

@@ -326,8 +326,10 @@ export async function wabaGetOnboardingStatus(options = {}) {
       return cache.data
     }
     if (!isConnected) {
-      // Pending/disconnected: keep last known status until user manually refreshes.
-      return cache.data
+      // Pending/disconnected should still auto-refresh periodically so a newly
+      // connected number is reflected without requiring manual refresh.
+      const PENDING_CACHE_MS = 60 * 1000
+      if (age < PENDING_CACHE_MS) return cache.data
     }
   }
   const data = await apiGet('/api/waba/onboarding/status')
