@@ -29,6 +29,7 @@ public class WabaWebhookWorker(
         public string From { get; init; } = string.Empty;
         public string Name { get; init; } = string.Empty;
         public string MessageText { get; init; } = string.Empty;
+        public string MatchKey { get; init; } = string.Empty;
         public string ContextMessageId { get; init; } = string.Empty;
         public bool IsInteractiveReply { get; init; }
     }
@@ -372,6 +373,13 @@ public class WabaWebhookWorker(
                             From = inbound.From,
                             Name = inbound.Name,
                             MessageText = ComposeInboundBody(inbound),
+                            MatchKey = !string.IsNullOrWhiteSpace(inbound.ButtonPayload)
+                                ? inbound.ButtonPayload
+                                : !string.IsNullOrWhiteSpace(inbound.ListReplyId)
+                                    ? inbound.ListReplyId
+                                    : !string.IsNullOrWhiteSpace(inbound.ButtonText)
+                                        ? inbound.ButtonText
+                                        : inbound.ListReplyTitle,
                             ContextMessageId = inbound.ContextMessageId,
                             IsInteractiveReply =
                                 !string.IsNullOrWhiteSpace(inbound.ButtonText) ||
@@ -821,6 +829,7 @@ public class WabaWebhookWorker(
             ["name"] = string.IsNullOrWhiteSpace(inbound.Name) ? inbound.From : inbound.Name,
             ["message"] = normalizedMessage,
             ["message_raw"] = inbound.MessageText,
+            ["message_key"] = inbound.MatchKey,
             ["inbound_message_id"] = inbound.MessageId
         };
     }
@@ -1344,6 +1353,7 @@ public class WabaWebhookWorker(
                 InboundMessageId = inbound.MessageId,
                 InboundRecipient = inbound.From,
                 InboundMessageText = inbound.MessageText,
+                InboundMatchKey = inbound.MatchKey,
                 DefinitionJson = version.DefinitionJson,
                 Run = run,
                 Payload = payload,

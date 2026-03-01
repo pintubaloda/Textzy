@@ -14,6 +14,19 @@ public class WorkflowExecutionEngine(
     SensitiveDataRedactor redactor,
     IOptions<WorkflowRuntimeOptions> runtimeOptions)
 {
+    private sealed class DelayResumePayload
+    {
+        public Guid RunId { get; init; }
+        public Guid VersionId { get; init; }
+        public string InboundRecipient { get; init; } = string.Empty;
+        public string InboundMessageText { get; init; } = string.Empty;
+        public string InboundMessageId { get; init; } = string.Empty;
+        public string PhoneNumberId { get; init; } = string.Empty;
+        public string DefinitionJson { get; init; } = "{}";
+        public string StartNodeId { get; init; } = string.Empty;
+        public Dictionary<string, object?> Payload { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
     private sealed class FlowNode
     {
         public string Id { get; init; } = string.Empty;
@@ -35,11 +48,13 @@ public class WorkflowExecutionEngine(
         public required string InboundMessageId { get; init; }
         public required string InboundRecipient { get; init; }
         public required string InboundMessageText { get; init; }
+        public string InboundMatchKey { get; init; } = string.Empty;
         public required string DefinitionJson { get; init; }
         public required AutomationRun Run { get; init; }
         public required Dictionary<string, object?> Payload { get; init; }
         public bool IsInteractiveResume { get; init; }
         public string ResumeSourceNodeId { get; init; } = string.Empty;
+        public string StartNodeId { get; init; } = string.Empty;
     }
 
     public async Task ExecuteAsync(ExecuteRequest req, CancellationToken ct)
@@ -47,7 +62,9 @@ public class WorkflowExecutionEngine(
         var (nodes, startNodeId) = ParseFlowDefinition(req.DefinitionJson);
         var trace = new List<object>();
         var log = new List<string>();
-        var cursor = ResolveResumeNodeId(nodes, startNodeId, req.IsInteractiveResume, req.ResumeSourceNodeId, req.InboundMessageText);
+        var cursor = !string.IsNullOrWhiteSpace(req.StartNodeId)
+            ? req.StartNodeId
+            : ResolveResumeNodeId(nodes, startNodeId, req.IsInteractiveResume, req.ResumeSourceNodeId, req.InboundMessageText, req.InboundMatchKey);
         var guard = 0;
         try
         {
@@ -186,12 +203,12 @@ public class WorkflowExecutionEngine(
                         if (p is IEnumerable<object?> arr)
                         {
                             foreach (var item in arr)
-                                paramValues.Add(Interpolate(item?.ToString() ?? string.Empty, req.Payload));
+                                paramValues.Add(Interpolate(SafeString(item), req.Payload));
                         }
                         else if (p is JsonElement pElem && pElem.ValueKind == JsonValueKind.Array)
                         {
                             foreach (var item in pElem.EnumerateArray())
-                                paramValues.Add(Interpolate(item.ToString(), req.Payload));
+                                paramValues.Add(Interpolate(SafeString(item), req.Payload));
                         }
                     }
                     if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(templateName))
@@ -225,6 +242,34 @@ public class WorkflowExecutionEngine(
                     var ok = EvaluateCondition(node.Config, req.Payload);
                     next = ok ? (node.OnTrue ?? node.OnSuccess ?? node.Next) : (node.OnFalse ?? node.OnFailure ?? node.Next);
                 }
+                else if (nodeType is "assign_agent" or "assignagent" or "handoff")
+                {
+                    await TryAssignConversationAsync(req, node, ct);
+                    next = node.OnSuccess ?? node.Next;
+                }
+                else if (nodeType is "delay" or "wait")
+                {
+                    var delaySeconds = ParseDelaySeconds(node.Config, req.Payload);
+                    if (delaySeconds <= 0)
+                    {
+                        next = node.OnSuccess ?? node.Next;
+                    }
+                    else if (delaySeconds <= runtimeOptions.Value.InlineDelayMaxSeconds)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
+                        next = node.OnSuccess ?? node.Next;
+                    }
+                    else
+                    {
+                        await TryScheduleResumeAsync(req, node, delaySeconds, node.OnSuccess ?? node.Next, ct);
+                        req.Run.Status = "scheduled";
+                        req.Run.Log = string.Join('\n', log.Append($"delay:{node.Id}:{delaySeconds}s"));
+                        req.Run.TraceJson = JsonSerializer.Serialize(trace);
+                        req.Run.CompletedAtUtc = DateTime.UtcNow;
+                        await TryWriteExecutionStateAsync(req, node.Id, "scheduled", string.Empty, ct);
+                        break;
+                    }
+                }
                 else if (nodeType == "end")
                 {
                     trace.Add(new { nodeId = node.Id, nodeType, nextNodeId = "", status = "ok" });
@@ -243,11 +288,14 @@ public class WorkflowExecutionEngine(
                 cursor = next;
             }
 
-            req.Run.Status = "completed";
-            req.Run.Log = string.Join('\n', log);
-            req.Run.TraceJson = JsonSerializer.Serialize(trace);
-            req.Run.CompletedAtUtc = DateTime.UtcNow;
-            await TryWriteExecutionStateAsync(req, cursor, "completed", string.Empty, ct);
+            if (!string.Equals(req.Run.Status, "scheduled", StringComparison.OrdinalIgnoreCase))
+            {
+                req.Run.Status = "completed";
+                req.Run.Log = string.Join('\n', log);
+                req.Run.TraceJson = JsonSerializer.Serialize(trace);
+                req.Run.CompletedAtUtc = DateTime.UtcNow;
+                await TryWriteExecutionStateAsync(req, cursor, "completed", string.Empty, ct);
+            }
         }
         catch (Exception ex)
         {
@@ -268,6 +316,117 @@ public class WorkflowExecutionEngine(
             });
             await controlDb.SaveChangesAsync(ct);
         }
+    }
+
+    private async Task TryAssignConversationAsync(ExecuteRequest req, FlowNode node, CancellationToken ct)
+    {
+        var queue = ResolveValue(node.Config, req.Payload, "queue", "team", "department");
+        var assignedUserId = ResolveValue(node.Config, req.Payload, "userId", "agentId", "assignedUserId");
+        var assignedUserName = ResolveValue(node.Config, req.Payload, "userName", "agentName", "assignedUserName");
+
+        var convo = await tenantDb.Conversations
+            .FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.CustomerPhone == req.InboundRecipient, ct);
+        if (convo is null) return;
+
+        if (!string.IsNullOrWhiteSpace(assignedUserId))
+            convo.AssignedUserId = assignedUserId;
+        if (!string.IsNullOrWhiteSpace(assignedUserName))
+            convo.AssignedUserName = assignedUserName;
+        if (!string.IsNullOrWhiteSpace(queue) && string.IsNullOrWhiteSpace(convo.AssignedUserName))
+            convo.AssignedUserName = queue;
+        convo.Status = "Open";
+        convo.LastMessageAtUtc = DateTime.UtcNow;
+
+        var actor = string.IsNullOrWhiteSpace(queue) ? "workflow" : $"workflow ({queue})";
+        tenantDb.Messages.Add(new Message
+        {
+            Id = Guid.NewGuid(),
+            TenantId = req.TenantId,
+            Channel = ChannelType.WhatsApp,
+            Recipient = req.InboundRecipient,
+            Body = $"Conversation assigned to {(string.IsNullOrWhiteSpace(convo.AssignedUserName) ? "Unassigned" : convo.AssignedUserName)} by {actor}.",
+            MessageType = "system_event",
+            Status = "Sent",
+            QueueProvider = "workflow",
+            ProviderMessageId = string.Empty,
+            IdempotencyKey = $"sys:workflow-assign:{req.FlowId}:{req.InboundMessageId}:{node.Id}"
+        });
+    }
+
+    private async Task TryScheduleResumeAsync(ExecuteRequest req, FlowNode node, int delaySeconds, string nextNodeId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(nextNodeId)) return;
+        var scheduledAt = DateTime.UtcNow.AddSeconds(delaySeconds);
+        var payload = new DelayResumePayload
+        {
+            RunId = req.Run.Id,
+            VersionId = req.Run.VersionId ?? Guid.Empty,
+            InboundRecipient = req.InboundRecipient,
+            InboundMessageText = req.InboundMessageText,
+            InboundMessageId = req.InboundMessageId,
+            PhoneNumberId = req.PhoneNumberId,
+            DefinitionJson = req.DefinitionJson,
+            StartNodeId = nextNodeId,
+            Payload = req.Payload
+        };
+        tenantDb.WorkflowScheduledMessages.Add(new WorkflowScheduledMessage
+        {
+            Id = Guid.NewGuid(),
+            TenantId = req.TenantId,
+            FlowId = req.FlowId,
+            ConversationId = Guid.Empty,
+            NodeId = nextNodeId,
+            ScheduledForUtc = scheduledAt,
+            MessageContent = JsonSerializer.Serialize(payload),
+            Status = "pending",
+            RetryCount = 0,
+            MaxRetries = Math.Max(1, runtimeOptions.Value.DelayMaxRetries),
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        });
+
+        controlDb.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            TenantId = req.TenantId,
+            ActorUserId = Guid.Empty,
+            Action = "waba.workflow.delay_scheduled",
+            Details = $"phoneNumberId={req.PhoneNumberId}; inboundMessageId={req.InboundMessageId}; flowId={req.FlowId}; nodeId={node.Id}; nextNodeId={nextNodeId}; delaySeconds={delaySeconds}",
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        await controlDb.SaveChangesAsync(ct);
+    }
+
+    private static int ParseDelaySeconds(Dictionary<string, object?> config, Dictionary<string, object?> payload)
+    {
+        static int parse(object? raw)
+        {
+            if (raw is null) return 0;
+            var text = SafeString(raw);
+            if (string.IsNullOrWhiteSpace(text)) return 0;
+            if (int.TryParse(text, out var direct) && direct >= 0) return direct;
+            if (double.TryParse(text, out var asDouble) && asDouble >= 0) return (int)Math.Round(asDouble);
+            return 0;
+        }
+
+        var seconds = parse(config.TryGetValue("delaySeconds", out var ds) ? ds : null);
+        if (seconds > 0) return seconds;
+        var minutes = parse(config.TryGetValue("delayMinutes", out var dm) ? dm : null);
+        if (minutes > 0) return minutes * 60;
+        var hours = parse(config.TryGetValue("delayHours", out var dh) ? dh : null);
+        if (hours > 0) return hours * 3600;
+        var generic = parse(config.TryGetValue("value", out var val) ? val : null);
+        if (generic > 0)
+        {
+            var unit = ResolveValue(config, payload, "unit");
+            return unit switch
+            {
+                "hour" or "hours" => generic * 3600,
+                "minute" or "minutes" => generic * 60,
+                _ => generic
+            };
+        }
+        return 0;
     }
 
     private async Task TryWriteExecutionStateAsync(ExecuteRequest req, string currentNodeId, string status, string errorMessage, CancellationToken ct)
@@ -317,13 +476,21 @@ public class WorkflowExecutionEngine(
         string startNodeId,
         bool isInteractiveReply,
         string resumeSourceNodeId,
-        string inboundText)
+        string inboundText,
+        string inboundMatchKey)
     {
         if (!isInteractiveReply) return startNodeId;
+        var normalizedMatchKey = NormalizeMatchKey(inboundMatchKey);
         var normalizedInbound = NormalizeMatchKey(inboundText);
         if (!string.IsNullOrWhiteSpace(resumeSourceNodeId) &&
             nodes.TryGetValue(resumeSourceNodeId, out var sourceNode))
         {
+            if (!string.IsNullOrWhiteSpace(normalizedMatchKey) &&
+                sourceNode.OptionRoutes.TryGetValue(normalizedMatchKey, out var directByKey) &&
+                !string.IsNullOrWhiteSpace(directByKey))
+            {
+                return directByKey;
+            }
             if (!string.IsNullOrWhiteSpace(normalizedInbound) &&
                 sourceNode.OptionRoutes.TryGetValue(normalizedInbound, out var directNext) &&
                 !string.IsNullOrWhiteSpace(directNext))
@@ -430,34 +597,80 @@ public class WorkflowExecutionEngine(
             }
         }
 
+        // Add alias routes for interactive IDs/payloads when edge labels are mapped by title.
+        foreach (var node in nodes.Values)
+        {
+            if (node.OptionRoutes.Count == 0) continue;
+            foreach (var option in ExtractInteractiveOptionAliases(node.Config))
+            {
+                if (string.IsNullOrWhiteSpace(option.label)) continue;
+                var normalizedLabel = NormalizeMatchKey(option.label);
+                if (string.IsNullOrWhiteSpace(normalizedLabel)) continue;
+                if (!node.OptionRoutes.TryGetValue(normalizedLabel, out var target)) continue;
+                if (!string.IsNullOrWhiteSpace(option.id))
+                    node.OptionRoutes[NormalizeMatchKey(option.id)] = target;
+                if (!string.IsNullOrWhiteSpace(option.payload))
+                    node.OptionRoutes[NormalizeMatchKey(option.payload)] = target;
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(startNodeId) && nodes.Count > 0) startNodeId = nodes.Keys.First();
         return (nodes, startNodeId);
     }
 
+    private static IEnumerable<(string label, string id, string payload)> ExtractInteractiveOptionAliases(Dictionary<string, object?> config)
+    {
+        foreach (var key in new[] { "buttons", "listItems", "items" })
+        {
+            if (!config.TryGetValue(key, out var raw) || raw is null) continue;
+            if (raw is IEnumerable<object?> arr)
+            {
+                foreach (var item in arr)
+                {
+                    if (item is IDictionary<string, object?> map)
+                    {
+                        var label = map.TryGetValue("title", out var t) ? SafeString(t) : string.Empty;
+                        var id = map.TryGetValue("id", out var i) ? SafeString(i) : string.Empty;
+                        var payload = map.TryGetValue("payload", out var p) ? SafeString(p) : string.Empty;
+                        if (!string.IsNullOrWhiteSpace(label) || !string.IsNullOrWhiteSpace(id) || !string.IsNullOrWhiteSpace(payload))
+                            yield return (label, id, payload);
+                    }
+                }
+            }
+        }
+    }
+
     private static object? ToClrValue(JsonElement element)
     {
-        return element.ValueKind switch
+        try
         {
-            JsonValueKind.Object => element.EnumerateObject()
-                .ToDictionary(x => x.Name, x => ToClrValue(x.Value), StringComparer.OrdinalIgnoreCase),
-            JsonValueKind.Array => element.EnumerateArray().Select(ToClrValue).ToList(),
-            JsonValueKind.String => element.GetString(),
-            JsonValueKind.Number => element.TryGetInt64(out var l) ? l :
-                                    element.TryGetDecimal(out var d) ? d :
-                                    element.GetDouble(),
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Null => null,
-            _ => element.ToString()
-        };
+            return element.ValueKind switch
+            {
+                JsonValueKind.Object => element.EnumerateObject()
+                    .ToDictionary(x => x.Name, x => ToClrValue(x.Value), StringComparer.OrdinalIgnoreCase),
+                JsonValueKind.Array => element.EnumerateArray().Select(ToClrValue).ToList(),
+                JsonValueKind.String => element.GetString(),
+                JsonValueKind.Number => element.TryGetInt64(out var l) ? l :
+                                        element.TryGetDecimal(out var d) ? d :
+                                        element.GetDouble(),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Null => null,
+                _ => element.GetRawText()
+            };
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static bool EvaluateCondition(Dictionary<string, object?> config, Dictionary<string, object?> payload)
     {
-        var field = config.TryGetValue("field", out var f) ? f?.ToString() ?? string.Empty : string.Empty;
-        var @operator = config.TryGetValue("operator", out var op) ? op?.ToString()?.ToLowerInvariant() ?? "equals" : "equals";
-        var expected = config.TryGetValue("value", out var v) ? v?.ToString() ?? string.Empty : string.Empty;
-        var actual = payload.TryGetValue(field, out var a) ? a?.ToString() ?? string.Empty : string.Empty;
+        var field = config.TryGetValue("field", out var f) ? SafeString(f) : string.Empty;
+        var @operator = config.TryGetValue("operator", out var op) ? SafeString(op).ToLowerInvariant() : "equals";
+        var expected = config.TryGetValue("value", out var v) ? SafeString(v) : string.Empty;
+        var actual = payload.TryGetValue(field, out var a) ? SafeString(a) : string.Empty;
         var normalizedActual = string.Equals(field, "message", StringComparison.OrdinalIgnoreCase)
             ? NormalizeInboundMessageText(actual)
             : actual;
@@ -478,7 +691,7 @@ public class WorkflowExecutionEngine(
         var output = text ?? string.Empty;
         foreach (var pair in payload)
         {
-            output = output.Replace($"{{{{{pair.Key}}}}}", pair.Value?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            output = output.Replace($"{{{{{pair.Key}}}}}", SafeString(pair.Value), StringComparison.OrdinalIgnoreCase);
         }
         return output;
     }
@@ -489,16 +702,47 @@ public class WorkflowExecutionEngine(
         {
             if (config.TryGetValue(key, out var raw))
             {
-                var val = raw?.ToString() ?? string.Empty;
+                var val = SafeString(raw);
                 if (!string.IsNullOrWhiteSpace(val)) return Interpolate(val, payload);
             }
             if (payload.TryGetValue(key, out var fromPayload))
             {
-                var val = fromPayload?.ToString() ?? string.Empty;
+                var val = SafeString(fromPayload);
                 if (!string.IsNullOrWhiteSpace(val)) return val;
             }
         }
         return string.Empty;
+    }
+
+    private static string SafeString(object? raw)
+    {
+        if (raw is null) return string.Empty;
+        if (raw is string s) return s;
+        if (raw is JsonElement j)
+        {
+            try
+            {
+                return j.ValueKind switch
+                {
+                    JsonValueKind.String => j.GetString() ?? string.Empty,
+                    JsonValueKind.Null => string.Empty,
+                    JsonValueKind.Undefined => string.Empty,
+                    _ => j.GetRawText()
+                };
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+        try
+        {
+            return raw.ToString() ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static string ResolveNodeReplyText(string nodeType, Dictionary<string, object?> config, Dictionary<string, object?> payload)
@@ -515,13 +759,13 @@ public class WorkflowExecutionEngine(
                     {
                         if (item is IDictionary<string, object?> map)
                         {
-                            var title = map.TryGetValue("title", out var t) ? t?.ToString() : null;
-                            var subtitle = map.TryGetValue("subtitle", out var s) ? s?.ToString() : null;
+                            var title = map.TryGetValue("title", out var t) ? SafeString(t) : null;
+                            var subtitle = map.TryGetValue("subtitle", out var s) ? SafeString(s) : null;
                             var merged = string.IsNullOrWhiteSpace(subtitle) ? title : $"{title} - {subtitle}";
                             if (!string.IsNullOrWhiteSpace(merged)) list.Add(merged.Trim());
                             continue;
                         }
-                        var v = item?.ToString()?.Trim() ?? string.Empty;
+                        var v = SafeString(item).Trim();
                         if (!string.IsNullOrWhiteSpace(v)) list.Add(v);
                     }
                     catch
@@ -541,8 +785,8 @@ public class WorkflowExecutionEngine(
                         foreach (var it in j.EnumerateArray())
                         {
                             var v = (it.ValueKind == JsonValueKind.Object && it.TryGetProperty("title", out var title))
-                                ? title.ToString()
-                                : it.ToString();
+                                ? SafeString(title)
+                                : SafeString(it);
                             if (!string.IsNullOrWhiteSpace(v)) list.Add(v.Trim());
                         }
                         return list;
@@ -621,13 +865,13 @@ public class WorkflowExecutionEngine(
                 {
                     if (item is IDictionary<string, object?> map)
                     {
-                        var title = map.TryGetValue("title", out var t) ? t?.ToString() : null;
-                        var subtitle = map.TryGetValue("subtitle", out var s) ? s?.ToString() : null;
+                        var title = map.TryGetValue("title", out var t) ? SafeString(t) : null;
+                        var subtitle = map.TryGetValue("subtitle", out var s) ? SafeString(s) : null;
                         var merged = string.IsNullOrWhiteSpace(subtitle) ? title : $"{title} - {subtitle}";
                         if (!string.IsNullOrWhiteSpace(merged)) result.Add(merged.Trim());
                         continue;
                     }
-                    var v = item?.ToString()?.Trim() ?? string.Empty;
+                    var v = SafeString(item).Trim();
                     if (!string.IsNullOrWhiteSpace(v)) result.Add(v);
                 }
                 catch
@@ -647,8 +891,8 @@ public class WorkflowExecutionEngine(
                     {
                         if (result.Count >= max) break;
                         var v = (it.ValueKind == JsonValueKind.Object && it.TryGetProperty("title", out var title))
-                            ? title.ToString()
-                            : it.ToString();
+                            ? SafeString(title)
+                            : SafeString(it);
                         if (!string.IsNullOrWhiteSpace(v)) result.Add(v.Trim());
                     }
                     return result.Distinct(StringComparer.OrdinalIgnoreCase).Take(max).ToList();

@@ -263,6 +263,43 @@ public class AutomationController(
         return Ok(rows);
     }
 
+    [HttpGet("trigger-audit/summary")]
+    public async Task<IActionResult> TriggerAuditSummary([FromQuery] int days = 7, CancellationToken ct = default)
+    {
+        if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        EnsureAutomationSchema();
+        var safeDays = Math.Clamp(days, 1, 30);
+        var fromUtc = DateTime.UtcNow.AddDays(-safeDays);
+
+        var rows = await db.TriggerEvaluationAudit
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId && x.EvaluatedAtUtc >= fromUtc)
+            .GroupBy(x => new { x.IsMatch, x.Reason })
+            .Select(g => new
+            {
+                g.Key.IsMatch,
+                g.Key.Reason,
+                count = g.Count()
+            })
+            .OrderByDescending(x => x.count)
+            .ToListAsync(ct);
+
+        var total = rows.Sum(x => x.count);
+        var matched = rows.Where(x => x.IsMatch).Sum(x => x.count);
+        var unmatched = total - matched;
+        var rate = total == 0 ? 0d : Math.Round((double)matched * 100d / total, 2);
+
+        return Ok(new
+        {
+            windowDays = safeDays,
+            total,
+            matched,
+            unmatched,
+            matchRate = rate,
+            reasons = rows
+        });
+    }
+
     [HttpGet("flows")]
     public async Task<IActionResult> ListFlows(CancellationToken ct)
     {

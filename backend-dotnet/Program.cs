@@ -161,6 +161,7 @@ builder.Services.AddHostedService<WabaWebhookWorker>();
 builder.Services.AddHostedService<WabaOnboardingHealthWorker>();
 builder.Services.AddHostedService<SecurityMonitoringWorker>();
 builder.Services.AddHostedService<TemplateStatusSyncWorker>();
+builder.Services.AddHostedService<WorkflowDelayResumeWorker>();
 
 var app = builder.Build();
 
