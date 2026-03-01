@@ -280,7 +280,8 @@ export async function createProject(name) {
   setSession({
     tenantSlug: data?.slug || '',
     projectName: data?.name || '',
-    role: data?.role || 'owner'
+    role: data?.role || 'owner',
+    accessToken: data?.accessToken || getSession().accessToken || ''
   })
   invalidateWabaStatusCache()
   return data
@@ -291,7 +292,8 @@ export async function switchProject(slug) {
   setSession({
     tenantSlug: data?.tenantSlug || slug,
     projectName: data?.projectName || '',
-    role: data?.role || ''
+    role: data?.role || '',
+    accessToken: data?.accessToken || getSession().accessToken || ''
   })
   invalidateWabaStatusCache()
   return data
