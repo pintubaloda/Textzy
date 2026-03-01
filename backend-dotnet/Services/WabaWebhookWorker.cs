@@ -2,6 +2,7 @@ using System.Text.Json;
 using Google.Apis.Auth.OAuth2;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Textzy.Api.Data;
 using Textzy.Api.Models;
 using WebPush;
@@ -1157,6 +1158,33 @@ public class WabaWebhookWorker(
             .ToListAsync(ct);
         if (flows.Count == 0) return;
 
+        var runtime = sp.GetRequiredService<IOptions<WorkflowRuntimeOptions>>().Value;
+        var shadowEnabled = string.Equals(runtime.EngineMode, "shadow", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(runtime.EngineMode, "new", StringComparison.OrdinalIgnoreCase) ||
+                            runtime.ShadowLogOnly;
+
+        Dictionary<Guid, TriggerEvaluationService.ShadowMatch>? shadowMatches = null;
+        if (shadowEnabled)
+        {
+            var targetVersionIds = flows
+                .Select(x => x.PublishedVersionId ?? x.CurrentVersionId)
+                .Where(x => x.HasValue)
+                .Select(x => x!.Value)
+                .Distinct()
+                .ToList();
+            var versions = await tenantDb.AutomationFlowVersions
+                .AsNoTracking()
+                .Where(x => x.TenantId == tenantId && targetVersionIds.Contains(x.Id))
+                .ToListAsync(ct);
+            var definitionByFlowId = versions
+                .GroupBy(x => x.FlowId)
+                .ToDictionary(
+                    x => x.Key,
+                    x => x.OrderByDescending(v => v.PublishedAtUtc ?? v.CreatedAtUtc).First().DefinitionJson);
+            var triggerEvalService = sp.GetRequiredService<TriggerEvaluationService>();
+            shadowMatches = triggerEvalService.EvaluateShadowMatches(flows, definitionByFlowId, inbound.MessageText);
+        }
+
         Guid? resumeFlowId = null;
         if (inbound.IsInteractiveReply && !string.IsNullOrWhiteSpace(inbound.ContextMessageId))
         {
@@ -1222,6 +1250,39 @@ public class WabaWebhookWorker(
             }
             var triggerEval = EvaluateTriggerMatch(flow, inbound.MessageText, version.DefinitionJson);
             var bypassTriggerForResume = inbound.IsInteractiveReply && resumeFlowId.HasValue && resumeFlowId.Value == flow.Id;
+
+            if (shadowEnabled && shadowMatches is not null && shadowMatches.TryGetValue(flow.Id, out var shadow))
+            {
+                var legacyMatched = triggerEval.Matched || bypassTriggerForResume;
+                try
+                {
+                    await tenantDb.Database.ExecuteSqlInterpolatedAsync($"""
+                        INSERT INTO "TriggerEvaluationAudit"
+                        ("Id","TenantId","FlowId","InboundMessageId","ConversationId","MessageText","TriggerType","IsMatch","MatchScore","Reason","EvaluatedAtUtc")
+                        VALUES
+                        ({Guid.NewGuid()},{tenantId},{flow.Id},{inbound.MessageId},{(Guid?)null},{NormalizeInboundMessageText(inbound.MessageText)},{flow.TriggerType ?? "keyword"},{shadow.Matched},{shadow.MatchScore},{shadow.Reason}, {DateTime.UtcNow})
+                        """, ct);
+                }
+                catch
+                {
+                    // Keep runtime safe if TriggerEvaluationAudit table is absent on older tenant DBs.
+                }
+
+                if (legacyMatched != shadow.Matched)
+                {
+                    controlDb.AuditLogs.Add(new AuditLog
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = tenantId,
+                        ActorUserId = Guid.Empty,
+                        Action = "waba.workflow.trigger_shadow_mismatch",
+                        Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; legacyMatched={legacyMatched}; shadowMatched={shadow.Matched}; legacyReason={(bypassTriggerForResume ? "interactive_resume_context" : triggerEval.Reason)}; shadowReason={shadow.Reason}",
+                        CreatedAtUtc = DateTime.UtcNow
+                    });
+                    await controlDb.SaveChangesAsync(ct);
+                }
+            }
+
             if (!triggerEval.Matched && !bypassTriggerForResume)
             {
                 controlDb.AuditLogs.Add(new AuditLog

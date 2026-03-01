@@ -139,6 +139,7 @@ builder.Services.AddScoped<BillingGuardService>();
 builder.Services.AddScoped<SecurityControlService>();
 builder.Services.AddScoped<IMessageProvider, MockMessageProvider>();
 builder.Services.AddScoped<MessagingService>();
+builder.Services.AddScoped<TriggerEvaluationService>();
 builder.Services.AddScoped<TemplateVariableResolverService>();
 builder.Services.AddScoped<TemplateSyncOrchestrator>();
 builder.Services.Configure<WorkflowRuntimeOptions>(builder.Configuration.GetSection("Workflow"));
