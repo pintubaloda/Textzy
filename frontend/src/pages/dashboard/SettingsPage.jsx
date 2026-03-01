@@ -66,6 +66,11 @@ const SettingsPage = () => {
   });
   const [notifyUpdatedAtUtc, setNotifyUpdatedAtUtc] = useState(null);
   const fmt = (v) => (v ? new Date(v).toLocaleString() : "—");
+  const whatsappConnected = !!whatsappStatus?.isConnected
+    || !!whatsappStatus?.readyToSend
+    || String(whatsappStatus?.state || "").toLowerCase() === "ready";
+  const whatsappReady = !!whatsappStatus?.readyToSend
+    || String(whatsappStatus?.state || "").toLowerCase() === "ready";
 
   const handleSave = async () => {
     if (activeTab !== "company") {
@@ -150,7 +155,7 @@ const SettingsPage = () => {
 
   useEffect(() => {
     if (activeTab === "whatsapp") {
-      loadWabaStatus();
+      loadWabaStatus(true);
       ensureEmbeddedConfig();
     }
     if (activeTab === "company") {
@@ -631,7 +636,7 @@ const SettingsPage = () => {
                     <MessageSquare className="w-5 h-5 text-green-700" />
                   </div>
                   <div className="flex-1 text-sm text-slate-700">
-                    {whatsappStatus.isConnected ? "Your WhatsApp number is connected" : "Your WhatsApp number is not connected"}
+                    {whatsappConnected ? "Your WhatsApp number is connected" : "Your WhatsApp number is not connected"}
                   </div>
                   <Button
                     onClick={handleWabaConnect}
@@ -639,7 +644,7 @@ const SettingsPage = () => {
                     className="bg-orange-500 hover:bg-orange-600 text-white"
                   >
                     {connectingWaba ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                    {whatsappStatus.isConnected ? "Reconnect Number" : "Connect Number"}
+                    {whatsappConnected ? "Reconnect Number" : "Connect Number"}
                   </Button>
                 </CardContent>
               </Card>
@@ -692,7 +697,7 @@ const SettingsPage = () => {
               </Card>
             ) : null}
 
-            {wabaView === "whatsapp" && !whatsappStatus.isConnected ? (
+            {wabaView === "whatsapp" && !whatsappConnected ? (
               <Card className="border-slate-200">
                 <CardHeader>
                   <CardTitle>Setup FREE WhatsApp Business Account</CardTitle>
@@ -711,7 +716,7 @@ const SettingsPage = () => {
                       { step: "Step 1", label: "Start onboarding", done: ["requested", "code_received", "exchanged", "assets_linked", "webhook_subscribed", "verified", "ready"].includes(whatsappStatus.state) },
                       { step: "Step 2", label: "Code exchange", done: ["exchanged", "assets_linked", "webhook_subscribed", "verified", "ready"].includes(whatsappStatus.state) },
                       { step: "Step 3", label: "Assets linked", done: ["assets_linked", "webhook_subscribed", "verified", "ready"].includes(whatsappStatus.state) },
-                      { step: "Step 4", label: "Ready to send", done: !!whatsappStatus.readyToSend },
+                      { step: "Step 4", label: "Ready to send", done: whatsappReady },
                     ].map((s) => (
                       <div key={s.step} className={`rounded-lg border p-3 ${s.done ? "border-green-200 bg-green-50" : "border-slate-200 bg-white"}`}>
                         <div className="text-xs font-semibold text-slate-500">{s.step}</div>
@@ -764,7 +769,7 @@ const SettingsPage = () => {
               </Card>
             ) : null}
 
-            {wabaView === "whatsapp" && whatsappStatus.isConnected ? (
+            {wabaView === "whatsapp" && whatsappConnected ? (
               <div className="grid xl:grid-cols-3 gap-4">
                 <Card className="xl:col-span-2 border-slate-200">
                   <CardHeader>
@@ -817,9 +822,9 @@ const SettingsPage = () => {
                         <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
                           <CheckCircle2 className="w-3 h-3 mr-1" /> Connected
                         </Badge>
-                        <Badge className={whatsappStatus.readyToSend ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>
-                          {whatsappStatus.readyToSend ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <AlertCircle className="w-3 h-3 mr-1" />}
-                          {whatsappStatus.readyToSend ? "Ready to Send" : "Checks Pending"}
+                        <Badge className={whatsappReady ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>
+                          {whatsappReady ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <AlertCircle className="w-3 h-3 mr-1" />}
+                          {whatsappReady ? "Ready to Send" : "Checks Pending"}
                         </Badge>
                         <Badge variant="outline" className="border-slate-300 text-slate-700">
                           State: {whatsappStatus.state || "connected"}

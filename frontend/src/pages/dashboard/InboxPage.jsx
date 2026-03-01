@@ -569,7 +569,7 @@ const InboxPage = () => {
       apiGet("/api/auth/team-members").catch(() => []),
       apiGet("/api/auth/me").catch(() => null),
       apiGet("/api/automation/faq").catch(() => []),
-      wabaGetOnboardingStatus().catch(() => null),
+      wabaGetOnboardingStatus({ force: true }).catch(() => null),
       getNotificationSettings().catch(() => null),
     ])
       .then(([c, ct, tm, meData, faqRows, waba, notifyCfg]) => {
@@ -1829,7 +1829,7 @@ const InboxPage = () => {
                 <div className="flex items-center justify-between text-sm"><span className="text-slate-500">WABA ID</span><span className="text-slate-900 font-medium">{wabaDetails?.wabaId || "-"}</span></div>
                 <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Phone Number ID</span><span className="text-slate-900 font-medium">{wabaDetails?.phoneNumberId || "-"}</span></div>
                 <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Display Number</span><span className="text-slate-900 font-medium">{wabaDetails?.displayPhoneNumber || wabaDetails?.phone || "-"}</span></div>
-                <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Status</span><Badge className={wabaDetails?.readyToSend ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>{wabaDetails?.readyToSend ? "Ready" : (wabaDetails?.state || "Pending")}</Badge></div>
+                <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Status</span><Badge className={(wabaDetails?.readyToSend || wabaDetails?.isConnected || String(wabaDetails?.state || "").toLowerCase() === "ready") ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>{(wabaDetails?.readyToSend || wabaDetails?.isConnected || String(wabaDetails?.state || "").toLowerCase() === "ready") ? "Ready" : (wabaDetails?.state || "Pending")}</Badge></div>
               </div>
             </div>
 

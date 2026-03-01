@@ -55,6 +55,10 @@ const DashboardOverview = () => {
     appId: process.env.REACT_APP_FACEBOOK_APP_ID || "",
     configId: process.env.REACT_APP_WABA_EMBEDDED_CONFIG_ID || "",
   });
+  const wabaConnected = useMemo(() => {
+    const state = String(wabaStatus?.state || "").toLowerCase();
+    return !!wabaStatus?.isConnected || !!wabaStatus?.readyToSend || state === "ready";
+  }, [wabaStatus]);
 
   useEffect(() => {
     Promise.all([apiGet("/api/messages"), apiGet("/api/contacts"), apiGet("/api/campaigns")])
@@ -64,7 +68,7 @@ const DashboardOverview = () => {
         setCampaigns(cp || []);
       })
       .catch(() => {});
-    loadWabaStatus();
+    loadWabaStatus(true);
     loadWebhookAnalytics(7);
     ensureEmbeddedConfig();
   }, []);
@@ -383,8 +387,8 @@ const DashboardOverview = () => {
         <div className="absolute -bottom-16 -left-16 h-44 w-44 rounded-full bg-blue-100/30 blur-2xl" />
         <div className="space-y-6 relative z-10">
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <div className="px-5 py-2 rounded-full bg-white border border-slate-200 text-slate-700 shadow-sm">WhatsApp Business API Status: <b className={wabaStatus.readyToSend ? "text-green-600" : "text-orange-600"}>{wabaStatus.readyToSend ? "Connected" : "Pending"}</b></div>
-            {!wabaStatus?.readyToSend ? (
+            <div className="px-5 py-2 rounded-full bg-white border border-slate-200 text-slate-700 shadow-sm">WhatsApp Business API Status: <b className={wabaConnected ? "text-green-600" : "text-orange-600"}>{wabaConnected ? "Connected" : "Pending"}</b></div>
+            {!wabaConnected ? (
               <Button className="rounded-full bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25" onClick={handleEmbeddedConnect} disabled={connectingWaba}>
                 {connectingWaba ? "Connecting..." : "Apply Now"}
               </Button>
@@ -395,20 +399,20 @@ const DashboardOverview = () => {
           <div className="grid lg:grid-cols-3 gap-4">
             <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <h3 className="text-3xl font-heading font-semibold leading-tight mb-4 text-slate-900">
-                {wabaStatus?.readyToSend ? "WhatsApp Business Account Connected" : "Setup FREE WhatsApp Business Account"}
+                {wabaConnected ? "WhatsApp Business Account Connected" : "Setup FREE WhatsApp Business Account"}
               </h3>
               <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-white to-orange-50 p-4 mb-5 text-base text-slate-700">
-                {wabaStatus?.readyToSend ? "Connection is active for this project." : "Apply for WhatsApp Business API"}
+                {wabaConnected ? "Connection is active for this project." : "Apply for WhatsApp Business API"}
               </div>
               <p className="text-slate-600 mb-2 text-lg leading-snug">
-                {wabaStatus?.readyToSend
+                {wabaConnected
                   ? "Your WhatsApp Cloud API onboarding is complete. You can now send and receive messages."
                   : "Click on Continue with Facebook to apply for WhatsApp Business API"}
               </p>
               <p className="text-slate-600 text-lg leading-snug">
-                {wabaStatus?.readyToSend ? "Connection details below are synced from your WhatsApp Cloud API onboarding." : "Requirement: Registered Business & Working Website."}
+                {wabaConnected ? "Connection details below are synced from your WhatsApp Cloud API onboarding." : "Requirement: Registered Business & Working Website."}
               </p>
-              {!wabaStatus?.readyToSend ? (
+              {!wabaConnected ? (
                 <>
                   <div className="mt-4 flex flex-wrap gap-3">
                     <Button variant="outline" className="border-slate-300 text-slate-700 bg-white hover:bg-slate-100 text-base px-7">Schedule Meeting</Button>
@@ -471,7 +475,7 @@ const DashboardOverview = () => {
               </div>
               <p className="text-3xl font-semibold leading-tight">{wabaStatus.businessName || "Project Business Name"}</p>
               <p className="text-slate-600 mt-2 text-xl">{wabaStatus.phone || "+91 72496 30121"}</p>
-              <p className="text-sm text-slate-500 mt-2">{wabaStatus.readyToSend ? "Connected / Ready" : (wabaStatus.state || "requested")}</p>
+              <p className="text-sm text-slate-500 mt-2">{wabaConnected ? "Connected / Ready" : (wabaStatus.state || "requested")}</p>
               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-left text-xs space-y-1">
                 <div className="flex justify-between gap-2"><span className="text-slate-500">WABA ID</span><span className="text-slate-900 font-medium break-all">{wabaStatus.wabaId || "Pending"}</span></div>
                 <div className="flex justify-between gap-2"><span className="text-slate-500">Phone Number ID</span><span className="text-slate-900 font-medium break-all">{wabaStatus.phoneNumberId || "Pending"}</span></div>
