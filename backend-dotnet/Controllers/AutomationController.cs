@@ -62,6 +62,23 @@ public class AutomationController(
         db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AutomationUsageCounters_Tenant_Bucket" ON "AutomationUsageCounters" ("TenantId","BucketDateUtc");""");
         db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "FaqKnowledgeItems" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "Question" text NOT NULL DEFAULT '', "Answer" text NOT NULL DEFAULT '', "Category" text NOT NULL DEFAULT '', "IsActive" boolean NOT NULL DEFAULT true, "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
         db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_FaqKnowledgeItems_Tenant_Active" ON "FaqKnowledgeItems" ("TenantId","IsActive");""");
+        db.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "TriggerEvaluationAudit" (
+                "Id" uuid PRIMARY KEY,
+                "TenantId" uuid NOT NULL,
+                "FlowId" uuid NULL,
+                "InboundMessageId" text NOT NULL DEFAULT '',
+                "ConversationId" uuid NULL,
+                "MessageText" text NOT NULL DEFAULT '',
+                "TriggerType" text NOT NULL DEFAULT '',
+                "IsMatch" boolean NOT NULL DEFAULT false,
+                "MatchScore" integer NOT NULL DEFAULT 0,
+                "Reason" text NOT NULL DEFAULT '',
+                "EvaluatedAtUtc" timestamp with time zone NOT NULL DEFAULT now()
+            );
+            """);
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TriggerEvaluationAudit_TenantId" ON "TriggerEvaluationAudit" ("TenantId");""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TriggerEvaluationAudit_EvaluatedAtUtc" ON "TriggerEvaluationAudit" ("EvaluatedAtUtc");""");
     }
 
     private bool TryEnsureAutomationSchema(out IActionResult? errorResult)
@@ -204,6 +221,46 @@ public class AutomationController(
         await db.SaveChangesAsync(ct);
         await SyncAutomationUsageAsync(ct);
         return Ok(new { flow, version });
+    }
+
+    [HttpGet("trigger-audit")]
+    public async Task<IActionResult> TriggerAudit(
+        [FromQuery] Guid? flowId,
+        [FromQuery] string? inboundMessageId,
+        [FromQuery] bool? matched,
+        [FromQuery] int take = 100,
+        CancellationToken ct = default)
+    {
+        if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        EnsureAutomationSchema();
+
+        var safeTake = Math.Clamp(take, 1, 500);
+        var q = db.TriggerEvaluationAudit
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId);
+
+        if (flowId.HasValue) q = q.Where(x => x.FlowId == flowId.Value);
+        if (!string.IsNullOrWhiteSpace(inboundMessageId)) q = q.Where(x => x.InboundMessageId == inboundMessageId);
+        if (matched.HasValue) q = q.Where(x => x.IsMatch == matched.Value);
+
+        var rows = await q
+            .OrderByDescending(x => x.EvaluatedAtUtc)
+            .Take(safeTake)
+            .Select(x => new
+            {
+                x.Id,
+                x.FlowId,
+                x.InboundMessageId,
+                x.MessageText,
+                x.TriggerType,
+                x.IsMatch,
+                x.MatchScore,
+                x.Reason,
+                x.EvaluatedAtUtc
+            })
+            .ToListAsync(ct);
+
+        return Ok(rows);
     }
 
     [HttpGet("flows")]

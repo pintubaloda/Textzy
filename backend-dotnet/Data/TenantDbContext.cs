@@ -31,4 +31,5 @@ public class TenantDbContext(DbContextOptions<TenantDbContext> options) : DbCont
     public DbSet<IdempotencyKeyRecord> IdempotencyKeys => Set<IdempotencyKeyRecord>();
     public DbSet<MessageEvent> MessageEvents => Set<MessageEvent>();
     public DbSet<OutboundDeadLetter> OutboundDeadLetters => Set<OutboundDeadLetter>();
+    public DbSet<TriggerEvaluationAuditRecord> TriggerEvaluationAudit => Set<TriggerEvaluationAuditRecord>();
 }

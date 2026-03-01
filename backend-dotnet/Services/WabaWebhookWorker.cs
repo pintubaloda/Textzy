@@ -836,15 +836,17 @@ public class WabaWebhookWorker(
         return value;
     }
 
-    private static Guid? TryResolveFlowIdFromIdempotencyKey(string? idempotencyKey)
+    private static (Guid? FlowId, string SourceNodeId) TryResolveFlowResumeFromIdempotencyKey(string? idempotencyKey)
     {
         var key = (idempotencyKey ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(key)) return null;
+        if (string.IsNullOrWhiteSpace(key)) return (null, string.Empty);
         // auto-msg:{flowId}:{inboundMessageId}:{nodeId}
-        if (!key.StartsWith("auto-msg:", StringComparison.OrdinalIgnoreCase)) return null;
+        if (!key.StartsWith("auto-msg:", StringComparison.OrdinalIgnoreCase)) return (null, string.Empty);
         var parts = key.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length < 2) return null;
-        return Guid.TryParse(parts[1], out var flowId) ? flowId : null;
+        if (parts.Length < 2) return (null, string.Empty);
+        var flowId = Guid.TryParse(parts[1], out var parsedFlowId) ? parsedFlowId : (Guid?)null;
+        var sourceNodeId = parts.Length >= 4 ? parts[3] : string.Empty;
+        return (flowId, sourceNodeId);
     }
 
     private static string ResolveResumeNodeId(
@@ -1186,17 +1188,19 @@ public class WabaWebhookWorker(
         }
 
         Guid? resumeFlowId = null;
+        var resumeSourceNodeId = string.Empty;
         if (inbound.IsInteractiveReply && !string.IsNullOrWhiteSpace(inbound.ContextMessageId))
         {
             var contextOutMessage = await tenantDb.Set<Message>()
                 .AsNoTracking()
                 .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.ProviderMessageId == inbound.ContextMessageId, ct);
-            resumeFlowId = TryResolveFlowIdFromIdempotencyKey(contextOutMessage?.IdempotencyKey);
+            var resume = TryResolveFlowResumeFromIdempotencyKey(contextOutMessage?.IdempotencyKey);
+            resumeFlowId = resume.FlowId;
+            resumeSourceNodeId = resume.SourceNodeId;
         }
 
         var tenancy = sp.GetRequiredService<TenancyContext>();
         tenancy.SetTenant(tenantId, tenantSlug, tenantConnectionString);
-        var messaging = sp.GetRequiredService<MessagingService>();
 
         foreach (var flow in flows)
         {
@@ -1331,225 +1335,21 @@ public class WabaWebhookWorker(
             tenantDb.AutomationRuns.Add(run);
             await tenantDb.SaveChangesAsync(ct);
 
-            var (nodes, startNodeId) = ParseFlowDefinition(version.DefinitionJson);
-            var trace = new List<object>();
-            var log = new List<string>();
-            var cursor = ResolveResumeNodeId(nodes, startNodeId, bypassTriggerForResume);
-            var guard = 0;
-            try
+            var executionEngine = sp.GetRequiredService<WorkflowExecutionEngine>();
+            await executionEngine.ExecuteAsync(new WorkflowExecutionEngine.ExecuteRequest
             {
-                while (!string.IsNullOrWhiteSpace(cursor) && guard < 250)
-                {
-                    guard++;
-                    if (!nodes.TryGetValue(cursor, out var node))
-                    {
-                        log.Add($"missing-node:{cursor}");
-                        break;
-                    }
-                    var nodeType = (node.Type ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_");
-                    controlDb.AuditLogs.Add(new AuditLog
-                    {
-                        Id = Guid.NewGuid(),
-                        TenantId = tenantId,
-                        ActorUserId = Guid.Empty,
-                        Action = "waba.workflow.node_exec",
-                        Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; nodeType={nodeType}",
-                        CreatedAtUtc = DateTime.UtcNow
-                    });
-                    await controlDb.SaveChangesAsync(ct);
-                    var next = node.Next;
-                    if (nodeType is "start")
-                    {
-                        next = node.Next;
-                    }
-                    else if (nodeType is "text" or "text_message" or "textmessage" or "send_text" or "message" or "ask_question" or "capture_input" or "bot_reply" or "botreply" or "buttons" or "list" or "cta_url" or "media")
-                    {
-                        var recipient = ResolveValue(node.Config, payload, "recipient");
-                        if (string.IsNullOrWhiteSpace(recipient)) recipient = inbound.From;
-                        var body = ResolveNodeReplyText(nodeType, node.Config, payload);
-                        var interactiveButtons = new List<string>();
-                        if (nodeType is "buttons")
-                        {
-                            if (node.Config.TryGetValue("buttons", out var btns))
-                                interactiveButtons = ReadStringOptions(btns, 3);
-                            body = ResolveValue(node.Config, payload, "body", "message", "question", "prompt");
-                        }
-                        else if (nodeType is "bot_reply" or "botreply")
-                        {
-                            var replyMode = ResolveValue(node.Config, payload, "replyMode");
-                            var advancedType = ResolveValue(node.Config, payload, "advancedType");
-                            if (string.Equals(replyMode, "advanced", StringComparison.OrdinalIgnoreCase) &&
-                                string.Equals(advancedType, "quick_reply", StringComparison.OrdinalIgnoreCase) &&
-                                node.Config.TryGetValue("buttons", out var btns))
-                            {
-                                interactiveButtons = ReadStringOptions(btns, 3);
-                                body = ResolveValue(node.Config, payload, "simpleText", "body", "message", "question", "prompt");
-                            }
-                        }
-                        if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(body))
-                        {
-                            try
-                            {
-                                var req = new DTOs.SendMessageRequest
-                                {
-                                    Recipient = recipient,
-                                    Body = Interpolate(body, payload),
-                                    Channel = ChannelType.WhatsApp,
-                                    IdempotencyKey = $"auto-msg:{flow.Id}:{inbound.MessageId}:{node.Id}"
-                                };
-                                if (interactiveButtons.Count > 0)
-                                {
-                                    req.IsInteractive = true;
-                                    req.InteractiveType = "button";
-                                    req.InteractiveButtons = interactiveButtons.Select(x => Interpolate(x, payload)).ToList();
-                                }
-                                var msg = await messaging.EnqueueAsync(req, ct);
-                                controlDb.AuditLogs.Add(new AuditLog
-                                {
-                                    Id = Guid.NewGuid(),
-                                    TenantId = tenantId,
-                                    ActorUserId = Guid.Empty,
-                                    Action = "waba.workflow.enqueued",
-                                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; messageId={msg.Id}; recipient={recipient}",
-                                    CreatedAtUtc = DateTime.UtcNow
-                                });
-                                await controlDb.SaveChangesAsync(ct);
-                            }
-                            catch (Exception ex)
-                            {
-                                controlDb.AuditLogs.Add(new AuditLog
-                                {
-                                    Id = Guid.NewGuid(),
-                                    TenantId = tenantId,
-                                    ActorUserId = Guid.Empty,
-                                    Action = "waba.workflow.enqueue_failed",
-                                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; error={redactor.RedactText(ex.Message)}",
-                                    CreatedAtUtc = DateTime.UtcNow
-                                });
-                                await controlDb.SaveChangesAsync(ct);
-                                throw;
-                            }
-                        }
-                        else
-                        {
-                            controlDb.AuditLogs.Add(new AuditLog
-                            {
-                                Id = Guid.NewGuid(),
-                                TenantId = tenantId,
-                                ActorUserId = Guid.Empty,
-                                Action = "waba.workflow.send_skipped",
-                                Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; nodeType={nodeType}; reason=empty_recipient_or_body",
-                                CreatedAtUtc = DateTime.UtcNow
-                            });
-                            await controlDb.SaveChangesAsync(ct);
-                        }
-                        next = node.OnSuccess ?? node.Next;
-                    }
-                    else if (nodeType == "template")
-                    {
-                        var recipient = ResolveValue(node.Config, payload, "recipient");
-                        var templateName = ResolveValue(node.Config, payload, "templateName", "template_name");
-                        var languageCode = ResolveValue(node.Config, payload, "languageCode", "language");
-                        var body = ResolveValue(node.Config, payload, "body", "message");
-                        var paramValues = new List<string>();
-                        if (node.Config.TryGetValue("parameters", out var p))
-                        {
-                            if (p is IEnumerable<object?> arr)
-                            {
-                                foreach (var item in arr)
-                                    paramValues.Add(Interpolate(item?.ToString() ?? string.Empty, payload));
-                            }
-                            else if (p is JsonElement pElem && pElem.ValueKind == JsonValueKind.Array)
-                            {
-                                foreach (var item in pElem.EnumerateArray())
-                                    paramValues.Add(Interpolate(item.ToString(), payload));
-                            }
-                        }
-                        if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(templateName))
-                        {
-                            try
-                            {
-                                var msg = await messaging.EnqueueAsync(new DTOs.SendMessageRequest
-                                {
-                                    Recipient = recipient,
-                                    Body = body,
-                                    Channel = ChannelType.WhatsApp,
-                                    UseTemplate = true,
-                                    TemplateName = templateName,
-                                    TemplateLanguageCode = string.IsNullOrWhiteSpace(languageCode) ? "en" : languageCode,
-                                    TemplateParameters = paramValues,
-                                    IdempotencyKey = $"auto-tpl:{flow.Id}:{inbound.MessageId}:{node.Id}"
-                                }, ct);
-                                controlDb.AuditLogs.Add(new AuditLog
-                                {
-                                    Id = Guid.NewGuid(),
-                                    TenantId = tenantId,
-                                    ActorUserId = Guid.Empty,
-                                    Action = "waba.workflow.enqueued",
-                                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; messageId={msg.Id}; recipient={recipient}; template={templateName}",
-                                    CreatedAtUtc = DateTime.UtcNow
-                                });
-                                await controlDb.SaveChangesAsync(ct);
-                            }
-                            catch (Exception ex)
-                            {
-                                controlDb.AuditLogs.Add(new AuditLog
-                                {
-                                    Id = Guid.NewGuid(),
-                                    TenantId = tenantId,
-                                    ActorUserId = Guid.Empty,
-                                    Action = "waba.workflow.enqueue_failed",
-                                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; nodeId={node.Id}; error={redactor.RedactText(ex.Message)}",
-                                    CreatedAtUtc = DateTime.UtcNow
-                                });
-                                await controlDb.SaveChangesAsync(ct);
-                                throw;
-                            }
-                        }
-                        next = node.OnSuccess ?? node.Next;
-                    }
-                    else if (nodeType is "condition" or "split")
-                    {
-                        var ok = EvaluateCondition(node.Config, payload);
-                        next = ok ? (node.OnTrue ?? node.OnSuccess ?? node.Next) : (node.OnFalse ?? node.OnFailure ?? node.Next);
-                    }
-                    else if (nodeType == "end")
-                    {
-                        trace.Add(new { nodeId = node.Id, nodeType, nextNodeId = "", status = "ok" });
-                        break;
-                    }
-                    else
-                    {
-                        next = node.OnSuccess ?? node.Next;
-                    }
-                    trace.Add(new { nodeId = node.Id, nodeType, nextNodeId = next, status = "ok" });
-                    log.Add($"{nodeType}:{node.Id}->{next}");
-                    if (string.IsNullOrWhiteSpace(next)) break;
-                    cursor = next;
-                }
-                run.Status = "completed";
-                run.Log = string.Join('\n', log);
-                run.TraceJson = JsonSerializer.Serialize(trace);
-                run.CompletedAtUtc = DateTime.UtcNow;
-            }
-            catch (Exception ex)
-            {
-                run.Status = "failed";
-                run.FailureReason = ex.Message;
-                run.Log = string.Join('\n', log);
-                run.TraceJson = JsonSerializer.Serialize(trace);
-                run.CompletedAtUtc = DateTime.UtcNow;
-                controlDb.AuditLogs.Add(new AuditLog
-                {
-                    Id = Guid.NewGuid(),
-                    TenantId = tenantId,
-                    ActorUserId = Guid.Empty,
-                    Action = "waba.workflow.execution_failed",
-                    Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; flowId={flow.Id}; error={redactor.RedactText(ex.Message)}",
-                    CreatedAtUtc = DateTime.UtcNow
-                });
-                await controlDb.SaveChangesAsync(ct);
-            }
+                TenantId = tenantId,
+                FlowId = flow.Id,
+                PhoneNumberId = phoneNumberId,
+                InboundMessageId = inbound.MessageId,
+                InboundRecipient = inbound.From,
+                InboundMessageText = inbound.MessageText,
+                DefinitionJson = version.DefinitionJson,
+                Run = run,
+                Payload = payload,
+                IsInteractiveResume = bypassTriggerForResume,
+                ResumeSourceNodeId = resumeSourceNodeId
+            }, ct);
             await tenantDb.SaveChangesAsync(ct);
         }
     }
