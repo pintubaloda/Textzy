@@ -17,12 +17,11 @@ export function configureApiClient({ getSessionFn, onSessionUpdateFn, onAuthFail
 }
 
 async function baseFetch(path, options = {}, useAuth = true) {
-  const { tenantSlug, accessToken, token } = getSession()
+  const { tenantSlug } = getSession()
   const headers = {
     ...(options.headers || {})
   }
   if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
-  if ((accessToken || token) && !headers['Authorization']) headers['Authorization'] = `Bearer ${accessToken || token}`
 
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
 

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.ResponseCompression;
 using Npgsql;
+using System.Threading.RateLimiting;
 using System.Text.RegularExpressions;
 using Textzy.Api.Data;
 using Textzy.Api.Middleware;
@@ -31,6 +32,40 @@ builder.Services.AddResponseCompression(options =>
     options.EnableForHttps = true;
     options.Providers.Add<BrotliCompressionProvider>();
     options.Providers.Add<GzipCompressionProvider>();
+});
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    {
+        var path = context.Request.Path.Value?.ToLowerInvariant() ?? "/";
+        var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var bucket = path switch
+        {
+            var p when p.StartsWith("/api/auth/login") => "auth-login",
+            var p when p.StartsWith("/api/auth/refresh") => "auth-refresh",
+            var p when p.StartsWith("/api/waba/webhook") => "waba-webhook",
+            _ => "default"
+        };
+
+        var permitLimit = bucket switch
+        {
+            "auth-login" => 20,
+            "auth-refresh" => 60,
+            "waba-webhook" => 1200,
+            _ => 600
+        };
+
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: $"{bucket}:{ip}",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                AutoReplenishment = true,
+                PermitLimit = permitLimit,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            });
+    });
 });
 
 var allowedOrigins = builder.Configuration["AllowedOrigins"]?
@@ -187,9 +222,12 @@ using (var scope = app.Services.CreateScope())
 {
     var controlDb = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+    var seedEnabled = app.Configuration.GetValue<bool?>("SeedData:Enabled") ?? !app.Environment.IsProduction();
+
     EnsureControlAuthSchema(controlDb);
     controlDb.Database.EnsureCreated();
-    SeedData.InitializeControl(controlDb, controlConnection);
+    if (seedEnabled)
+        SeedData.InitializeControl(controlDb, controlConnection);
 
     var tenants = controlDb.Tenants.ToList();
     foreach (var tenant in tenants)
@@ -202,7 +240,8 @@ using (var scope = app.Services.CreateScope())
             EnsureTenantCoreSchema(tenantDb);
             EnsureTenantWabaSchema(tenantDb);
             EnsureTenantWorkflowPhase1PatchOnce(tenantDb);
-            SeedData.InitializeTenant(tenantDb, tenant.Id);
+            if (seedEnabled)
+                SeedData.InitializeTenant(tenantDb, tenant.Id);
         }
         catch (Exception ex)
         {
@@ -223,6 +262,7 @@ if (!app.Environment.IsProduction())
 }
 app.UseResponseCompression();
 app.UseCors("frontend");
+app.UseRateLimiter();
 app.UseMiddleware<PlatformRequestLoggingMiddleware>();
 app.UseMiddleware<TenantMiddleware>();
 app.UseMiddleware<AuthMiddleware>();

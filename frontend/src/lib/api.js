@@ -22,7 +22,7 @@ export function getSession() {
       projectName: p.projectName || '',
       role: p.role || '',
       email: p.email || '',
-      accessToken: p.accessToken || p.token || ''
+      accessToken: ''
     }
   } catch {
     return { tenantSlug: '', projectName: '', role: '', email: '', accessToken: '' }
@@ -91,7 +91,6 @@ async function baseFetch(path, options = {}, useAuth = true) {
   ]
   const requiresTenant = useAuth && !tenantOptionalPrefixes.some((p) => path.startsWith(p))
   if (s.tenantSlug) headers['X-Tenant-Slug'] = s.tenantSlug
-  if (s.accessToken && !headers['Authorization']) headers['Authorization'] = `Bearer ${s.accessToken}`
   if (requiresTenant && !headers['X-Tenant-Slug']) {
     if (typeof window !== 'undefined' && window.location.pathname !== '/projects') {
       window.location.assign('/projects')
@@ -111,8 +110,7 @@ async function refresh() {
   refreshPromise = (async () => {
     const res = await baseFetch('/api/auth/refresh', { method: 'POST' }, true)
     if (!res.ok) return false
-    const data = await res.json().catch(() => ({}))
-    if (data?.accessToken) setSession({ accessToken: data.accessToken })
+    await res.json().catch(() => ({}))
     return true
   })()
   try {
@@ -236,7 +234,6 @@ export async function authLogin({ email, password, tenantSlug }) {
     throw new Error(msg || 'Invalid login')
   }
   const data = await res.json()
-  if (data?.accessToken) setSession({ accessToken: data.accessToken })
   return data
 }
 
@@ -252,7 +249,6 @@ export async function authAcceptInvite({ token, fullName, password }) {
     throw new Error(msg || 'Failed to accept invite')
   }
   const data = await res.json()
-  if (data?.accessToken) setSession({ accessToken: data.accessToken })
   return data
 }
 

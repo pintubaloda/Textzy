@@ -7,7 +7,15 @@ public class AuthMiddleware(RequestDelegate next)
 {
     private readonly RequestDelegate _next = next;
 
-    public async Task Invoke(HttpContext context, SessionService sessions, ControlDbContext db, TenancyContext tenancy, AuthContext auth, AuthCookieService authCookie)
+    public async Task Invoke(
+        HttpContext context,
+        SessionService sessions,
+        ControlDbContext db,
+        TenancyContext tenancy,
+        AuthContext auth,
+        AuthCookieService authCookie,
+        IConfiguration config,
+        IHostEnvironment env)
     {
         if (HttpMethods.IsOptions(context.Request.Method))
         {
@@ -31,6 +39,18 @@ public class AuthMiddleware(RequestDelegate next)
         {
             await _next(context);
             return;
+        }
+
+        if (env.IsProduction() && IsUnsafeMethod(context.Request.Method))
+        {
+            var origin = context.Request.Headers.Origin.ToString().Trim().TrimEnd('/');
+            var referer = context.Request.Headers.Referer.ToString();
+            if (!IsTrustedOrigin(origin, referer, config))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsync("Untrusted origin.");
+                return;
+            }
         }
 
         var header = context.Request.Headers.Authorization.ToString();
@@ -128,5 +148,30 @@ public class AuthMiddleware(RequestDelegate next)
 
         auth.Set(user.Id, session.TenantId, user.Email, tenantUser.Role, effective.ToList(), user.FullName);
         await _next(context);
+    }
+
+    private static bool IsUnsafeMethod(string method) =>
+        HttpMethods.IsPost(method) || HttpMethods.IsPut(method) || HttpMethods.IsPatch(method) || HttpMethods.IsDelete(method);
+
+    private static bool IsTrustedOrigin(string origin, string referer, IConfiguration config)
+    {
+        var allowed = (config["AllowedOrigins"] ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x.Trim().TrimEnd('/'))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (allowed.Count == 0) return false;
+        if (!string.IsNullOrWhiteSpace(origin) && allowed.Contains(origin)) return true;
+
+        if (!string.IsNullOrWhiteSpace(referer))
+        {
+            foreach (var a in allowed)
+            {
+                if (referer.StartsWith(a, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+        }
+
+        return false;
     }
 }

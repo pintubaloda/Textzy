@@ -3,9 +3,9 @@ using System.Text;
 
 namespace Textzy.Api.Services;
 
-public class SecretCryptoService(IConfiguration config)
+public class SecretCryptoService(IConfiguration config, IHostEnvironment env)
 {
-    private readonly byte[] _key = SHA256.HashData(Encoding.UTF8.GetBytes(config["Secrets:MasterKey"] ?? "textzy-dev-master-key-change-in-prod"));
+    private readonly byte[] _key = SHA256.HashData(Encoding.UTF8.GetBytes(ResolveMasterKey(config, env)));
 
     public string Encrypt(string plain)
     {
@@ -31,5 +31,22 @@ public class SecretCryptoService(IConfiguration config)
         using var decryptor = aes.CreateDecryptor(aes.Key, iv);
         var plainBytes = decryptor.TransformFinalBlock(cipher, 0, cipher.Length);
         return Encoding.UTF8.GetString(plainBytes);
+    }
+
+    private static string ResolveMasterKey(IConfiguration config, IHostEnvironment env)
+    {
+        var configured = (config["Secrets:MasterKey"] ?? string.Empty).Trim();
+        if (env.IsProduction())
+        {
+            if (string.IsNullOrWhiteSpace(configured))
+                throw new InvalidOperationException("Secrets:MasterKey is required in Production.");
+            if (configured.Length < 32)
+                throw new InvalidOperationException("Secrets:MasterKey must be at least 32 characters in Production.");
+            return configured;
+        }
+
+        return string.IsNullOrWhiteSpace(configured)
+            ? "textzy-dev-master-key-change-in-prod"
+            : configured;
     }
 }

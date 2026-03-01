@@ -20,6 +20,7 @@ public class AuthController(
     AuthCookieService authCookie,
     TemplateSyncOrchestrator templateSync,
     SensitiveDataRedactor redactor,
+    IHostEnvironment env,
     ILogger<AuthController> logger) : ControllerBase
 {
     [HttpPost("login")]
@@ -47,19 +48,6 @@ public class AuthController(
             return Unauthorized("Invalid credentials.");
 
         var verified = hasher.Verify(password, user.PasswordHash, user.PasswordSalt);
-        if (!verified && (email == "owner@textzy.local" || email == "admin@textzy.local"))
-        {
-            // Emergency recovery path for partially initialized external DBs.
-            var fallbackPassword = email == "owner@textzy.local" ? "Owner@123" : "ChangeMe@123";
-            var (newHash, newSalt) = hasher.HashPassword(fallbackPassword);
-            user.PasswordHash = newHash;
-            user.PasswordSalt = newSalt;
-            user.IsActive = true;
-            user.IsSuperAdmin = email == "owner@textzy.local";
-            await db.SaveChangesAsync(ct);
-            verified = hasher.Verify(password, user.PasswordHash, user.PasswordSalt);
-        }
-
         if (!verified) return Unauthorized("Invalid credentials.");
 
         Guid tenantId;
@@ -94,6 +82,7 @@ public class AuthController(
 
     private async Task<User?> EnsureBootstrapUserAsync(string email, CancellationToken ct)
     {
+        if (env.IsProduction()) return null;
         if (email != "owner@textzy.local" && email != "admin@textzy.local") return null;
 
         var tenantA = await db.Tenants.FirstOrDefaultAsync(t => t.Slug == "demo-retail", ct);
