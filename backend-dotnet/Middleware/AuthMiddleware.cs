@@ -1,5 +1,7 @@
 using Textzy.Api.Data;
 using Textzy.Api.Services;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Textzy.Api.Middleware;
 
@@ -34,6 +36,7 @@ public class AuthMiddleware(RequestDelegate next)
         var isHubPath = path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase);
         var isWabaWebhookPath = path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase);
         var isPaymentWebhookPath = path.StartsWith("/api/payments/webhook", StringComparison.OrdinalIgnoreCase);
+        var isCsrfExemptPath = isAuthPath || isPublicTenantPath || isSwaggerPath || isHubPath || isWabaWebhookPath || isPaymentWebhookPath;
 
         if (isAuthPath || isPublicTenantPath || isSwaggerPath || isWabaWebhookPath || isPaymentWebhookPath)
         {
@@ -49,6 +52,15 @@ public class AuthMiddleware(RequestDelegate next)
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 await context.Response.WriteAsync("Untrusted origin.");
+                return;
+            }
+        }
+        if (IsUnsafeMethod(context.Request.Method) && !isCsrfExemptPath)
+        {
+            if (!HasValidDoubleSubmitCsrf(context, authCookie))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsync("Invalid CSRF token.");
                 return;
             }
         }
@@ -152,6 +164,22 @@ public class AuthMiddleware(RequestDelegate next)
 
     private static bool IsUnsafeMethod(string method) =>
         HttpMethods.IsPost(method) || HttpMethods.IsPut(method) || HttpMethods.IsPatch(method) || HttpMethods.IsDelete(method);
+
+    private static bool HasValidDoubleSubmitCsrf(HttpContext context, AuthCookieService authCookie)
+    {
+        var cookieToken = authCookie.ReadCsrfToken(context);
+        if (string.IsNullOrWhiteSpace(cookieToken)) return false;
+
+        var headerToken = context.Request.Headers["X-CSRF-Token"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(headerToken))
+            headerToken = context.Request.Headers["X-XSRF-Token"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(headerToken)) return false;
+
+        var cookieBytes = Encoding.UTF8.GetBytes(cookieToken);
+        var headerBytes = Encoding.UTF8.GetBytes(headerToken.Trim());
+        return cookieBytes.Length == headerBytes.Length &&
+               CryptographicOperations.FixedTimeEquals(cookieBytes, headerBytes);
+    }
 
     private static bool IsTrustedOrigin(string origin, string referer, IConfiguration config)
     {

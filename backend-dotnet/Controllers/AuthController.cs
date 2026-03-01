@@ -77,6 +77,7 @@ public class AuthController(
 
         var token = await sessions.CreateSessionAsync(user.Id, tenantId, ct);
         authCookie.SetToken(HttpContext, token);
+        authCookie.EnsureCsrfToken(HttpContext);
         return Ok(new AuthTokenResponse { AccessToken = token });
     }
 
@@ -153,6 +154,7 @@ public class AuthController(
 
         if (rotated is null) return Unauthorized("Invalid or expired session.");
         authCookie.SetToken(HttpContext, rotated);
+        authCookie.EnsureCsrfToken(HttpContext);
         return Ok(new AuthTokenResponse { AccessToken = rotated });
     }
 
@@ -210,6 +212,7 @@ public class AuthController(
 
         var sessionToken = await sessions.CreateSessionAsync(user.Id, invite.TenantId, ct);
         authCookie.SetToken(HttpContext, sessionToken);
+        authCookie.EnsureCsrfToken(HttpContext);
         return Ok(new { accessToken = sessionToken, tenantSlug = inviteTenant.Slug, projectName = inviteTenant.Name, role = invite.Role });
     }
 
@@ -229,6 +232,7 @@ public class AuthController(
     public async Task<IActionResult> Me(CancellationToken ct)
     {
         if (!auth.IsAuthenticated) return Unauthorized();
+        authCookie.EnsureCsrfToken(HttpContext);
         try
         {
             await templateSync.EnsureInitialOrDailySyncAsync(false, ct);
@@ -340,6 +344,7 @@ public class AuthController(
 
         var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
         authCookie.SetToken(HttpContext, token);
+        authCookie.EnsureCsrfToken(HttpContext);
         return Ok(new { tenant.Id, tenant.Name, tenant.Slug, role = "owner", accessToken = token });
     }
 
@@ -359,6 +364,7 @@ public class AuthController(
 
         var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
         authCookie.SetToken(HttpContext, token);
+        authCookie.EnsureCsrfToken(HttpContext);
         var role = membership.Role;
         return Ok(new { accessToken = token, tenantSlug = tenant.Slug, projectName = tenant.Name, role });
     }

@@ -9,6 +9,18 @@ let getSession = () => ({ tenantSlug: '' })
 let onSessionUpdate = () => {}
 let onAuthFailure = () => {}
 let refreshPromise = null
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+function readCsrfToken() {
+  if (typeof document === 'undefined') return ''
+  const m = document.cookie.match(/(?:^|;\s*)textzy_csrf=([^;]+)/)
+  if (!m || !m[1]) return ''
+  try {
+    return decodeURIComponent(m[1])
+  } catch {
+    return m[1]
+  }
+}
 
 export function configureApiClient({ getSessionFn, onSessionUpdateFn, onAuthFailureFn }) {
   getSession = getSessionFn || getSession
@@ -21,9 +33,14 @@ async function baseFetch(path, options = {}, useAuth = true) {
   const headers = {
     ...(options.headers || {})
   }
+  const method = (options.method || 'GET').toUpperCase()
   if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
 
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
+  if (UNSAFE_METHODS.has(method) && !headers['X-CSRF-Token']) {
+    const csrfToken = readCsrfToken()
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken
+  }
 
   return fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' })
 }

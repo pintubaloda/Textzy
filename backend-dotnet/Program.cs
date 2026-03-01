@@ -24,7 +24,10 @@ if (builder.Environment.IsProduction())
     builder.Logging.AddFilter("System", LogLevel.Warning);
 }
 
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    options.Filters.Add<BodyInputGuardFilter>();
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddResponseCompression(options =>

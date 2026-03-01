@@ -11,6 +11,18 @@ const WABA_STATUS_CACHE_PREFIX = 'textzy.wabaStatus'
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 let refreshPromise = null
 let authRedirected = false
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+function readCsrfToken() {
+  if (typeof document === 'undefined') return ''
+  const m = document.cookie.match(/(?:^|;\s*)textzy_csrf=([^;]+)/)
+  if (!m || !m[1]) return ''
+  try {
+    return decodeURIComponent(m[1])
+  } catch {
+    return m[1]
+  }
+}
 
 export function getSession() {
   try {
@@ -83,6 +95,7 @@ async function baseFetch(path, options = {}, useAuth = true) {
   const headers = {
     ...(options.headers || {})
   }
+  const method = (options.method || 'GET').toUpperCase()
   const tenantOptionalPrefixes = [
     '/api/auth/',
     '/api/public/',
@@ -100,6 +113,10 @@ async function baseFetch(path, options = {}, useAuth = true) {
 
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json'
+  }
+  if (UNSAFE_METHODS.has(method) && !headers['X-CSRF-Token']) {
+    const csrfToken = readCsrfToken()
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken
   }
 
   return fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include', cache: 'no-store' })
