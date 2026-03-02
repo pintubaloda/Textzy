@@ -262,8 +262,16 @@ export async function authLogin({ email, password, tenantSlug }) {
     const msg = await readErrorMessage(res, 'Login failed')
     throw new Error(msg)
   }
+
+  const headerToken = (res.headers.get('x-access-token') || '').trim() ||
+    (res.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
+
   const raw = await res.text()
   if (!raw || !raw.trim()) {
+    if (headerToken) {
+      setSession({ accessToken: headerToken })
+      return { accessToken: headerToken }
+    }
     return { accessToken: '' }
   }
 
@@ -276,6 +284,9 @@ export async function authLogin({ email, password, tenantSlug }) {
 
   if (data?.accessToken) {
     setSession({ accessToken: data.accessToken })
+  } else if (headerToken) {
+    data.accessToken = headerToken
+    setSession({ accessToken: headerToken })
   } else {
     throw new Error('Login response is missing accessToken.')
   }

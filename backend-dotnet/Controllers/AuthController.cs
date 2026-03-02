@@ -72,6 +72,7 @@ public class AuthController(
         var token = await sessions.CreateSessionAsync(user.Id, tenantId, ct);
         authCookie.SetToken(HttpContext, token);
         authCookie.EnsureCsrfToken(HttpContext);
+        WriteAuthHeaders(token);
         return Ok(new AuthTokenResponse { AccessToken = token });
     }
 
@@ -94,6 +95,7 @@ public class AuthController(
         if (rotated is null) return Unauthorized("Invalid or expired session.");
         authCookie.SetToken(HttpContext, rotated);
         authCookie.EnsureCsrfToken(HttpContext);
+        WriteAuthHeaders(rotated);
         return Ok(new AuthTokenResponse { AccessToken = rotated });
     }
 
@@ -152,6 +154,7 @@ public class AuthController(
         var sessionToken = await sessions.CreateSessionAsync(user.Id, invite.TenantId, ct);
         authCookie.SetToken(HttpContext, sessionToken);
         authCookie.EnsureCsrfToken(HttpContext);
+        WriteAuthHeaders(sessionToken);
         return Ok(new { accessToken = sessionToken, tenantSlug = inviteTenant.Slug, projectName = inviteTenant.Name, role = invite.Role });
     }
 
@@ -284,6 +287,7 @@ public class AuthController(
         var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
         authCookie.SetToken(HttpContext, token);
         authCookie.EnsureCsrfToken(HttpContext);
+        WriteAuthHeaders(token);
         return Ok(new { tenant.Id, tenant.Name, tenant.Slug, role = "owner", accessToken = token });
     }
 
@@ -304,8 +308,15 @@ public class AuthController(
         var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
         authCookie.SetToken(HttpContext, token);
         authCookie.EnsureCsrfToken(HttpContext);
+        WriteAuthHeaders(token);
         var role = membership.Role;
         return Ok(new { accessToken = token, tenantSlug = tenant.Slug, projectName = tenant.Name, role });
+    }
+
+    private void WriteAuthHeaders(string token)
+    {
+        Response.Headers["Authorization"] = $"Bearer {token}";
+        Response.Headers["X-Access-Token"] = token;
     }
 
     private static string NormalizeSlug(string value)
