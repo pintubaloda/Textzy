@@ -28,6 +28,7 @@ public class AuthMiddleware(RequestDelegate next)
         var path = context.Request.Path.Value ?? string.Empty;
         var isAuthPath = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/accept-invite", StringComparison.OrdinalIgnoreCase);
+        var isAuthRefreshPath = path.StartsWith("/api/auth/refresh", StringComparison.OrdinalIgnoreCase);
         var isProjectPath = path.StartsWith("/api/auth/projects", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/switch-project", StringComparison.OrdinalIgnoreCase);
         var isPublicTenantPath = path.StartsWith("/api/tenants", StringComparison.OrdinalIgnoreCase)
@@ -36,7 +37,7 @@ public class AuthMiddleware(RequestDelegate next)
         var isHubPath = path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase);
         var isWabaWebhookPath = path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase);
         var isPaymentWebhookPath = path.StartsWith("/api/payments/webhook", StringComparison.OrdinalIgnoreCase);
-        var isCsrfExemptPath = isAuthPath || isPublicTenantPath || isSwaggerPath || isHubPath || isWabaWebhookPath || isPaymentWebhookPath;
+        var isCsrfExemptPath = isAuthPath || isAuthRefreshPath || isPublicTenantPath || isSwaggerPath || isHubPath || isWabaWebhookPath || isPaymentWebhookPath;
 
         if (isAuthPath || isPublicTenantPath || isSwaggerPath || isWabaWebhookPath || isPaymentWebhookPath)
         {
