@@ -932,8 +932,12 @@ const babelMetadataPlugin = ({ types: t }) => {
           }
           if (!localName) return;
 
-          // Search for usages of this component
-          importPath.parentPath.parentPath.traverse({
+          // Search for usages of this component.
+          // Some AST layouts do not have parentPath.parentPath, so traverse from Program safely.
+          const programPath = importPath.findParent((p) => p && p.isProgram && p.isProgram());
+          if (!programPath || typeof programPath.traverse !== "function") return;
+
+          programPath.traverse({
             JSXOpeningElement(jsxPath) {
               if (result) return;
 
