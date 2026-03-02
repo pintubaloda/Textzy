@@ -229,6 +229,8 @@ using (var scope = app.Services.CreateScope())
 
     EnsureControlAuthSchema(controlDb);
     controlDb.Database.EnsureCreated();
+    if (app.Configuration.GetValue<bool?>("Auth:EnableDemoLoginSeed") == true)
+        EnsureDemoLoginSeed(controlDb);
     if (seedEnabled)
         SeedData.InitializeControl(controlDb, controlConnection);
 
@@ -643,6 +645,62 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         """);
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_BillingPaymentAttempts_OrderId" ON "BillingPaymentAttempts" ("OrderId");""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingPaymentAttempts_TenantId_CreatedAtUtc" ON "BillingPaymentAttempts" ("TenantId","CreatedAtUtc");""");
+}
+
+static void EnsureDemoLoginSeed(ControlDbContext db)
+{
+    db.Database.ExecuteSqlRaw("""
+        INSERT INTO "Tenants" ("Id", "Name", "Slug", "OwnerGroupId", "DataConnectionString", "CreatedAtUtc")
+        SELECT gen_random_uuid(), 'Default Project', 'default-project', NULL, '', now()
+        WHERE NOT EXISTS (SELECT 1 FROM "Tenants");
+        """);
+
+    db.Database.ExecuteSqlRaw("""
+        INSERT INTO "Users"
+        ("Id", "Email", "FullName", "PasswordHash", "PasswordSalt", "IsActive", "IsSuperAdmin", "CreatedAtUtc")
+        VALUES
+        (gen_random_uuid(), 'owner@textzy.local', 'Platform Owner',
+         'macFwhgbK2puL0LLflKPQbxc7Z1Xre9WV6Qx4EsOjNg=', 'AAAAAAAAAAAAAAAAAAAAAA==',
+         true, true, now())
+        ON CONFLICT ("Email") DO UPDATE SET
+          "FullName"='Platform Owner',
+          "PasswordHash"='macFwhgbK2puL0LLflKPQbxc7Z1Xre9WV6Qx4EsOjNg=',
+          "PasswordSalt"='AAAAAAAAAAAAAAAAAAAAAA==',
+          "IsActive"=true,
+          "IsSuperAdmin"=true;
+        """);
+
+    db.Database.ExecuteSqlRaw("""
+        INSERT INTO "Users"
+        ("Id", "Email", "FullName", "PasswordHash", "PasswordSalt", "IsActive", "IsSuperAdmin", "CreatedAtUtc")
+        VALUES
+        (gen_random_uuid(), 'admin@textzy.local', 'Textzy Admin',
+         '8HkfWmsuv8SNoNDOZGd8RW02CWWPI5zdg0E6hUi4AR4=', 'AAAAAAAAAAAAAAAAAAAAAA==',
+         true, false, now())
+        ON CONFLICT ("Email") DO UPDATE SET
+          "FullName"='Textzy Admin',
+          "PasswordHash"='8HkfWmsuv8SNoNDOZGd8RW02CWWPI5zdg0E6hUi4AR4=',
+          "PasswordSalt"='AAAAAAAAAAAAAAAAAAAAAA==',
+          "IsActive"=true,
+          "IsSuperAdmin"=false;
+        """);
+
+    db.Database.ExecuteSqlRaw("""
+        WITH first_tenant AS (
+          SELECT "Id" FROM "Tenants" ORDER BY "CreatedAtUtc" ASC LIMIT 1
+        ),
+        admin_user AS (
+          SELECT "Id" AS "UserId" FROM "Users" WHERE "Email"='admin@textzy.local' LIMIT 1
+        )
+        INSERT INTO "TenantUsers" ("Id", "TenantId", "UserId", "Role", "CreatedAtUtc")
+        SELECT gen_random_uuid(), t."Id", a."UserId", 'owner', now()
+        FROM first_tenant t
+        CROSS JOIN admin_user a
+        WHERE NOT EXISTS (
+          SELECT 1 FROM "TenantUsers" tu
+          WHERE tu."TenantId"=t."Id" AND tu."UserId"=a."UserId"
+        );
+        """);
 }
 
 static string NormalizeConnectionString(string raw)
