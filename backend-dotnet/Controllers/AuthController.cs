@@ -27,15 +27,18 @@ public class AuthController(
     [HttpPost("seed-demo-login")]
     public async Task<IActionResult> SeedDemoLogin(CancellationToken ct)
     {
-        if (!config.GetValue<bool?>("Auth:EnableDemoLoginApi").GetValueOrDefault())
+        if (!IsDemoLoginApiEnabled())
             return NotFound();
 
-        var expectedSecret = (config["Auth:DemoSeedSecret"] ?? string.Empty).Trim();
+        var expectedSecret = GetDemoSeedSecret();
         if (string.IsNullOrWhiteSpace(expectedSecret))
-            return StatusCode(StatusCodes.Status500InternalServerError, "Auth:DemoSeedSecret is not configured.");
+        {
+            if (env.IsProduction())
+                return StatusCode(StatusCodes.Status500InternalServerError, "Auth:DemoSeedSecret is not configured.");
+        }
 
         var providedSecret = (Request.Headers["X-Setup-Secret"].FirstOrDefault() ?? string.Empty).Trim();
-        if (!FixedTimeEquals(expectedSecret, providedSecret))
+        if (!string.IsNullOrWhiteSpace(expectedSecret) && !FixedTimeEquals(expectedSecret, providedSecret))
             return Unauthorized("Invalid setup secret.");
 
         var owner = await UpsertDemoUserAsync(
@@ -241,6 +244,23 @@ public class AuthController(
         var a = Encoding.UTF8.GetBytes(expected);
         var b = Encoding.UTF8.GetBytes(provided);
         return a.Length == b.Length && CryptographicOperations.FixedTimeEquals(a, b);
+    }
+
+    private bool IsDemoLoginApiEnabled()
+    {
+        if (config.GetValue<bool?>("Auth:EnableDemoLoginApi") == true)
+            return true;
+        if (config.GetValue<bool?>("ENABLE_DEMO_LOGIN_API") == true)
+            return true;
+        return !env.IsProduction();
+    }
+
+    private string GetDemoSeedSecret()
+    {
+        return (config["Auth:DemoSeedSecret"]
+                ?? config["DEMO_SEED_SECRET"]
+                ?? config["DEMO_SETUP_SECRET"]
+                ?? string.Empty).Trim();
     }
 
     [HttpPost("refresh")]
