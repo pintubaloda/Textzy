@@ -1,9 +1,11 @@
 namespace Textzy.Api.Services;
 
-public class AuthCookieService(IConfiguration config)
+public class AuthCookieService(IHostEnvironment env)
 {
     public const string CookieName = "textzy_session";
     public const string CsrfCookieName = "textzy_csrf";
+
+    private bool UseSecureCookies => !env.IsDevelopment();
 
     public string? ReadToken(HttpContext http)
     {
@@ -17,11 +19,10 @@ public class AuthCookieService(IConfiguration config)
 
     public void SetToken(HttpContext http, string token, bool remember = false)
     {
-        var secure = !string.Equals(config["ASPNETCORE_ENVIRONMENT"], "Development", StringComparison.OrdinalIgnoreCase);
         http.Response.Cookies.Append(CookieName, token, new CookieOptions
         {
             HttpOnly = true,
-            Secure = secure,
+            Secure = UseSecureCookies,
             IsEssential = true,
             SameSite = SameSiteMode.None,
             Path = "/",
@@ -36,11 +37,10 @@ public class AuthCookieService(IConfiguration config)
             return existing;
 
         var token = GenerateOpaqueToken();
-        var secure = !string.Equals(config["ASPNETCORE_ENVIRONMENT"], "Development", StringComparison.OrdinalIgnoreCase);
         http.Response.Cookies.Append(CsrfCookieName, token, new CookieOptions
         {
             HttpOnly = false, // double-submit token must be readable by frontend JS
-            Secure = secure,
+            Secure = UseSecureCookies,
             IsEssential = true,
             SameSite = SameSiteMode.None,
             Path = "/",
@@ -51,11 +51,10 @@ public class AuthCookieService(IConfiguration config)
 
     public void Clear(HttpContext http)
     {
-        var secure = !string.Equals(config["ASPNETCORE_ENVIRONMENT"], "Development", StringComparison.OrdinalIgnoreCase);
         http.Response.Cookies.Delete(CookieName, new CookieOptions
         {
             HttpOnly = true,
-            Secure = secure,
+            Secure = UseSecureCookies,
             IsEssential = true,
             SameSite = SameSiteMode.None,
             Path = "/"
@@ -63,7 +62,7 @@ public class AuthCookieService(IConfiguration config)
         http.Response.Cookies.Delete(CsrfCookieName, new CookieOptions
         {
             HttpOnly = false,
-            Secure = secure,
+            Secure = UseSecureCookies,
             IsEssential = true,
             SameSite = SameSiteMode.None,
             Path = "/"
