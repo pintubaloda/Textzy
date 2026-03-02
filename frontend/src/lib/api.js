@@ -264,7 +264,7 @@ export async function authLogin({ email, password, tenantSlug }) {
   }
   const raw = await res.text()
   if (!raw || !raw.trim()) {
-    throw new Error('Login succeeded but server returned empty response. Check backend deployment version.')
+    return { accessToken: '' }
   }
 
   let data = null
