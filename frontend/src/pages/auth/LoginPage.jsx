@@ -28,7 +28,10 @@ const LoginPage = () => {
         email: formData.email,
         password: formData.password,
       });
-      await initializeMe();
+      const me = await initializeMe();
+      if (!me?.email) {
+        throw new Error("Login succeeded but session/profile init failed. Check backend auth response.");
+      }
       setLoading(false);
       toast.success("Welcome back! Select your project...");
       navigate("/projects", { replace: true });
