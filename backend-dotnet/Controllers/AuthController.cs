@@ -20,81 +20,8 @@ public class AuthController(
     AuthCookieService authCookie,
     TemplateSyncOrchestrator templateSync,
     SensitiveDataRedactor redactor,
-    IHostEnvironment env,
-    IConfiguration config,
     ILogger<AuthController> logger) : ControllerBase
 {
-    [HttpPost("seed-demo-login")]
-    public async Task<IActionResult> SeedDemoLogin(CancellationToken ct)
-    {
-        if (!IsDemoLoginApiEnabled())
-            return NotFound();
-
-        var expectedSecret = GetDemoSeedSecret();
-        if (string.IsNullOrWhiteSpace(expectedSecret))
-        {
-            if (env.IsProduction())
-                return StatusCode(StatusCodes.Status500InternalServerError, "Auth:DemoSeedSecret is not configured.");
-        }
-
-        var providedSecret = (Request.Headers["X-Setup-Secret"].FirstOrDefault() ?? string.Empty).Trim();
-        if (!string.IsNullOrWhiteSpace(expectedSecret) && !FixedTimeEquals(expectedSecret, providedSecret))
-            return Unauthorized("Invalid setup secret.");
-
-        var owner = await UpsertDemoUserAsync(
-            email: "owner@textzy.local",
-            fullName: "Platform Owner",
-            password: "Owner@123",
-            isSuperAdmin: true,
-            ct: ct);
-
-        var admin = await UpsertDemoUserAsync(
-            email: "admin@textzy.local",
-            fullName: "Textzy Admin",
-            password: "ChangeMe@123",
-            isSuperAdmin: false,
-            ct: ct);
-
-        var firstTenant = await db.Tenants
-            .OrderBy(t => t.CreatedAtUtc)
-            .FirstOrDefaultAsync(ct);
-
-        if (firstTenant is null)
-        {
-            firstTenant = new Tenant
-            {
-                Id = Guid.NewGuid(),
-                Name = "Default Project",
-                Slug = "default-project",
-                DataConnectionString = db.Database.GetConnectionString() ?? string.Empty
-            };
-            db.Tenants.Add(firstTenant);
-            await db.SaveChangesAsync(ct);
-        }
-
-        var adminMembership = await db.TenantUsers
-            .AnyAsync(tu => tu.UserId == admin.Id && tu.TenantId == firstTenant.Id, ct);
-        if (!adminMembership)
-        {
-            db.TenantUsers.Add(new TenantUser
-            {
-                Id = Guid.NewGuid(),
-                TenantId = firstTenant.Id,
-                UserId = admin.Id,
-                Role = "owner"
-            });
-        }
-
-        await db.SaveChangesAsync(ct);
-        return Ok(new
-        {
-            seeded = true,
-            ownerEmail = owner.Email,
-            adminEmail = admin.Email,
-            tenantSlug = firstTenant.Slug
-        });
-    }
-
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
@@ -112,24 +39,9 @@ public class AuthController(
 
         var user = db.Users.FirstOrDefault(u => u.Email.ToLower() == email && u.IsActive);
         if (user is null)
-        {
-            user = await EnsureBootstrapUserAsync(email, ct);
-        }
-
-        if (user is null)
             return Unauthorized("Invalid credentials.");
 
         var verified = hasher.Verify(password, user.PasswordHash, user.PasswordSalt);
-        if (!verified && IsDemoEmail(email) && IsDemoSeedEnabled())
-        {
-            // Self-heal demo credentials in environments where startup seed drifted.
-            var refreshed = await EnsureBootstrapUserAsync(email, ct);
-            if (refreshed is not null)
-            {
-                user = refreshed;
-                verified = hasher.Verify(password, user.PasswordHash, user.PasswordSalt);
-            }
-        }
         if (!verified) return Unauthorized("Invalid credentials.");
 
         Guid tenantId;
@@ -161,128 +73,6 @@ public class AuthController(
         authCookie.SetToken(HttpContext, token);
         authCookie.EnsureCsrfToken(HttpContext);
         return Ok(new AuthTokenResponse { AccessToken = token });
-    }
-
-    private async Task<User?> EnsureBootstrapUserAsync(string email, CancellationToken ct)
-    {
-        if (env.IsProduction() && !IsDemoSeedEnabled()) return null;
-        if (!IsDemoEmail(email)) return null;
-
-        var tenantA = await db.Tenants.FirstOrDefaultAsync(t => t.Slug == "demo-retail", ct);
-        if (tenantA is null)
-        {
-            tenantA = new Tenant
-            {
-                Id = Guid.NewGuid(),
-                Name = "Demo Retail",
-                Slug = "demo-retail",
-                DataConnectionString = db.Database.GetConnectionString() ?? string.Empty
-            };
-            db.Tenants.Add(tenantA);
-        }
-
-        var tenantB = await db.Tenants.FirstOrDefaultAsync(t => t.Slug == "demo-d2c", ct);
-        if (tenantB is null)
-        {
-            tenantB = new Tenant
-            {
-                Id = Guid.NewGuid(),
-                Name = "Demo D2C",
-                Slug = "demo-d2c",
-                DataConnectionString = db.Database.GetConnectionString() ?? string.Empty
-            };
-            db.Tenants.Add(tenantB);
-        }
-
-        var bootstrapPassword = email == "owner@textzy.local" ? "Owner@123" : "ChangeMe@123";
-        var (hash, salt) = hasher.HashPassword(bootstrapPassword);
-
-        var user = new User
-        {
-            Id = Guid.NewGuid(),
-            Email = email,
-            FullName = email == "owner@textzy.local" ? "Platform Owner" : "Textzy Admin",
-            PasswordHash = hash,
-            PasswordSalt = salt,
-            IsActive = true,
-            IsSuperAdmin = email == "owner@textzy.local"
-        };
-        db.Users.Add(user);
-
-        if (tenantA is not null)
-            db.TenantUsers.Add(new TenantUser { Id = Guid.NewGuid(), TenantId = tenantA.Id, UserId = user.Id, Role = "owner" });
-        if (tenantB is not null)
-            db.TenantUsers.Add(new TenantUser { Id = Guid.NewGuid(), TenantId = tenantB.Id, UserId = user.Id, Role = "admin" });
-
-        await db.SaveChangesAsync(ct);
-        return user;
-    }
-
-    private static bool IsDemoEmail(string email) =>
-        email == "owner@textzy.local" || email == "admin@textzy.local";
-
-    private bool IsDemoSeedEnabled()
-    {
-        if (config.GetValue<bool?>("Auth:EnableDemoLoginSeed") == true)
-            return true;
-        if (config.GetValue<bool?>("ENABLE_DEMO_LOGIN_SEED") == true)
-            return true;
-        return !env.IsProduction();
-    }
-
-    private async Task<User> UpsertDemoUserAsync(string email, string fullName, string password, bool isSuperAdmin, CancellationToken ct)
-    {
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email.ToLower(), ct);
-        var (hash, salt) = hasher.HashPassword(password);
-        if (user is null)
-        {
-            user = new User
-            {
-                Id = Guid.NewGuid(),
-                Email = email,
-                FullName = fullName,
-                PasswordHash = hash,
-                PasswordSalt = salt,
-                IsActive = true,
-                IsSuperAdmin = isSuperAdmin
-            };
-            db.Users.Add(user);
-        }
-        else
-        {
-            user.FullName = fullName;
-            user.PasswordHash = hash;
-            user.PasswordSalt = salt;
-            user.IsActive = true;
-            user.IsSuperAdmin = isSuperAdmin;
-        }
-
-        await db.SaveChangesAsync(ct);
-        return user;
-    }
-
-    private static bool FixedTimeEquals(string expected, string provided)
-    {
-        var a = Encoding.UTF8.GetBytes(expected);
-        var b = Encoding.UTF8.GetBytes(provided);
-        return a.Length == b.Length && CryptographicOperations.FixedTimeEquals(a, b);
-    }
-
-    private bool IsDemoLoginApiEnabled()
-    {
-        if (config.GetValue<bool?>("Auth:EnableDemoLoginApi") == true)
-            return true;
-        if (config.GetValue<bool?>("ENABLE_DEMO_LOGIN_API") == true)
-            return true;
-        return !env.IsProduction();
-    }
-
-    private string GetDemoSeedSecret()
-    {
-        return (config["Auth:DemoSeedSecret"]
-                ?? config["DEMO_SEED_SECRET"]
-                ?? config["DEMO_SETUP_SECRET"]
-                ?? string.Empty).Trim();
     }
 
     [HttpPost("refresh")]

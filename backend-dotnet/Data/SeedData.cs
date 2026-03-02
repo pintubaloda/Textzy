@@ -9,108 +9,15 @@ public static class SeedData
 {
     public static void InitializeControl(ControlDbContext db, string defaultTenantConnection)
     {
-        var tenantA = db.Tenants.FirstOrDefault(t => t.Slug == "demo-retail");
-        if (tenantA is null)
-        {
-            tenantA = new Tenant
-            {
-                Id = Guid.NewGuid(),
-                Name = "Demo Retail",
-                Slug = "demo-retail",
-                DataConnectionString = defaultTenantConnection
-            };
-            db.Tenants.Add(tenantA);
-        }
+        var tenantIds = db.Tenants
+            .OrderBy(t => t.CreatedAtUtc)
+            .Select(t => t.Id)
+            .Take(2)
+            .ToList();
 
-        var tenantB = db.Tenants.FirstOrDefault(t => t.Slug == "demo-d2c");
-        if (tenantB is null)
-        {
-            tenantB = new Tenant
-            {
-                Id = Guid.NewGuid(),
-                Name = "Demo D2C",
-                Slug = "demo-d2c",
-                DataConnectionString = defaultTenantConnection
-            };
-            db.Tenants.Add(tenantB);
-        }
+        if (tenantIds.Count >= 2)
+            EnsureBillingSeeds(db, tenantIds[0], tenantIds[1]);
 
-        var hasher = new PasswordHasher();
-        var (hash, salt) = hasher.HashPassword("ChangeMe@123");
-        var (ownerHash, ownerSalt) = hasher.HashPassword("Owner@123");
-
-        var user = db.Users.FirstOrDefault(u => u.Email == "admin@textzy.local");
-        if (user is null)
-        {
-            user = new User
-            {
-                Id = Guid.NewGuid(),
-                Email = "admin@textzy.local",
-                FullName = "Textzy Admin",
-                PasswordHash = hash,
-                PasswordSalt = salt,
-                IsActive = true,
-                IsSuperAdmin = false
-            };
-            db.Users.Add(user);
-        }
-        else
-        {
-            // Keep demo login deterministic across environments.
-            user.PasswordHash = hash;
-            user.PasswordSalt = salt;
-            user.IsActive = true;
-            user.IsSuperAdmin = false;
-        }
-
-        var mappings = new (Guid TenantId, string Role)[]
-        {
-            (tenantA.Id, "owner"),
-            (tenantB.Id, "admin"),
-            (tenantA.Id, "manager")
-        };
-
-        foreach (var m in mappings)
-        {
-            var exists = db.TenantUsers.Any(tu => tu.UserId == user.Id && tu.TenantId == m.TenantId && tu.Role == m.Role);
-            if (!exists)
-            {
-                db.TenantUsers.Add(new TenantUser
-                {
-                    Id = Guid.NewGuid(),
-                    TenantId = m.TenantId,
-                    UserId = user.Id,
-                    Role = m.Role
-                });
-            }
-        }
-
-        var platformOwner = db.Users.FirstOrDefault(u => u.Email == "owner@textzy.local");
-        if (platformOwner is null)
-        {
-            platformOwner = new User
-            {
-                Id = Guid.NewGuid(),
-                Email = "owner@textzy.local",
-                FullName = "Platform Owner",
-                PasswordHash = ownerHash,
-                PasswordSalt = ownerSalt,
-                IsActive = true,
-                IsSuperAdmin = true
-            };
-            db.Users.Add(platformOwner);
-        }
-        else
-        {
-            platformOwner.PasswordHash = ownerHash;
-            platformOwner.PasswordSalt = ownerSalt;
-            platformOwner.IsActive = true;
-            platformOwner.IsSuperAdmin = true;
-        }
-
-        db.SaveChanges();
-
-        EnsureBillingSeeds(db, tenantA.Id, tenantB.Id);
         EnsureWabaErrorPolicies(db);
         db.SaveChanges();
     }
