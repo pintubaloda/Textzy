@@ -27,7 +27,8 @@ public class AuthMiddleware(RequestDelegate next)
 
         var path = context.Request.Path.Value ?? string.Empty;
         var isAuthPath = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/auth/accept-invite", StringComparison.OrdinalIgnoreCase);
+            || path.StartsWith("/api/auth/accept-invite", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/auth/seed-demo-login", StringComparison.OrdinalIgnoreCase);
         var isProjectPath = path.StartsWith("/api/auth/projects", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/switch-project", StringComparison.OrdinalIgnoreCase);
         var isPublicTenantPath = path.StartsWith("/api/tenants", StringComparison.OrdinalIgnoreCase)
