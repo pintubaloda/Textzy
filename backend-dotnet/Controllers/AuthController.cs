@@ -120,6 +120,16 @@ public class AuthController(
             return Unauthorized("Invalid credentials.");
 
         var verified = hasher.Verify(password, user.PasswordHash, user.PasswordSalt);
+        if (!verified && IsDemoEmail(email) && IsDemoSeedEnabled())
+        {
+            // Self-heal demo credentials in environments where startup seed drifted.
+            var refreshed = await EnsureBootstrapUserAsync(email, ct);
+            if (refreshed is not null)
+            {
+                user = refreshed;
+                verified = hasher.Verify(password, user.PasswordHash, user.PasswordSalt);
+            }
+        }
         if (!verified) return Unauthorized("Invalid credentials.");
 
         Guid tenantId;
@@ -155,8 +165,8 @@ public class AuthController(
 
     private async Task<User?> EnsureBootstrapUserAsync(string email, CancellationToken ct)
     {
-        if (env.IsProduction()) return null;
-        if (email != "owner@textzy.local" && email != "admin@textzy.local") return null;
+        if (env.IsProduction() && !IsDemoSeedEnabled()) return null;
+        if (!IsDemoEmail(email)) return null;
 
         var tenantA = await db.Tenants.FirstOrDefaultAsync(t => t.Slug == "demo-retail", ct);
         if (tenantA is null)
@@ -206,6 +216,18 @@ public class AuthController(
 
         await db.SaveChangesAsync(ct);
         return user;
+    }
+
+    private static bool IsDemoEmail(string email) =>
+        email == "owner@textzy.local" || email == "admin@textzy.local";
+
+    private bool IsDemoSeedEnabled()
+    {
+        if (config.GetValue<bool?>("Auth:EnableDemoLoginSeed") == true)
+            return true;
+        if (config.GetValue<bool?>("ENABLE_DEMO_LOGIN_SEED") == true)
+            return true;
+        return !env.IsProduction();
     }
 
     private async Task<User> UpsertDemoUserAsync(string email, string fullName, string password, bool isSuperAdmin, CancellationToken ct)
