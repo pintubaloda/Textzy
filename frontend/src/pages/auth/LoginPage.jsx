@@ -7,12 +7,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { MessageSquare, Eye, EyeOff, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
-import { checkApiHealth } from "@/lib/api";
-import { useAuth } from "@/auth/AuthProvider";
+import { authLogin, checkApiHealth, initializeMe } from "@/lib/api";
 
 const LoginPage = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [healthChecked, setHealthChecked] = useState(false);
@@ -27,10 +25,14 @@ const LoginPage = () => {
     setLoading(true);
     
     try {
-      await login({
+      await authLogin({
         email: formData.email,
         password: formData.password,
       });
+      const me = await initializeMe();
+      if (!me?.email) {
+        throw new Error("Login succeeded but session/profile init failed. Check backend auth response.");
+      }
       setLoading(false);
       toast.success("Welcome back! Select your project...");
       navigate("/projects", { replace: true });
