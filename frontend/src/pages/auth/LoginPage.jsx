@@ -37,9 +37,9 @@ const LoginPage = () => {
           window.location.assign("/projects");
         }
       }, 120);
-    } catch {
+    } catch (err) {
       setLoading(false);
-      toast.error("Login failed. Check email/password.");
+      toast.error(err?.message || "Login failed. Check email/password.");
     }
   };
 

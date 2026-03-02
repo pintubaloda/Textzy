@@ -125,6 +125,11 @@ async function baseFetch(path, options = {}, useAuth = true) {
   return fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include', cache: 'no-store' })
 }
 
+async function readErrorMessage(res, fallback) {
+  const text = await res.text().catch(() => '')
+  return text || `${fallback} (${res.status})`
+}
+
 async function refresh() {
   if (refreshPromise) return refreshPromise
   refreshPromise = (async () => {
@@ -250,12 +255,25 @@ export async function authLogin({ email, password, tenantSlug }) {
     body: JSON.stringify({ email, password })
   })
   if (!res.ok) {
-    const msg = await res.text()
-    throw new Error(msg || 'Invalid login')
+    const msg = await readErrorMessage(res, 'Login failed')
+    throw new Error(msg)
   }
-  const data = await res.json()
+  const raw = await res.text()
+  if (!raw || !raw.trim()) {
+    throw new Error('Login succeeded but server returned empty response. Check backend deployment version.')
+  }
+
+  let data = null
+  try {
+    data = JSON.parse(raw)
+  } catch {
+    throw new Error('Login response is not valid JSON. Check backend proxy/deployment.')
+  }
+
   if (data?.accessToken) {
     setSession({ accessToken: data.accessToken })
+  } else {
+    throw new Error('Login response is missing accessToken.')
   }
   return data
 }

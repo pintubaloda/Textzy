@@ -20,10 +20,9 @@ public class TenantMiddleware(RequestDelegate next)
         var isHubPath = path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase);
         var isWabaWebhook = path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase);
         var isPaymentWebhook = path.StartsWith("/api/payments/webhook", StringComparison.OrdinalIgnoreCase);
-        var isAuthLogin = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase);
-        var isAuthAcceptInvite = path.StartsWith("/api/auth/accept-invite", StringComparison.OrdinalIgnoreCase);
+        var isAuthPath = path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase);
         var isPublicPath = path.StartsWith("/api/public", StringComparison.OrdinalIgnoreCase);
-        if (isSwaggerPath || isHubPath || isWabaWebhook || isPaymentWebhook || isAuthLogin || isAuthAcceptInvite || isPublicPath)
+        if (isSwaggerPath || isHubPath || isWabaWebhook || isPaymentWebhook || isAuthPath || isPublicPath)
         {
             await _next(context);
             return;
