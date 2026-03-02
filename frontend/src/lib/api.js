@@ -34,7 +34,7 @@ export function getSession() {
       projectName: p.projectName || '',
       role: p.role || '',
       email: p.email || '',
-      accessToken: ''
+      accessToken: p.accessToken || ''
     }
   } catch {
     return { tenantSlug: '', projectName: '', role: '', email: '', accessToken: '' }
@@ -104,6 +104,9 @@ async function baseFetch(path, options = {}, useAuth = true) {
   ]
   const requiresTenant = useAuth && !tenantOptionalPrefixes.some((p) => path.startsWith(p))
   if (s.tenantSlug) headers['X-Tenant-Slug'] = s.tenantSlug
+  if (useAuth && s.accessToken && !headers.Authorization) {
+    headers.Authorization = `Bearer ${s.accessToken}`
+  }
   if (requiresTenant && !headers['X-Tenant-Slug']) {
     if (typeof window !== 'undefined' && window.location.pathname !== '/projects') {
       window.location.assign('/projects')
@@ -251,6 +254,9 @@ export async function authLogin({ email, password, tenantSlug }) {
     throw new Error(msg || 'Invalid login')
   }
   const data = await res.json()
+  if (data?.accessToken) {
+    setSession({ accessToken: data.accessToken })
+  }
   return data
 }
 

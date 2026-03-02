@@ -29,12 +29,13 @@ export function configureApiClient({ getSessionFn, onSessionUpdateFn, onAuthFail
 }
 
 async function baseFetch(path, options = {}, useAuth = true) {
-  const { tenantSlug } = getSession()
+  const { tenantSlug, accessToken } = getSession()
   const headers = {
     ...(options.headers || {})
   }
   const method = (options.method || 'GET').toUpperCase()
   if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
+  if (useAuth && accessToken && !headers.Authorization) headers.Authorization = `Bearer ${accessToken}`
 
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
   if (UNSAFE_METHODS.has(method) && !headers['X-CSRF-Token']) {
@@ -106,7 +107,9 @@ export async function authLogin({ email, password, tenantSlug }) {
   })
 
   if (!res.ok) throw new Error('Invalid login')
-  return res.json()
+  const data = await res.json()
+  if (data?.accessToken && typeof onSessionUpdate === 'function') onSessionUpdate({ accessToken: data.accessToken })
+  return data
 }
 
 export async function getWabaStatus() {
