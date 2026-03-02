@@ -13,6 +13,10 @@ let refreshPromise = null
 let authRedirected = false
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
+export function getApiBase() {
+  return API_BASE
+}
+
 function readCsrfToken() {
   if (typeof document === 'undefined') return ''
   const m = document.cookie.match(/(?:^|;\s*)textzy_csrf=([^;]+)/)
@@ -276,6 +280,18 @@ export async function authLogin({ email, password, tenantSlug }) {
     throw new Error('Login response is missing accessToken.')
   }
   return data
+}
+
+export async function checkApiHealth() {
+  const res = await fetch(`${API_BASE}/api/public/plans`, {
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store'
+  })
+  if (!res.ok) {
+    throw new Error(`Backend unreachable at ${API_BASE} (status ${res.status}).`)
+  }
+  return true
 }
 
 export async function authAcceptInvite({ token, fullName, password }) {

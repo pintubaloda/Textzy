@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useState } from 'react'
-import { apiGet, apiPost, authLogin, configureApiClient } from '../api/client'
+import { apiPost, authLogin, initializeMe, clearSession as clearApiSession, getSession as getApiSession } from '../lib/api'
 
 const AuthContext = createContext(null)
 
@@ -7,11 +7,17 @@ const SESSION_KEY = 'textzy.session'
 
 function readSession() {
   const raw = localStorage.getItem(SESSION_KEY)
-  if (!raw) return { tenantSlug: '', role: '', email: '' }
+  if (!raw) return { tenantSlug: '', role: '', email: '', accessToken: '' }
   try {
-    return JSON.parse(raw)
+    const parsed = JSON.parse(raw)
+    return {
+      tenantSlug: parsed.tenantSlug || '',
+      role: parsed.role || '',
+      email: parsed.email || '',
+      accessToken: parsed.accessToken || ''
+    }
   } catch {
-    return { tenantSlug: '', role: '', email: '' }
+    return { tenantSlug: '', role: '', email: '', accessToken: '' }
   }
 }
 
@@ -27,23 +33,22 @@ export function AuthProvider({ children }) {
   }
 
   function clearSession() {
-    const empty = { tenantSlug: '', role: '', email: '' }
+    const empty = { tenantSlug: '', role: '', email: '', accessToken: '' }
     setSession(empty)
-    localStorage.setItem(SESSION_KEY, JSON.stringify(empty))
+    clearApiSession()
   }
 
-  configureApiClient({
-    getSessionFn: () => session,
-    onSessionUpdateFn: (next) => persist(next),
-    onAuthFailureFn: () => clearSession()
-  })
-
   async function login({ email, password }) {
-    const loginRes = await authLogin({ email, password })
-    if (!loginRes) return
-    const me = await apiGet('/api/auth/me')
+    await authLogin({ email, password })
+    const me = await initializeMe()
+    if (!me?.email) throw new Error('Login succeeded but session/profile init failed.')
     const existing = readSession()
-    persist({ role: me.role, email: me.email, tenantSlug: existing.tenantSlug || me.tenantSlug || '' })
+    persist({
+      role: me.role || '',
+      email: me.email || '',
+      tenantSlug: existing.tenantSlug || me.tenantSlug || '',
+      accessToken: getApiSession().accessToken || existing.accessToken || ''
+    })
   }
 
   async function logout() {

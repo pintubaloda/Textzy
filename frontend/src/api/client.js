@@ -1,140 +1,26 @@
-const runtimeConfig = typeof window !== 'undefined' ? (window.__APP_CONFIG__ || {}) : {}
-const API_BASE =
-  runtimeConfig.API_BASE ||
-  import.meta.env.VITE_API_BASE ||
-  process.env.REACT_APP_API_BASE ||
-  'https://textzy-backend-production.up.railway.app'
+import {
+  apiRequest as libApiRequest,
+  apiGet as libApiGet,
+  apiPost as libApiPost,
+  apiPostForm as libApiPostForm,
+  authLogin as libAuthLogin,
+  wabaGetOnboardingStatus,
+  wabaExchangeCode,
+  wabaGetEmbeddedConfig
+} from '../lib/api'
 
-let getSession = () => ({ tenantSlug: '' })
-let onSessionUpdate = () => {}
-let onAuthFailure = () => {}
-let refreshPromise = null
-const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+// Compatibility shim: keep existing imports working while using a single client implementation.
+export function configureApiClient() {}
 
-function readCsrfToken() {
-  if (typeof document === 'undefined') return ''
-  const m = document.cookie.match(/(?:^|;\s*)textzy_csrf=([^;]+)/)
-  if (!m || !m[1]) return ''
-  try {
-    return decodeURIComponent(m[1])
-  } catch {
-    return m[1]
-  }
-}
-
-export function configureApiClient({ getSessionFn, onSessionUpdateFn, onAuthFailureFn }) {
-  getSession = getSessionFn || getSession
-  onSessionUpdate = onSessionUpdateFn || onSessionUpdate
-  onAuthFailure = onAuthFailureFn || onAuthFailure
-}
-
-async function baseFetch(path, options = {}, useAuth = true) {
-  const { tenantSlug, accessToken } = getSession()
-  const headers = {
-    ...(options.headers || {})
-  }
-  const method = (options.method || 'GET').toUpperCase()
-  if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
-  if (useAuth && accessToken && !headers.Authorization) headers.Authorization = `Bearer ${accessToken}`
-
-  if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
-  if (UNSAFE_METHODS.has(method) && !headers['X-CSRF-Token']) {
-    const csrfToken = readCsrfToken()
-    if (csrfToken) headers['X-CSRF-Token'] = csrfToken
-  }
-
-  return fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' })
-}
-
-async function readErrorMessage(res, fallback) {
-  const text = await res.text().catch(() => '')
-  return text || `${fallback} (${res.status})`
-}
-
-async function refreshToken() {
-  if (refreshPromise) return refreshPromise
-  refreshPromise = (async () => {
-    const res = await baseFetch('/api/auth/refresh', { method: 'POST' }, true)
-    if (!res.ok) return false
-    await res.json().catch(() => ({}))
-    return true
-  })()
-  try {
-    return await refreshPromise
-  } finally {
-    refreshPromise = null
-  }
-}
-
-export async function apiRequest(path, options = {}) {
-  let res = await baseFetch(path, options, true)
-  if (res.status !== 401) return res
-
-  const refreshed = await refreshToken()
-  if (!refreshed) {
-    onAuthFailure()
-    return res
-  }
-
-  res = await baseFetch(path, options, true)
-  if (res.status === 401) onAuthFailure()
-  return res
-}
-
-export async function apiGet(path) {
-  const res = await apiRequest(path)
-  if (!res.ok) throw new Error(`GET ${path} failed (${res.status})`)
-  return res.json()
-}
-
-export async function apiPost(path, body) {
-  const res = await apiRequest(path, { method: 'POST', body: JSON.stringify(body) })
-  if (!res.ok) throw new Error(`POST ${path} failed (${res.status})`)
-  const text = await res.text()
-  return text ? JSON.parse(text) : null
-}
-
-export async function apiPostForm(path, formData) {
-  const res = await apiRequest(path, { method: 'POST', body: formData, headers: {} })
-  if (!res.ok) throw new Error(`POST ${path} failed (${res.status})`)
-  const text = await res.text()
-  return text ? JSON.parse(text) : null
-}
-
-export async function authLogin({ email, password, tenantSlug }) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
-  const res = await fetch(`${API_BASE}/api/auth/login`, {
-    method: 'POST',
-    headers,
-    credentials: 'include',
-    body: JSON.stringify({ email, password })
-  })
-
-  if (!res.ok) throw new Error(await readErrorMessage(res, 'Login failed'))
-  const raw = await res.text()
-  if (!raw || !raw.trim()) {
-    throw new Error('Login succeeded but server returned empty response. Check backend deployment version.')
-  }
-  let data = null
-  try {
-    data = JSON.parse(raw)
-  } catch {
-    throw new Error('Login response is not valid JSON. Check backend proxy/deployment.')
-  }
-  if (!data?.accessToken) throw new Error('Login response is missing accessToken.')
-  if (data?.accessToken && typeof onSessionUpdate === 'function') onSessionUpdate({ accessToken: data.accessToken })
-  return data
-}
+export const apiRequest = libApiRequest
+export const apiGet = libApiGet
+export const apiPost = libApiPost
+export const apiPostForm = libApiPostForm
+export const authLogin = libAuthLogin
 
 export async function getWabaStatus() {
-  return apiGet('/api/waba/status')
+  return wabaGetOnboardingStatus({ force: true })
 }
 
-export async function exchangeEmbeddedSignupCode(code) {
-  return apiPost('/api/waba/embedded-signup/exchange', { code })
-}
-
-export async function getEmbeddedSignupConfig() {
-  return apiGet('/api/waba/embedded-config')
-}
+export const exchangeEmbeddedSignupCode = wabaExchangeCode
+export const getEmbeddedSignupConfig = wabaGetEmbeddedConfig

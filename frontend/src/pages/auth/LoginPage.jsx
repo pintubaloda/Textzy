@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,12 +7,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { MessageSquare, Eye, EyeOff, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
-import { authLogin, initializeMe } from "@/lib/api";
+import { checkApiHealth } from "@/lib/api";
+import { useAuth } from "@/auth/AuthProvider";
 
 const LoginPage = () => {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [healthChecked, setHealthChecked] = useState(false);
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -24,14 +27,10 @@ const LoginPage = () => {
     setLoading(true);
     
     try {
-      await authLogin({
+      await login({
         email: formData.email,
         password: formData.password,
       });
-      const me = await initializeMe();
-      if (!me?.email) {
-        throw new Error("Login succeeded but session/profile init failed. Check backend auth response.");
-      }
       setLoading(false);
       toast.success("Welcome back! Select your project...");
       navigate("/projects", { replace: true });
@@ -45,6 +44,14 @@ const LoginPage = () => {
       toast.error(err?.message || "Login failed. Check email/password.");
     }
   };
+
+  useEffect(() => {
+    if (healthChecked) return;
+    setHealthChecked(true);
+    checkApiHealth().catch((err) => {
+      toast.error(err?.message || "Backend health check failed. Verify API_BASE/env.js.");
+    });
+  }, [healthChecked]);
 
   return (
     <div className="min-h-screen bg-slate-50 flex" data-testid="login-page">
