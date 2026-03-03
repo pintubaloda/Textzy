@@ -558,7 +558,7 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "UserId" uuid NOT NULL,
             "DeviceId" uuid NULL,
             "EventType" text NOT NULL DEFAULT '',
-            "DataJson" text NOT NULL DEFAULT '{}',
+            "DataJson" text NOT NULL DEFAULT '{{}}',
             "EventAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
             "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now()
         );
@@ -1000,7 +1000,7 @@ static void EnsureTenantCoreSchema(TenantDbContext db)
             "ErrorCode" text NOT NULL DEFAULT '',
             "ErrorTitle" text NOT NULL DEFAULT '',
             "ErrorDetail" text NOT NULL DEFAULT '',
-            "PayloadJson" text NOT NULL DEFAULT '{}',
+            "PayloadJson" text NOT NULL DEFAULT '{{}}',
             "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now()
         );
         """);
@@ -1095,7 +1095,7 @@ static void EnsureTenantWorkflowPhase1PatchOnce(TenantDbContext db)
                     "FlowId" uuid NOT NULL,
                     "ConversationId" uuid NOT NULL,
                     "CurrentNodeId" text NOT NULL DEFAULT '',
-                    "ExecutionData" jsonb NOT NULL DEFAULT '{}'::jsonb,
+                    "ExecutionData" jsonb NOT NULL DEFAULT '{{}}'::jsonb,
                     "Status" text NOT NULL DEFAULT 'running',
                     "StartedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
                     "LastUpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
@@ -1118,8 +1118,8 @@ static void EnsureTenantWorkflowPhase1PatchOnce(TenantDbContext db)
                     "ExecutedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
                     "Status" text NOT NULL DEFAULT '',
                     "DurationMs" integer NOT NULL DEFAULT 0,
-                    "InputData" jsonb NOT NULL DEFAULT '{}'::jsonb,
-                    "OutputData" jsonb NOT NULL DEFAULT '{}'::jsonb,
+                    "InputData" jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+                    "OutputData" jsonb NOT NULL DEFAULT '{{}}'::jsonb,
                     "ErrorMessage" text NOT NULL DEFAULT ''
                 );
                 CREATE INDEX IF NOT EXISTS "IX_WorkflowExecutionLogs_TenantId" ON "WorkflowExecutionLogs" ("TenantId");
@@ -1186,7 +1186,7 @@ static void EnsureTenantWorkflowPhase1PatchOnce(TenantDbContext db)
                     "ConversationId" uuid NOT NULL,
                     "NodeId" text NOT NULL DEFAULT '',
                     "ScheduledForUtc" timestamp with time zone NOT NULL,
-                    "MessageContent" jsonb NOT NULL DEFAULT '{}'::jsonb,
+                    "MessageContent" jsonb NOT NULL DEFAULT '{{}}'::jsonb,
                     "Status" text NOT NULL DEFAULT 'pending',
                     "RetryCount" integer NOT NULL DEFAULT 0,
                     "MaxRetries" integer NOT NULL DEFAULT 3,
