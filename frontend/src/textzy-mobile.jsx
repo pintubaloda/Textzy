@@ -179,10 +179,12 @@ const mapMessage = (x) => {
   return {
     id: x.id ?? x.Id ?? `${Date.now()}-${Math.random()}`,
     sent: sender === "agent",
+    direction: sender,
     text,
     time: createdAt
       ? new Date(createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
       : "now",
+    createdAtMs: createdAt ? new Date(createdAt).getTime() : null,
     status: rawStatus || "sent",
   };
 };
@@ -281,7 +283,18 @@ const I = {
   DblChk:  ()=><svg width="18" height="11" viewBox="0 0 18 11" fill="none"><path d="M1 5.5L4.5 9L11 1.5" stroke={C.orange} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M7 5.5L10.5 9L17 1.5" stroke={C.orange} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
   Star:    ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
   Device:  ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>,
+  Bell:    ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>,
+  Cog:     ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33h.01a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51h.01a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v.01a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>,
+  Tag:     ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41L11 22l-9-9V2h11z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>,
+  Plus:    ()=><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
 };
+
+const QA_LIBRARY = [
+  "QA: Thank you for contacting Textzy. How can I assist you today?",
+  "QA: We are open 7 AM to 11 PM, 24x7 support available.",
+  "QA: Please share your order ID so I can check details quickly.",
+  "QA: I am connecting you with our support specialist now.",
+];
 
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    AVATAR
@@ -768,7 +781,7 @@ const LoginScreen = ({ onLogin }) => {
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    SCREEN 2 â€” PROJECT PICKER
 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
-const ProjectPicker = ({ projects, onSelect }) => {
+const ProjectPicker = ({ projects, onSelect, loading = false }) => {
   const [sel, setSel] = useState(null);
   const rows = projects?.length ? projects : PROJECTS;
   return (
@@ -804,13 +817,14 @@ const ProjectPicker = ({ projects, onSelect }) => {
             </div>
           );
         })}
-        <button disabled={!sel} onClick={()=>sel&&onSelect(rows.find(p=>p.slug===sel))} style={{
+        <button disabled={!sel || loading} onClick={()=>sel&&onSelect(rows.find(p=>p.slug===sel))} style={{
           width:"100%", padding:15, marginTop:8, borderRadius:14, border:"none",
           background:sel?`linear-gradient(135deg,${C.orange},${C.orangeLight})`:C.divider,
           color:sel?"#fff":C.textMuted, fontWeight:700, fontSize:16,
-          cursor:sel?"pointer":"not-allowed", fontFamily:"inherit",
+          cursor:sel && !loading?"pointer":"not-allowed", fontFamily:"inherit",
           boxShadow:sel?`0 6px 24px ${C.orange}55`:"none", transition:"all 0.2s",
-        }}>Continue -></button>
+          opacity: loading ? 0.82 : 1,
+        }}>{loading ? "Continuing..." : "Continue ->"}</button>
       </div>
     </div>
   );
@@ -845,6 +859,31 @@ export default function TextzyMobile() {
   const [showMainMenu, setShowMainMenu] = useState(false);
   const [showChatMenu, setShowChatMenu] = useState(false);
   const [starred, setStarred] = useState({});
+  const [notice, setNotice] = useState("");
+  const [showNewChat, setShowNewChat] = useState(false);
+  const [newChatRecipient, setNewChatRecipient] = useState("");
+  const [newChatBody, setNewChatBody] = useState("Hello");
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [transferAssignee, setTransferAssignee] = useState("");
+  const [showLabelsModal, setShowLabelsModal] = useState(false);
+  const [labelsInput, setLabelsInput] = useState("");
+  const [showQaModal, setShowQaModal] = useState(false);
+  const [showDevicesModal, setShowDevicesModal] = useState(false);
+  const [devices, setDevices] = useState([]);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [notifEnabled, setNotifEnabled] = useState(() => localStorage.getItem("textzy.mobile.notif.enabled") !== "0");
+  const [settingsCompact, setSettingsCompact] = useState(() => localStorage.getItem("textzy.mobile.settings.compact") === "1");
+  const [settingsSound, setSettingsSound] = useState(() => localStorage.getItem("textzy.mobile.settings.sound") !== "0");
+  const [busy, setBusy] = useState({
+    project: false,
+    send: false,
+    newChat: false,
+    transfer: false,
+    labels: false,
+    devices: false,
+  });
   const msgEnd  = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -859,8 +898,49 @@ export default function TextzyMobile() {
     return fromName.length >= 8 ? fromName : "";
   })();
 
+  const parseErrorText = (raw) => {
+    const text = String(raw || "").trim();
+    if (!text) return "Something went wrong.";
+    try {
+      const obj = JSON.parse(text);
+      if (obj?.error) return String(obj.error);
+      const list = [];
+      if (obj?.title) list.push(obj.title);
+      if (obj?.errors && typeof obj.errors === "object") {
+        Object.values(obj.errors).forEach((v) => {
+          if (Array.isArray(v)) list.push(v.join(", "));
+        });
+      }
+      return list.join(" | ") || text;
+    } catch {
+      return text;
+    }
+  };
+
+  const withBusy = async (key, fn) => {
+    if (busy[key]) return;
+    setBusy((p) => ({ ...p, [key]: true }));
+    try {
+      await fn();
+    } finally {
+      setBusy((p) => ({ ...p, [key]: false }));
+    }
+  };
+
   useEffect(()=>{ msgEnd.current?.scrollIntoView({behavior:"smooth"}); },
     [active?.messages?.length, active?.typing]);
+
+  useEffect(() => {
+    localStorage.setItem("textzy.mobile.notif.enabled", notifEnabled ? "1" : "0");
+  }, [notifEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem("textzy.mobile.settings.compact", settingsCompact ? "1" : "0");
+  }, [settingsCompact]);
+
+  useEffect(() => {
+    localStorage.setItem("textzy.mobile.settings.sound", settingsSound ? "1" : "0");
+  }, [settingsSound]);
 
   const persistSession = (nextSession, nextUser = user, nextProject = project) => {
     localStorage.setItem(SESSION_KEY, JSON.stringify({
@@ -916,6 +996,26 @@ export default function TextzyMobile() {
     if (!res.ok) return [];
     const rows = await res.json().catch(() => []);
     return Array.isArray(rows) ? rows : [];
+  };
+
+  const loadDevices = async (ctx = authCtx) => {
+    const { res } = await apiFetch("/api/auth/devices", {
+      token: ctx.token,
+      tenantSlug: ctx.tenantSlug,
+    });
+    if (!res.ok) throw new Error(await res.text() || "Failed to load devices");
+    const rows = await res.json().catch(() => []);
+    setDevices(Array.isArray(rows) ? rows : []);
+  };
+
+  const isWithin24HourWindow = (conversation) => {
+    if (!conversation) return true;
+    const inbound = (conversation.messages || [])
+      .filter((m) => !m.sent && typeof m.createdAtMs === "number")
+      .sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+    if (inbound.length === 0) return true;
+    const age = Date.now() - inbound[0].createdAtMs;
+    return age <= 24 * 60 * 60 * 1000;
   };
 
   const handleLogin = async (payload) => {
@@ -987,6 +1087,7 @@ export default function TextzyMobile() {
   };
 
   const handleSelectProject = async (p) => {
+    return withBusy("project", async () => {
     let workingToken = session.accessToken;
     let workingCsrf = resolveCsrf(session.csrfToken);
 
@@ -1048,6 +1149,7 @@ export default function TextzyMobile() {
     setInput("");
     persistSession(nextSession, user, selectedProject);
     await loadConversations(nextSession);
+    });
   };
 
   const openChat = async (id) => {
@@ -1073,7 +1175,7 @@ export default function TextzyMobile() {
   const handleMicInput = () => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
-      window.alert("Voice input is not supported on this device.");
+      setNotice("Voice input is not supported on this device.");
       return;
     }
     const rec = new SR();
@@ -1086,7 +1188,7 @@ export default function TextzyMobile() {
       setTimeout(()=>inputRef.current?.focus(), 60);
     };
     rec.onerror = () => {
-      window.alert("Could not capture voice. Please try again.");
+      setNotice("Could not capture voice. Please try again.");
     };
     rec.start();
   };
@@ -1096,11 +1198,11 @@ export default function TextzyMobile() {
     e.target.value = "";
     if (!file) return;
     if (!activeId) {
-      window.alert("Open a chat before attaching a file.");
+      setNotice("Open a chat before attaching a file.");
       return;
     }
     if (!activeRecipient) {
-      window.alert("Recipient phone is missing for this conversation.");
+      setNotice("Recipient phone is missing for this conversation.");
       return;
     }
     const formData = new FormData();
@@ -1121,7 +1223,7 @@ export default function TextzyMobile() {
     });
     if (!res.ok) {
       const err = await res.text();
-      window.alert(err || "Attachment send failed.");
+      setNotice(parseErrorText(err) || "Attachment send failed.");
       return;
     }
     await loadMessages(activeId);
@@ -1129,109 +1231,142 @@ export default function TextzyMobile() {
   };
 
   const send = async () => {
-    const txt = input.trim();
-    if (!txt||!activeId) return;
-    if (!activeRecipient) {
-      window.alert("Recipient phone is missing for this conversation.");
-      return;
-    }
-    const m = {id:Date.now(),text:txt,sent:true,time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),status:"sent"};
-    setCons(p=>p.map(c=>c.id===activeId?{...c,messages:[...c.messages,m],lastMsg:txt,time:m.time,unread:0}:c));
-    setInput("");
-    try {
+    await withBusy("send", async () => {
+      const txt = input.trim();
+      if (!txt||!activeId) return;
+      if (!activeRecipient) {
+        setNotice("Recipient phone is missing for this conversation.");
+        return;
+      }
+      if (!isWithin24HourWindow(active)) {
+        setNotice("24-hour WhatsApp session window is closed. Please use an approved template.");
+        return;
+      }
+      const m = {id:Date.now(),text:txt,sent:true,time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),status:"sent"};
+      setCons(p=>p.map(c=>c.id===activeId?{...c,messages:[...c.messages,m],lastMsg:txt,time:m.time,unread:0}:c));
+      setInput("");
+      try {
+        const { res } = await apiFetch("/api/messages/send", {
+          method: "POST",
+          token: authCtx.token,
+          tenantSlug: authCtx.tenantSlug,
+          csrfToken: authCtx.csrfToken,
+          body: {
+            recipient: activeRecipient,
+            body: txt,
+            channel: 2,
+            idempotencyKey: idempotencyKey(),
+          },
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          setNotice(parseErrorText(err) || "Message send failed.");
+          return;
+        }
+        await loadMessages(activeId);
+        await loadConversations();
+      } catch (e) {
+        setNotice(e?.message || "Message send failed.");
+      }
+    });
+  };
+
+  const handleTransferConversation = async () => {
+    if (!activeId) return;
+    const members = await loadTeamMembers();
+    setTeamMembers(members);
+    setTransferAssignee("");
+    setShowTransfer(true);
+    setShowChatMenu(false);
+  };
+
+  const submitTransferConversation = async () => {
+    await withBusy("transfer", async () => {
+      const fallback = transferAssignee.trim();
+      let picked = null;
+      if (teamMembers.length > 0) {
+        picked = teamMembers.find((m) => String(m.fullName || m.email || "").toLowerCase() === String(fallback || "").toLowerCase())
+          || teamMembers.find((m) => String(m.email || "").toLowerCase() === String(fallback || "").toLowerCase());
+      }
+      const userName = picked?.fullName || picked?.name || fallback || "Agent";
+      const userId = picked?.id || picked?.userId || null;
+      const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/transfer`, {
+        method: "POST",
+        token: authCtx.token,
+        tenantSlug: authCtx.tenantSlug,
+        csrfToken: authCtx.csrfToken,
+        body: { userId, userName },
+      });
+      if (!res.ok) {
+        setNotice(parseErrorText(await res.text()) || "Transfer failed");
+        return;
+      }
+      await loadConversations();
+      await loadMessages(activeId);
+      setShowTransfer(false);
+    });
+  };
+
+  const handleSetLabels = async () => {
+    if (!activeId) return;
+    setLabelsInput("");
+    setShowLabelsModal(true);
+    setShowChatMenu(false);
+  };
+
+  const submitLabels = async () => {
+    await withBusy("labels", async () => {
+      const labels = labelsInput.split(",").map((x) => x.trim()).filter(Boolean);
+      const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/labels`, {
+        method: "POST",
+        token: authCtx.token,
+        tenantSlug: authCtx.tenantSlug,
+        csrfToken: authCtx.csrfToken,
+        body: { labels },
+      });
+      if (!res.ok) {
+        setNotice(parseErrorText(await res.text()) || "Labels update failed");
+        return;
+      }
+      await loadConversations();
+      await loadMessages(activeId);
+      setShowLabelsModal(false);
+    });
+  };
+
+  const handleNewChat = async () => {
+    setNewChatRecipient("");
+    setNewChatBody("Hello");
+    setShowNewChat(true);
+  };
+
+  const submitNewChat = async () => {
+    await withBusy("newChat", async () => {
+      const recipient = newChatRecipient.trim();
+      if (!recipient) {
+        setNotice("WhatsApp number is required.");
+        return;
+      }
+      const body = newChatBody.trim() || "Hello";
       const { res } = await apiFetch("/api/messages/send", {
         method: "POST",
         token: authCtx.token,
         tenantSlug: authCtx.tenantSlug,
         csrfToken: authCtx.csrfToken,
         body: {
-          recipient: activeRecipient,
-          body: txt,
-          channel: "whatsapp",
+          recipient,
+          body,
+          channel: 2,
           idempotencyKey: idempotencyKey(),
         },
       });
       if (!res.ok) {
-        const err = await res.text();
-        window.alert(err || "Message send failed.");
+        setNotice(parseErrorText(await res.text()) || "Unable to start chat");
         return;
       }
-      await loadMessages(activeId);
+      setShowNewChat(false);
       await loadConversations();
-    } catch (e) {
-      window.alert(e?.message || "Message send failed.");
-    }
-  };
-
-  const handleTransferConversation = async () => {
-    if (!activeId) return;
-    const members = await loadTeamMembers();
-    const fallback = window.prompt("Enter assignee name");
-    let picked = null;
-    if (members.length > 0) {
-      picked = members.find((m) => String(m.fullName || m.email || "").toLowerCase() === String(fallback || "").toLowerCase())
-        || members.find((m) => String(m.email || "").toLowerCase() === String(fallback || "").toLowerCase());
-    }
-    const userName = picked?.fullName || picked?.name || fallback || "Agent";
-    const userId = picked?.id || picked?.userId || null;
-    const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/transfer`, {
-      method: "POST",
-      token: authCtx.token,
-      tenantSlug: authCtx.tenantSlug,
-      csrfToken: authCtx.csrfToken,
-      body: { userId, userName },
     });
-    if (!res.ok) {
-      window.alert((await res.text()) || "Transfer failed");
-      return;
-    }
-    await loadConversations();
-    await loadMessages(activeId);
-    setShowChatMenu(false);
-  };
-
-  const handleSetLabels = async () => {
-    if (!activeId) return;
-    const labelsRaw = window.prompt("Enter labels (comma separated)");
-    if (labelsRaw == null) return;
-    const labels = labelsRaw.split(",").map((x) => x.trim()).filter(Boolean);
-    const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/labels`, {
-      method: "POST",
-      token: authCtx.token,
-      tenantSlug: authCtx.tenantSlug,
-      csrfToken: authCtx.csrfToken,
-      body: { labels },
-    });
-    if (!res.ok) {
-      window.alert((await res.text()) || "Labels update failed");
-      return;
-    }
-    await loadConversations();
-    await loadMessages(activeId);
-    setShowChatMenu(false);
-  };
-
-  const handleNewChat = async () => {
-    const recipient = window.prompt("Enter WhatsApp number (with country code)");
-    if (!recipient) return;
-    const body = window.prompt("Start message") || "Hello";
-    const { res } = await apiFetch("/api/messages/send", {
-      method: "POST",
-      token: authCtx.token,
-      tenantSlug: authCtx.tenantSlug,
-      csrfToken: authCtx.csrfToken,
-      body: {
-        recipient,
-        body,
-        channel: "whatsapp",
-        idempotencyKey: idempotencyKey(),
-      },
-    });
-    if (!res.ok) {
-      window.alert((await res.text()) || "Unable to start chat");
-      return;
-    }
-    await loadConversations();
   };
 
   const openProjectSwitch = async () => {
@@ -1240,8 +1375,37 @@ export default function TextzyMobile() {
       await loadProjects(authCtx.token);
       setScreen("project");
     } catch (e) {
-      window.alert(e?.message || "Unable to load projects");
+      setNotice(e?.message || "Unable to load projects");
     }
+  };
+
+  const openDevicesModal = async () => {
+    setShowMainMenu(false);
+    setShowDevicesModal(true);
+    await withBusy("devices", async () => {
+      try {
+        await loadDevices();
+      } catch (e) {
+        setNotice(e?.message || "Unable to load linked devices.");
+      }
+    });
+  };
+
+  const revokeDevice = async (deviceId) => {
+    if (!deviceId) return;
+    await withBusy("devices", async () => {
+      const { res } = await apiFetch(`/api/auth/devices/${deviceId}`, {
+        method: "DELETE",
+        token: authCtx.token,
+        tenantSlug: authCtx.tenantSlug,
+        csrfToken: authCtx.csrfToken,
+      });
+      if (!res.ok) {
+        setNotice(parseErrorText(await res.text()) || "Unable to revoke device.");
+        return;
+      }
+      await loadDevices();
+    });
   };
 
   const filtered = contacts.filter(c=>{
@@ -1277,14 +1441,170 @@ export default function TextzyMobile() {
       });
   }, []);
 
-  if (screen==="login")   return <LoginScreen onLogin={handleLogin}/>;
-  if (screen==="project") return <ProjectPicker projects={projects} onSelect={async (p) => {
+  const Overlay = ({ children }) => (
+    <div style={{
+      position:"fixed", inset:0, zIndex:60, background:"rgba(15,23,42,0.45)",
+      display:"flex", alignItems:"center", justifyContent:"center", padding:18,
+    }}>
+      <div style={{
+        width:"100%", maxWidth:420, background:"#fff", borderRadius:16,
+        boxShadow:"0 16px 40px rgba(0,0,0,0.25)", padding:18,
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+
+  const SharedDialogs = () => (
+    <>
+      {notice ? (
+        <Overlay>
+          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Textzy</h3>
+          <p style={{ margin:"0 0 16px", color:C.textSub, lineHeight:1.45, whiteSpace:"pre-wrap" }}>{notice}</p>
+          <div style={{ display:"flex", justifyContent:"flex-end" }}>
+            <button onClick={()=>setNotice("")} style={{ border:"none", borderRadius:10, padding:"10px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:"pointer" }}>OK</button>
+          </div>
+        </Overlay>
+      ) : null}
+
+      {showNewChat ? (
+        <Overlay>
+          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Start New Chat</h3>
+          <label style={{ display:"block", fontSize:12, color:C.textSub, marginBottom:6 }}>WhatsApp Number</label>
+          <input value={newChatRecipient} onChange={(e)=>setNewChatRecipient(e.target.value)} placeholder="+91xxxxxxxxxx" style={{ width:"100%", border:`1.5px solid ${C.divider}`, borderRadius:10, padding:"10px 12px", marginBottom:10 }} />
+          <label style={{ display:"block", fontSize:12, color:C.textSub, marginBottom:6 }}>Start Message</label>
+          <textarea value={newChatBody} onChange={(e)=>setNewChatBody(e.target.value)} rows={3} style={{ width:"100%", border:`1.5px solid ${C.divider}`, borderRadius:10, padding:"10px 12px", marginBottom:12, resize:"vertical" }} />
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
+            <button onClick={()=>setShowNewChat(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Cancel</button>
+            <button disabled={busy.newChat} onClick={submitNewChat} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.newChat?"not-allowed":"pointer", opacity:busy.newChat?0.8:1 }}>{busy.newChat ? "Starting..." : "Start"}</button>
+          </div>
+        </Overlay>
+      ) : null}
+
+      {showTransfer ? (
+        <Overlay>
+          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Transfer Chat</h3>
+          <label style={{ display:"block", fontSize:12, color:C.textSub, marginBottom:6 }}>Assignee Name or Email</label>
+          <input value={transferAssignee} onChange={(e)=>setTransferAssignee(e.target.value)} placeholder="Enter assignee" style={{ width:"100%", border:`1.5px solid ${C.divider}`, borderRadius:10, padding:"10px 12px", marginBottom:8 }} />
+          {teamMembers.length > 0 ? (
+            <div style={{ maxHeight:120, overflowY:"auto", border:`1px solid ${C.divider}`, borderRadius:10, marginBottom:12 }}>
+              {teamMembers.slice(0, 10).map((m, idx) => {
+                const label = m.fullName || m.name || m.email || `User ${idx+1}`;
+                return <button key={`${label}-${idx}`} onClick={()=>setTransferAssignee(label)} style={{ width:"100%", textAlign:"left", border:"none", borderBottom: idx < Math.min(teamMembers.length,10)-1 ? `1px solid ${C.divider}` : "none", background:"#fff", padding:"8px 10px", cursor:"pointer" }}>{label}</button>;
+              })}
+            </div>
+          ) : null}
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
+            <button onClick={()=>setShowTransfer(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Cancel</button>
+            <button disabled={busy.transfer} onClick={submitTransferConversation} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.transfer?"not-allowed":"pointer", opacity:busy.transfer?0.8:1 }}>{busy.transfer ? "Transferring..." : "Transfer"}</button>
+          </div>
+        </Overlay>
+      ) : null}
+
+      {showLabelsModal ? (
+        <Overlay>
+          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Set Labels</h3>
+          <label style={{ display:"block", fontSize:12, color:C.textSub, marginBottom:6 }}>Comma separated labels</label>
+          <input value={labelsInput} onChange={(e)=>setLabelsInput(e.target.value)} placeholder="support, priority-high" style={{ width:"100%", border:`1.5px solid ${C.divider}`, borderRadius:10, padding:"10px 12px", marginBottom:12 }} />
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
+            <button onClick={()=>setShowLabelsModal(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Cancel</button>
+            <button disabled={busy.labels} onClick={submitLabels} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.labels?"not-allowed":"pointer", opacity:busy.labels?0.8:1 }}>{busy.labels ? "Saving..." : "Save"}</button>
+          </div>
+        </Overlay>
+      ) : null}
+
+      {showQaModal ? (
+        <Overlay>
+          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Select QA</h3>
+          <div style={{ maxHeight:180, overflowY:"auto", border:`1px solid ${C.divider}`, borderRadius:10, marginBottom:12 }}>
+            {QA_LIBRARY.map((q, i) => (
+              <button key={i} onClick={()=>{ setInput((p)=> (p ? `${p}\n` : "") + q); setShowQaModal(false); setTimeout(()=>inputRef.current?.focus(),80); }} style={{ width:"100%", textAlign:"left", border:"none", borderBottom: i < QA_LIBRARY.length - 1 ? `1px solid ${C.divider}` : "none", background:"#fff", padding:"10px 12px", cursor:"pointer" }}>
+                {q}
+              </button>
+            ))}
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end" }}>
+            <button onClick={()=>setShowQaModal(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Close</button>
+          </div>
+        </Overlay>
+      ) : null}
+
+      {showDevicesModal ? (
+        <Overlay>
+          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Linked Devices</h3>
+          <div style={{ maxHeight:220, overflowY:"auto", border:`1px solid ${C.divider}`, borderRadius:10, marginBottom:12 }}>
+            {devices.length === 0 ? (
+              <div style={{ padding:"14px 12px", color:C.textSub, fontSize:14 }}>No linked devices found.</div>
+            ) : devices.map((d, idx) => {
+              const id = d.id || d.Id || d.deviceId || d.DeviceId;
+              const name = d.deviceName || d.DeviceName || "Mobile Device";
+              const platform = d.devicePlatform || d.DevicePlatform || "";
+              const model = d.deviceModel || d.DeviceModel || "";
+              const detail = [platform, model].filter(Boolean).join(" | ");
+              return (
+                <div key={`${id || idx}`} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderBottom: idx < devices.length - 1 ? `1px solid ${C.divider}` : "none" }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ color:C.textMain, fontWeight:600, fontSize:14 }}>{name}</div>
+                    <div style={{ color:C.textSub, fontSize:12, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{detail || "Active session"}</div>
+                  </div>
+                  <button disabled={busy.devices} onClick={()=>revokeDevice(id)} style={{ border:`1px solid ${C.danger}33`, background:"#fff", color:C.danger, borderRadius:9, padding:"7px 10px", fontWeight:600, cursor:busy.devices?"not-allowed":"pointer", opacity:busy.devices?0.8:1 }}>Revoke</button>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
+            <button disabled={busy.devices} onClick={openDevicesModal} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:busy.devices?"not-allowed":"pointer" }}>{busy.devices ? "Refreshing..." : "Refresh"}</button>
+            <button onClick={()=>setShowDevicesModal(false)} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:"pointer" }}>Close</button>
+          </div>
+        </Overlay>
+      ) : null}
+
+      {showSettingsModal ? (
+        <Overlay>
+          <h3 style={{ margin:"0 0 12px", fontSize:18, color:C.textMain }}>Settings</h3>
+          <div style={{ display:"grid", gap:10, marginBottom:14 }}>
+            {[
+              { label: "Compact chat layout", value: settingsCompact, setter: setSettingsCompact },
+              { label: "Message send sound", value: settingsSound, setter: setSettingsSound },
+            ].map((row) => (
+              <label key={row.label} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", border:`1px solid ${C.divider}`, borderRadius:10 }}>
+                <span style={{ color:C.textMain, fontSize:14 }}>{row.label}</span>
+                <input type="checkbox" checked={row.value} onChange={(e)=>row.setter(e.target.checked)} />
+              </label>
+            ))}
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end" }}>
+            <button onClick={()=>setShowSettingsModal(false)} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:"pointer" }}>Done</button>
+          </div>
+        </Overlay>
+      ) : null}
+
+      {showNotificationsModal ? (
+        <Overlay>
+          <h3 style={{ margin:"0 0 12px", fontSize:18, color:C.textMain }}>Notifications</h3>
+          <label style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", border:`1px solid ${C.divider}`, borderRadius:10, marginBottom:12 }}>
+            <span style={{ color:C.textMain, fontSize:14 }}>Enable push notifications</span>
+            <input type="checkbox" checked={notifEnabled} onChange={(e)=>setNotifEnabled(e.target.checked)} />
+          </label>
+          <p style={{ margin:"0 0 12px", color:C.textSub, fontSize:12 }}>
+            Notification preferences are stored on this device.
+          </p>
+          <div style={{ display:"flex", justifyContent:"flex-end" }}>
+            <button onClick={()=>setShowNotificationsModal(false)} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:"pointer" }}>Done</button>
+          </div>
+        </Overlay>
+      ) : null}
+    </>
+  );
+
+  if (screen==="login")   return <><LoginScreen onLogin={handleLogin}/><SharedDialogs/></>;
+  if (screen==="project") return <><ProjectPicker projects={projects} loading={busy.project} onSelect={async (p) => {
     try {
       await handleSelectProject(p);
     } catch (e) {
-      window.alert(e?.message || "Project switch failed");
+      setNotice(e?.message || "Project switch failed");
     }
-  }}/>;
+  }}/><SharedDialogs/></>;
 
   const uname=(user?.email||"User").split("@")[0];
 
@@ -1312,7 +1632,7 @@ export default function TextzyMobile() {
       <div style={{ padding:"8px 0" }}>
         {[
           {
-            ic:"⭐",
+            ic:<I.Star/>,
             label:"Starred Messages",
             onClick: ()=>{
               setView("list");
@@ -1321,11 +1641,11 @@ export default function TextzyMobile() {
               if (firstStarredId) setAId(Number(firstStarredId));
             },
           },
-          { ic:"🏷️", label:"Labels", onClick: handleSetLabels },
-          { ic:"📱", label:"Linked Devices", onClick: ()=>window.alert("Linked devices screen coming next.") },
-          { ic:"⚙️", label:"Settings", onClick: ()=>window.alert("Settings screen coming next.") },
-          { ic:"🔔", label:"Notifications", onClick: ()=>window.alert("Notifications screen coming next.") },
-          { ic:"💼", label:"Switch Project", onClick: openProjectSwitch },
+          { ic:<I.Tag/>, label:"Labels", onClick: handleSetLabels },
+          { ic:<I.Device/>, label:"Linked Devices", onClick: openDevicesModal },
+          { ic:<I.Cog/>, label:"Settings", onClick: ()=>setShowSettingsModal(true) },
+          { ic:<I.Bell/>, label:"Notifications", onClick: ()=>setShowNotificationsModal(true) },
+          { ic:<I.ArrowRight/>, label:"Switch Project", onClick: openProjectSwitch },
         ].map((item,i)=>(
           <div key={i} style={{
             display:"flex",alignItems:"center",gap:14,padding:"16px 20px",
@@ -1335,7 +1655,7 @@ export default function TextzyMobile() {
             onMouseEnter={e=>e.currentTarget.style.background=C.orangePale}
             onMouseLeave={e=>e.currentTarget.style.background="transparent"}
           >
-            <div style={{ width:40,height:40,borderRadius:12,background:C.orangePale,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20 }}>{item.ic}</div>
+            <div style={{ width:40,height:40,borderRadius:12,background:C.orangePale,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:C.orange }}>{item.ic}</div>
             <span style={{ fontWeight:500,fontSize:15,color:C.textMain }}>{item.label}</span>
             <svg style={{marginLeft:"auto"}} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMuted} strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
           </div>
@@ -1363,6 +1683,7 @@ export default function TextzyMobile() {
           <span style={{ fontWeight:600,fontSize:15,color:C.danger }}>Log Out</span>
         </div>
       </div>
+      <SharedDialogs/>
     </div>
   );
 
@@ -1406,7 +1727,7 @@ export default function TextzyMobile() {
             { label: "Transfer", onClick: handleTransferConversation },
             { label: "Labels", onClick: handleSetLabels },
             { label: starred[activeId] ? "Unstar Chat" : "Star Chat", onClick: () => { setStarred((p)=>({ ...p, [activeId]: !p[activeId] })); setShowChatMenu(false);} },
-            { label: "Insert QA", onClick: () => { setInput((p)=> (p ? `${p}\n` : "") + "QA: Thank you for contacting Textzy. How can I assist you today?"); setShowChatMenu(false); setTimeout(()=>inputRef.current?.focus(),80);} },
+            { label: "Insert QA", onClick: () => { setShowChatMenu(false); setShowQaModal(true); } },
           ].map((item)=> (
             <button key={item.label} onClick={item.onClick} style={{ display:"block", width:"100%", textAlign:"left", background:"#fff", border:"none", padding:"11px 14px", fontSize:14, cursor:"pointer" }}>{item.label}</button>
           ))}
@@ -1475,16 +1796,19 @@ export default function TextzyMobile() {
             style={{ border:"none",outline:"none",flex:1,fontSize:15,color:C.textMain,background:"transparent",fontFamily:"inherit" }}
           />
         </div>
-        <button onClick={input.trim()?send:handleMicInput} style={{
+        <button disabled={busy.send} onClick={input.trim()?send:handleMicInput} style={{
           width:48,height:48,borderRadius:"50%",border:"none",flexShrink:0,
           background:input.trim()?`linear-gradient(135deg,${C.orange},${C.orangeLight})`:C.divider,
           color:input.trim()?"#fff":C.textSub,
-          cursor:"pointer",
+          cursor:busy.send?"not-allowed":"pointer",
           display:"flex",alignItems:"center",justifyContent:"center",
           boxShadow:input.trim()?`0 4px 16px ${C.orange}55`:"none",
           transition:"all 0.2s",
+          opacity:busy.send?0.8:1,
         }}>
-          {input.trim()?<I.Send/>:<I.Mic/>}
+          {busy.send
+            ? <span style={{ width:16, height:16, border:"2px solid rgba(255,255,255,0.7)", borderTopColor:"transparent", borderRadius:"50%", animation:"spin 0.8s linear infinite" }} />
+            : (input.trim()?<I.Send/>:<I.Mic/>)}
         </button>
         <input
           ref={fileInputRef}
@@ -1499,7 +1823,9 @@ export default function TextzyMobile() {
         ::-webkit-scrollbar{width:0;}
         @keyframes fadeUp{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
         @keyframes tdot{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
+        @keyframes spin{to{transform:rotate(360deg)}}
       `}</style>
+      <SharedDialogs/>
     </div>
   );
 
@@ -1535,7 +1861,7 @@ export default function TextzyMobile() {
             {[
               { label: "Switch Project", onClick: openProjectSwitch },
               { label: "Settings", onClick: ()=>{ setShowMainMenu(false); setView("profile"); } },
-              { label: "Notifications", onClick: ()=>{ setShowMainMenu(false); window.alert("Notifications screen coming next."); } },
+              { label: "Notifications", onClick: ()=>{ setShowMainMenu(false); setShowNotificationsModal(true); } },
             ].map(item => (
               <button key={item.label} onClick={item.onClick} style={{ display:"block", width:"100%", textAlign:"left", border:"none", background:"#fff", padding:"11px 14px", fontSize:14, cursor:"pointer" }}>{item.label}</button>
             ))}
@@ -1619,7 +1945,7 @@ export default function TextzyMobile() {
         display:"flex",alignItems:"center",justifyContent:"center",
         boxShadow:`0 6px 24px ${C.orange}66`,
         fontSize:26,fontWeight:300,
-      }}>ï¼‹</button>
+      }}><I.Plus/></button>
 
       <style>{`
         *{box-sizing:border-box;margin:0;padding:0;}
@@ -1627,7 +1953,9 @@ export default function TextzyMobile() {
         @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
         @keyframes tdot{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+        @keyframes spin{to{transform:rotate(360deg)}}
       `}</style>
+      <SharedDialogs/>
     </div>
   );
 }
