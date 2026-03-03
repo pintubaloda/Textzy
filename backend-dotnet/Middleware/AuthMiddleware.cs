@@ -49,7 +49,10 @@ public class AuthMiddleware(RequestDelegate next)
         {
             var origin = context.Request.Headers.Origin.ToString().Trim().TrimEnd('/');
             var referer = context.Request.Headers.Referer.ToString();
-            if (!IsTrustedOrigin(origin, referer, config))
+            // Native/mobile clients typically do not send Origin/Referer.
+            // Enforce origin checks only when request looks browser-initiated.
+            var hasBrowserOriginContext = !string.IsNullOrWhiteSpace(origin) || !string.IsNullOrWhiteSpace(referer);
+            if (hasBrowserOriginContext && !IsTrustedOrigin(origin, referer, config))
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 await context.Response.WriteAsync("Untrusted origin.");
