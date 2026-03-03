@@ -100,7 +100,7 @@ function createNode(type, x = 300, y = 200) {
   if (type === "buttons")              base.config = { body: "Please choose:", buttons: ["Support", "Sales", "Accounts"] };
   if (type === "list")                 base.config = { headerText: "Select an option", sections: [{ name: "Options", items: ["Option A", "Option B"] }] };
   if (type === "ask_question")         base.config = { question: "How can I help you?" };
-  if (type === "capture_input")        base.config = { variable: "user_input", validation: "text", prompt: "Please enter your response:" };
+  if (type === "capture_input")        base.config = { variable: "user_input", validation: "text", prompt: "Please enter your response:", maxAttempts: 2, minLength: "", maxLength: "", regex: "" };
   if (type === "condition")            base.config = { field: "message", operator: "contains", value: "support" };
   if (type === "delay")                base.config = { seconds: 2 };
   if (type === "handoff")              base.config = { queue: "support" };
@@ -142,6 +142,7 @@ function computeEdges(nodes) {
     if (n.next)    out.push({ from: n.id, to: n.next,    label: "next",  color: T.teal });
     if (n.onTrue)  out.push({ from: n.id, to: n.onTrue,  label: "True",  color: T.success });
     if (n.onFalse) out.push({ from: n.id, to: n.onFalse, label: "False", color: T.error });
+    if (n.onFailure) out.push({ from: n.id, to: n.onFailure, label: "Fail", color: T.error });
   });
   return out;
 }
@@ -161,6 +162,28 @@ const FLOW_COLORS = {
   draft:     "bg-amber-100 text-amber-700 border-amber-200",
   archived:  "bg-slate-100 text-slate-500 border-slate-200",
 };
+
+const SUPPORTED_PUBLISH_NODE_TYPES = new Set([
+  "start",
+  "text","text_message","textmessage","send_text","message",
+  "media",
+  "template",
+  "buttons",
+  "list",
+  "ask_question",
+  "capture_input",
+  "bot_reply","botreply",
+  "cta_url",
+  "condition","split",
+  "delay","wait",
+  "assign_agent","assignagent","handoff",
+  "request_intervention","requesthelp",
+  "tag_user","taguser",
+  "webhook","api_call",
+  "jump",
+  "subflow",
+  "end",
+]);
 
 /* ═══════════════════════════════════════════════════════════════════════════════
    WHATSAPP PREVIEW
@@ -428,7 +451,15 @@ function CanvasNode({ node, isSelected, onSelect, onStartConnect, onConnectTo, o
             <div className="text-[11px] text-slate-500">Queue: <strong>{config.queue || "—"}</strong></div>
           )}
           {node.type === "capture_input" && (
-            <div className="text-[11px] text-slate-500">Save to: <strong className="font-mono">{"{{"}{ config.variable || "user_input" }{"}}"}</strong></div>
+            <div className="space-y-1">
+              <div className="text-[11px] text-slate-500">Save to: <strong className="font-mono">{"{{"}{ config.variable || "user_input" }{"}}"}</strong></div>
+              <div className="text-[10px] text-slate-500">
+                {(config.validation || "text").toUpperCase()} · Max attempts: <strong>{Number(config.maxAttempts || 0) || "∞"}</strong>
+              </div>
+              {Number(config.maxAttempts || 0) > 0 && node.onFailure ? (
+                <div className="text-[10px] text-red-500">Escalate → {node.onFailure}</div>
+              ) : null}
+            </div>
           )}
           {node.type === "form" && formFields.length > 0 && (
             <div className="space-y-0.5">
@@ -628,11 +659,58 @@ function NodePanel({ node, nodes, onUpdate, onDelete, onDuplicate, onDisconnect 
               </Field>
               <Field label="Validation Type">
                 <SelectField value={config.validation || "text"} onChange={(v) => upd({ validation: v })}
-                  options={[["text","Text / Any"],["number","Number"],["email","Email"],["phone","Phone"]]} />
+                  options={[["text","Text / Any"],["number","Number"],["email","Email"],["phone","Phone"],["regex","Regex"]]} />
               </Field>
+              <Field label="Max Attempts (0 = unlimited)">
+                <Input
+                  type="number"
+                  min={0}
+                  value={String(config.maxAttempts ?? 2)}
+                  onChange={(e) => upd({ maxAttempts: Number(e.target.value || 0) })}
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Min Length">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={String(config.minLength ?? "")}
+                    onChange={(e) => upd({ minLength: e.target.value })}
+                  />
+                </Field>
+                <Field label="Max Length">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={String(config.maxLength ?? "")}
+                    onChange={(e) => upd({ maxLength: e.target.value })}
+                  />
+                </Field>
+              </div>
+              {(config.validation || "text") === "regex" && (
+                <Field label="Regex Pattern" hint="Example: ^[A-Z]{3}[0-9]{3}$">
+                  <Input
+                    className="font-mono text-xs"
+                    value={config.regex || ""}
+                    onChange={(e) => upd({ regex: e.target.value })}
+                    placeholder="^[A-Z]{3}[0-9]{3}$"
+                  />
+                </Field>
+              )}
               <Field label="Prompt Message">
                 <Textarea rows={2} value={config.prompt || ""} onChange={(e) => upd({ prompt: e.target.value })} />
               </Field>
+              <div className="grid grid-cols-1 gap-2">
+                <Field label="✅ Valid → Node">
+                  <NodeSelector value={node.onTrue || ""} nodes={nodes} nodeId={node.id} onChange={(v) => onUpdate(node.id, { onTrue: v })} />
+                </Field>
+                <Field label="↻ Invalid (retry) → Node">
+                  <NodeSelector value={node.onFalse || ""} nodes={nodes} nodeId={node.id} onChange={(v) => onUpdate(node.id, { onFalse: v })} />
+                </Field>
+                <Field label="🛑 Max attempts reached → Node">
+                  <NodeSelector value={node.onFailure || ""} nodes={nodes} nodeId={node.id} onChange={(v) => onUpdate(node.id, { onFailure: v })} />
+                </Field>
+              </div>
             </>
           )}
 
@@ -926,6 +1004,30 @@ function NodePanel({ node, nodes, onUpdate, onDelete, onDuplicate, onDisconnect 
                   {node.onFalse && <button className="text-[10px] text-red-400 hover:text-red-600" onClick={() => onDisconnect(node.id, "onFalse")}>✕</button>}
                 </div>
               </div>
+            ) : node.type === "capture_input" ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-600 flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full" style={{ background: T.success }} />Valid →
+                    <span className="font-mono text-[10px] text-slate-400">{node.onTrue ? nodes.find((n)=>n.id===node.onTrue)?.name || node.onTrue : "not connected"}</span>
+                  </span>
+                  {node.onTrue && <button className="text-[10px] text-red-400 hover:text-red-600" onClick={() => onDisconnect(node.id, "onTrue")}>×</button>}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-600 flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full" style={{ background: T.warning }} />Invalid →
+                    <span className="font-mono text-[10px] text-slate-400">{node.onFalse ? nodes.find((n)=>n.id===node.onFalse)?.name || node.onFalse : "not connected"}</span>
+                  </span>
+                  {node.onFalse && <button className="text-[10px] text-red-400 hover:text-red-600" onClick={() => onDisconnect(node.id, "onFalse")}>×</button>}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-600 flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full" style={{ background: T.error }} />Max attempts →
+                    <span className="font-mono text-[10px] text-slate-400">{node.onFailure ? nodes.find((n)=>n.id===node.onFailure)?.name || node.onFailure : "not connected"}</span>
+                  </span>
+                  {node.onFailure && <button className="text-[10px] text-red-400 hover:text-red-600" onClick={() => onDisconnect(node.id, "onFailure")}>×</button>}
+                </div>
+              </div>
             ) : (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-600 flex items-center gap-1">
@@ -989,7 +1091,7 @@ function JsonField({ value, onChange, rows = 4, placeholder = "" }) {
 
   useEffect(() => {
     setRaw(JSON.stringify(value, null, 2));
-  }, [JSON.stringify(value)]);
+  }, [value]);
 
   const handleChange = (v) => {
     setRaw(v);
@@ -1150,6 +1252,9 @@ function validateFlow(nodes) {
     if (n.onTrue && !ids.has(n.onTrue)) errors.push(`Node "${n.name}" has a broken 'True' connection.`);
     if (n.onFalse && !ids.has(n.onFalse)) errors.push(`Node "${n.name}" has a broken 'False' connection.`);
     if (n.type === "condition" && !n.onTrue && !n.onFalse) warnings.push(`Condition "${n.name}" has no branches connected.`);
+    if (n.type === "capture_input" && !n.onTrue && !n.next) warnings.push(`Capture input "${n.name}" has no valid path connected.`);
+    if (n.type === "capture_input" && !n.onFalse && !n.next) warnings.push(`Capture input "${n.name}" has no invalid retry path connected.`);
+    if (n.type === "capture_input" && Number(n?.config?.maxAttempts || 0) > 0 && !n.onFailure) warnings.push(`Capture input "${n.name}" has maxAttempts but no onFailure escalation path.`);
     if (n.type === "webhook" && !n.config?.url) warnings.push(`Webhook "${n.name}" has no URL set.`);
     if (n.type === "template" && !n.config?.templateName) errors.push(`Template "${n.name}" has no template name.`);
     if (n.type === "text" && !n.config?.body?.trim()) warnings.push(`Text node "${n.name}" has no message body.`);
@@ -1193,7 +1298,7 @@ export default function AutomationsPage() {
 
   const undoNodes = () => dispatch({ type: "UNDO" });
   const redoNodes = () => dispatch({ type: "REDO" });
-  const resetNodes = (ns) => dispatch({ type: "RESET", nodes: ns });
+  const resetNodes = useCallback((ns) => dispatch({ type: "RESET", nodes: ns }), []);
 
   const canUndo = history.past.length > 0;
   const canRedo = history.future.length > 0;
@@ -1266,7 +1371,7 @@ export default function AutomationsPage() {
   const canPublishBot = chatbotLimit <= 0 || activeBots < chatbotLimit;
 
   /* ── API ── */
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     try {
       const [f, l] = await Promise.all([
         apiGet("/api/automation/flows"),
@@ -1275,7 +1380,7 @@ export default function AutomationsPage() {
       const normalizedFlows = (f || []).map(normalizeFlow);
       setFlows(normalizedFlows);
       setLimits(l || null);
-      if (!selectedFlowId && normalizedFlows.length) setSelectedFlowId(String(normalizedFlows[0].id));
+      if (normalizedFlows.length) setSelectedFlowId((prev) => prev || String(normalizedFlows[0].id));
 
       // Load secondary data in background to keep first paint fast.
       Promise.all([
@@ -1290,9 +1395,9 @@ export default function AutomationsPage() {
         setTriggerAuditSummary(triggerSummary || null);
       }).catch(() => {});
     } catch { toast.error("Failed to load automations"); }
-  };
+  }, [normalizeFlow]);
 
-  const loadFlowDetails = async (flowId) => {
+  const loadFlowDetails = useCallback(async (flowId) => {
     if (!flowId) return;
     try {
       const versRaw = await apiGet(`/api/automation/flows/${flowId}/versions`);
@@ -1307,10 +1412,10 @@ export default function AutomationsPage() {
       setIsDirty(false);
       setLastSaved(vers?.[0]?.createdAtUtc ? new Date(vers[0].createdAtUtc) : null);
     } catch { toast.error("Failed to load workflow"); }
-  };
+  }, [normalizeVersion, resetNodes]);
 
-  useEffect(() => { loadAll(); }, []);
-  useEffect(() => { if (selectedFlowId) loadFlowDetails(selectedFlowId); }, [selectedFlowId]);
+  useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => { if (selectedFlowId) loadFlowDetails(selectedFlowId); }, [selectedFlowId, loadFlowDetails]);
   useEffect(() => {
     if (!selectedFlow) return;
     setEditFlowForm({
@@ -1322,7 +1427,7 @@ export default function AutomationsPage() {
   // Mark dirty when nodes change (but not on initial load / reset)
   useEffect(() => {
     if (history.past.length > 0) setIsDirty(true);
-  }, [nodes]);
+  }, [history.past.length]);
   useEffect(() => {
     if (!selectedFlow?.triggerConfigJson) return;
     try {
@@ -1351,7 +1456,7 @@ export default function AutomationsPage() {
     } catch (e) { toast.error(e?.message || "Create failed"); }
   };
 
-  const saveDraft = async () => {
+  const saveDraft = useCallback(async () => {
     if (!selectedFlowId) return;
     try {
       await apiPost(`/api/automation/flows/${selectedFlowId}/versions`, {
@@ -1367,7 +1472,7 @@ export default function AutomationsPage() {
       toast.success("Workflow saved ✓");
       await loadFlowDetails(selectedFlowId);
     } catch (e) { toast.error(e?.message || "Save failed"); }
-  };
+  }, [selectedFlowId, nodes, edges, loadFlowDetails]);
 
   const saveTriggerKeywords = async () => {
     if (!selectedFlowId || !selectedFlow) return;
@@ -1388,6 +1493,15 @@ export default function AutomationsPage() {
     const sel = flows.find((x) => String(x.id) === String(flowId));
     if (!canPublishBot && sel?.lifecycleStatus !== "published") return toast.error("Active bot limit reached. Upgrade plan.");
     try {
+      if (String(flowId) === String(selectedFlowId)) {
+        const unsupported = [...new Set((nodes || [])
+          .map((n) => String(n?.type || "").trim().toLowerCase().replace(/-/g, "_"))
+          .filter((t) => t && !SUPPORTED_PUBLISH_NODE_TYPES.has(t)))];
+        if (unsupported.length) {
+          toast.error(`Unsupported node types: ${unsupported.join(", ")}`);
+          return;
+        }
+      }
       const vers = String(flowId) === String(selectedFlowId)
         ? versions
         : ((await apiGet(`/api/automation/flows/${flowId}/versions`)) || []).map(normalizeVersion);
@@ -1446,7 +1560,7 @@ export default function AutomationsPage() {
     setNodes((prev) => [...prev, node]);
     setSelectedNodeId(node.id);
   };
-  const removeNode = (id) => {
+  const removeNode = useCallback((id) => {
     setNodes((prev) => prev.filter((n) => n.id !== id).map((n) => ({
       ...n,
       next: n.next === id ? "" : n.next,
@@ -1454,16 +1568,16 @@ export default function AutomationsPage() {
       onFalse: n.onFalse === id ? "" : n.onFalse,
     })));
     if (selectedNodeId === id) setSelectedNodeId("");
-  };
+  }, [selectedNodeId, setNodes]);
 
-  const duplicateNode = (id) => {
+  const duplicateNode = useCallback((id) => {
     const src = nodes.find((n) => n.id === id);
     if (!src) return;
-    const copy = { ...src, id: uid(src.type), name: src.name + " (copy)", x: src.x + 40, y: src.y + 40, next: "", onTrue: "", onFalse: "" };
+    const copy = { ...src, id: uid(src.type), name: src.name + " (copy)", x: src.x + 40, y: src.y + 40, next: "", onTrue: "", onFalse: "", onFailure: "" };
     setNodes((prev) => [...prev, copy]);
     setSelectedNodeId(copy.id);
     toast.success("Node duplicated");
-  };
+  }, [nodes, setNodes]);
 
   const disconnectNode = (id, slot) => {
     updateNode(id, { [slot]: "" });
@@ -1502,7 +1616,7 @@ export default function AutomationsPage() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [mode, selectedNodeId, nodes, canUndo, canRedo]);
+  }, [mode, selectedNodeId, nodes, duplicateNode, removeNode, saveDraft]);
 
 
   const canvasToWorld = (cx, cy) => ({

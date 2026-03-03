@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -29,22 +29,22 @@ const AdminPage = () => {
   const [assignCycle, setAssignCycle] = useState("monthly");
   const [assigningPlan, setAssigningPlan] = useState(false);
 
-  const loadCustomers = async (query = "") => {
+  const loadCustomers = useCallback(async (query = "") => {
     try {
       setLoading(true);
       const data = await getPlatformCustomers(query);
       setRows(Array.isArray(data) ? data : []);
-      if (!selectedTenantId && data?.length > 0) setSelectedTenantId(data[0].tenantId);
+      setSelectedTenantId((prev) => (prev || (data?.[0]?.tenantId || "")));
     } catch (e) {
       toast.error(e.message || "Failed to load platform customers");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadCustomers("");
-  }, []);
+  }, [loadCustomers]);
 
   useEffect(() => {
     (async () => {
@@ -52,7 +52,7 @@ const AdminPage = () => {
         const p = await listPlatformBillingPlans();
         const activePlans = Array.isArray(p) ? p.filter((x) => x.isActive) : [];
         setPlans(activePlans);
-        if (!assignPlanCode && activePlans.length > 0) setAssignPlanCode(activePlans[0].code);
+        setAssignPlanCode((prev) => (prev || activePlans?.[0]?.code || ""));
       } catch {
         // keep screen usable even if plans endpoint fails
       }
@@ -65,7 +65,7 @@ const AdminPage = () => {
         const users = await getPlatformUsers("");
         const rows = Array.isArray(users) ? users : [];
         setPlatformUsers(rows);
-        if (!selectedUserId && rows.length > 0) setSelectedUserId(rows[0].userId);
+        setSelectedUserId((prev) => (prev || rows?.[0]?.userId || ""));
       } catch {
         // keep page usable
       }

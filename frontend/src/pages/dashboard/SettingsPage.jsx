@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -153,6 +153,21 @@ const SettingsPage = () => {
     if (tab && tab !== activeTab) setActiveTab(tab);
   }, [searchParams, activeTab]);
 
+  const ensureEmbeddedConfig = useCallback(async () => {
+    if (embeddedCfg.appId && embeddedCfg.configId) return;
+    try {
+      const cfg = await wabaGetEmbeddedConfig();
+      if (cfg?.appId || cfg?.embeddedConfigId) {
+        setEmbeddedCfg((prev) => ({
+          appId: prev.appId || (cfg.appId || ""),
+          configId: prev.configId || (cfg.embeddedConfigId || ""),
+        }));
+      }
+    } catch {
+      // Keep env-based values only.
+    }
+  }, [embeddedCfg.appId, embeddedCfg.configId]);
+
   useEffect(() => {
     if (activeTab === "whatsapp") {
       loadWabaStatus(true);
@@ -193,7 +208,7 @@ const SettingsPage = () => {
         })
         .catch(() => {});
     }
-  }, [activeTab]);
+  }, [activeTab, ensureEmbeddedConfig]);
 
   useEffect(() => {
     return () => {
@@ -204,21 +219,6 @@ const SettingsPage = () => {
       }
     };
   }, [notifyBroadcastRef]);
-
-  const ensureEmbeddedConfig = async () => {
-    if (embeddedCfg.appId && embeddedCfg.configId) return;
-    try {
-      const cfg = await wabaGetEmbeddedConfig();
-      if (cfg?.appId || cfg?.embeddedConfigId) {
-        setEmbeddedCfg((prev) => ({
-          appId: prev.appId || (cfg.appId || ""),
-          configId: prev.configId || (cfg.embeddedConfigId || ""),
-        }));
-      }
-    } catch {
-      // Keep env-based values only.
-    }
-  };
 
   const resolveEmbeddedConfig = async () => {
     let appId = embeddedCfg.appId;

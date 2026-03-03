@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Textzy.Api.Data;
@@ -11,9 +12,12 @@ public class WorkflowExecutionEngine(
     ControlDbContext controlDb,
     TenantDbContext tenantDb,
     MessagingService messaging,
+    IHttpClientFactory httpClientFactory,
+    SecretCryptoService crypto,
     SensitiveDataRedactor redactor,
     IOptions<WorkflowRuntimeOptions> runtimeOptions)
 {
+    private const int MaxSubflowDepth = 3;
     private sealed class DelayResumePayload
     {
         public Guid RunId { get; init; }
@@ -99,7 +103,67 @@ public class WorkflowExecutionEngine(
                     next = node.Next;
                     outputData = JsonSerializer.Serialize(new { nextNodeId = next });
                 }
-                else if (nodeType is "text" or "text_message" or "textmessage" or "send_text" or "message" or "ask_question" or "capture_input" or "bot_reply" or "botreply" or "buttons" or "list" or "cta_url" or "media")
+                else if (nodeType is "capture_input")
+                {
+                    var variable = ResolveValue(node.Config, req.Payload, "variable", "field", "key");
+                    if (string.IsNullOrWhiteSpace(variable)) variable = "user_input";
+                    variable = NormalizeVariableName(variable);
+
+                    var rawInput = ResolveValue(node.Config, req.Payload, "value");
+                    if (string.IsNullOrWhiteSpace(rawInput))
+                        rawInput = ResolveValue(req.Payload, req.Payload, "message");
+                    var validationType = ResolveValue(node.Config, req.Payload, "validation");
+                    if (string.IsNullOrWhiteSpace(validationType)) validationType = "text";
+                    var regexPattern = ResolveValue(node.Config, req.Payload, "regex");
+                    var minLenRaw = ResolveValue(node.Config, req.Payload, "minLength");
+                    var maxLenRaw = ResolveValue(node.Config, req.Payload, "maxLength");
+                    var maxAttemptsRaw = ResolveValue(node.Config, req.Payload, "maxAttempts");
+                    var minLen = int.TryParse(minLenRaw, out var m1) && m1 > 0 ? m1 : 0;
+                    var maxLen = int.TryParse(maxLenRaw, out var m2) && m2 > 0 ? m2 : 0;
+                    var maxAttempts = int.TryParse(maxAttemptsRaw, out var ma) && ma > 0 ? ma : 0;
+                    var attemptsKey = $"{variable}_attempts";
+                    var attempts = req.Payload.TryGetValue(attemptsKey, out var attemptsRaw) &&
+                                   int.TryParse(SafeString(attemptsRaw), out var currentAttempts)
+                        ? currentAttempts
+                        : 0;
+
+                    var (valid, normalized, reason) = ValidateCapturedInput(rawInput, validationType, regexPattern, minLen, maxLen);
+                    req.Payload[variable] = normalized;
+                    req.Payload[$"{variable}_valid"] = valid;
+                    req.Payload[$"{variable}_reason"] = reason;
+                    req.Payload["last_capture_variable"] = variable;
+                    req.Payload["last_capture_valid"] = valid;
+                    req.Payload["last_capture_reason"] = reason;
+                    if (valid) attempts = 0;
+                    else attempts += 1;
+                    req.Payload[attemptsKey] = attempts;
+                    req.Payload["last_capture_attempts"] = attempts;
+                    req.Payload[$"{variable}_max_attempts"] = maxAttempts;
+
+                    if (valid)
+                    {
+                        next = node.OnTrue ?? node.OnSuccess ?? node.Next;
+                    }
+                    else if (maxAttempts > 0 && attempts >= maxAttempts)
+                    {
+                        next = node.OnFailure ?? node.OnFalse ?? node.Next;
+                    }
+                    else
+                    {
+                        next = node.OnFalse ?? node.OnFailure ?? node.Next;
+                    }
+                    outputData = JsonSerializer.Serialize(new
+                    {
+                        variable,
+                        validation = validationType,
+                        valid,
+                        reason,
+                        attempts,
+                        maxAttempts,
+                        nextNodeId = next
+                    });
+                }
+                else if (nodeType is "text" or "text_message" or "textmessage" or "send_text" or "message" or "ask_question" or "bot_reply" or "botreply" or "buttons" or "list" or "cta_url" or "media")
                 {
                     var recipient = ResolveValue(node.Config, req.Payload, "recipient");
                     if (string.IsNullOrWhiteSpace(recipient)) recipient = req.InboundRecipient;
@@ -298,6 +362,112 @@ public class WorkflowExecutionEngine(
                         nextNodeId = next
                     });
                 }
+                else if (nodeType is "request_intervention" or "requesthelp")
+                {
+                    await TryAssignConversationAsync(req, node, ct);
+                    var escalationMessage = ResolveValue(node.Config, req.Payload, "message", "body");
+                    if (!string.IsNullOrWhiteSpace(escalationMessage) && !string.IsNullOrWhiteSpace(req.InboundRecipient))
+                    {
+                        await messaging.EnqueueAsync(new SendMessageRequest
+                        {
+                            Recipient = req.InboundRecipient,
+                            Body = Interpolate(escalationMessage, req.Payload),
+                            Channel = ChannelType.WhatsApp,
+                            IdempotencyKey = $"auto-escalation:{req.FlowId}:{req.InboundMessageId}:{node.Id}"
+                        }, ct);
+                    }
+                    next = node.OnSuccess ?? node.Next;
+                    outputData = JsonSerializer.Serialize(new
+                    {
+                        queue = ResolveValue(node.Config, req.Payload, "queue", "team", "department"),
+                        escalationMessageLength = escalationMessage?.Length ?? 0,
+                        nextNodeId = next
+                    });
+                }
+                else if (nodeType is "tag_user" or "taguser")
+                {
+                    var labelsAdded = await TryTagConversationAsync(req, node, ct);
+                    next = node.OnSuccess ?? node.Next;
+                    outputData = JsonSerializer.Serialize(new
+                    {
+                        labelsAdded,
+                        nextNodeId = next
+                    });
+                }
+                else if (nodeType is "webhook" or "api_call")
+                {
+                    var webhookResult = await TryInvokeWebhookAsync(req, node, ct);
+                    next = node.OnSuccess ?? node.Next;
+                    outputData = JsonSerializer.Serialize(new
+                    {
+                        webhookResult.statusCode,
+                        webhookResult.success,
+                        webhookResult.savedAs,
+                        nextNodeId = next
+                    });
+                }
+                else if (nodeType == "subflow")
+                {
+                    var subflowIdRaw = ResolveValue(node.Config, req.Payload, "subflowId", "flowId");
+                    if (!Guid.TryParse(subflowIdRaw, out var subflowId) || subflowId == Guid.Empty)
+                        throw new InvalidOperationException("Subflow node requires valid subflowId.");
+
+                    var depth = 0;
+                    if (req.Payload.TryGetValue("__subflow_depth", out var existingDepth))
+                        int.TryParse(SafeString(existingDepth), out depth);
+                    if (depth >= MaxSubflowDepth)
+                        throw new InvalidOperationException($"Subflow max depth {MaxSubflowDepth} reached.");
+
+                    var subflow = await tenantDb.AutomationFlows
+                        .FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.Id == subflowId, ct);
+                    if (subflow is null)
+                        throw new InvalidOperationException("Subflow not found.");
+
+                    var subflowVersionId = subflow.PublishedVersionId ?? subflow.CurrentVersionId ?? Guid.Empty;
+                    if (subflowVersionId == Guid.Empty)
+                        throw new InvalidOperationException("Subflow version missing.");
+                    var subflowVersion = await tenantDb.AutomationFlowVersions
+                        .FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.FlowId == subflowId && x.Id == subflowVersionId, ct);
+                    if (subflowVersion is null)
+                        throw new InvalidOperationException("Subflow version not found.");
+
+                    req.Payload["__subflow_depth"] = depth + 1;
+                    var subflowStartNodeId = ResolveValue(node.Config, req.Payload, "startNodeId");
+                    await ExecuteAsync(new ExecuteRequest
+                    {
+                        TenantId = req.TenantId,
+                        FlowId = subflowId,
+                        PhoneNumberId = req.PhoneNumberId,
+                        InboundMessageId = req.InboundMessageId,
+                        InboundRecipient = req.InboundRecipient,
+                        InboundMessageText = req.InboundMessageText,
+                        InboundMatchKey = req.InboundMatchKey,
+                        DefinitionJson = subflowVersion.DefinitionJson,
+                        Run = req.Run,
+                        Payload = req.Payload,
+                        IsInteractiveResume = false,
+                        ResumeSourceNodeId = string.Empty,
+                        StartNodeId = subflowStartNodeId
+                    }, ct);
+                    req.Payload["__subflow_depth"] = depth;
+
+                    next = node.OnSuccess ?? node.Next;
+                    outputData = JsonSerializer.Serialize(new
+                    {
+                        subflowId,
+                        subflowVersionId,
+                        nextNodeId = next
+                    });
+                }
+                else if (nodeType == "jump")
+                {
+                    var jumpTarget = ResolveValue(node.Config, req.Payload, "targetNodeId", "to", "target");
+                    if (!string.IsNullOrWhiteSpace(jumpTarget))
+                        next = jumpTarget;
+                    else
+                        next = node.OnSuccess ?? node.Next;
+                    outputData = JsonSerializer.Serialize(new { jumpTarget = next });
+                }
                 else if (nodeType is "delay" or "wait")
                 {
                     var delaySeconds = ParseDelaySeconds(node.Config, req.Payload);
@@ -413,6 +583,115 @@ public class WorkflowExecutionEngine(
             ProviderMessageId = string.Empty,
             IdempotencyKey = $"sys:workflow-assign:{req.FlowId}:{req.InboundMessageId}:{node.Id}"
         });
+    }
+
+    private async Task<int> TryTagConversationAsync(ExecuteRequest req, FlowNode node, CancellationToken ct)
+    {
+        var convo = await tenantDb.Conversations
+            .FirstOrDefaultAsync(x => x.TenantId == req.TenantId && x.CustomerPhone == req.InboundRecipient, ct);
+        if (convo is null) return 0;
+
+        var labels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(convo.LabelsCsv))
+        {
+            foreach (var item in convo.LabelsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                labels.Add(item.Trim());
+        }
+
+        if (node.Config.TryGetValue("tags", out var rawTags) && rawTags is IEnumerable<object?> arr)
+        {
+            foreach (var item in arr)
+            {
+                var v = Interpolate(SafeString(item), req.Payload).Trim();
+                if (!string.IsNullOrWhiteSpace(v)) labels.Add(v);
+            }
+        }
+        else
+        {
+            var one = ResolveValue(node.Config, req.Payload, "tag", "label");
+            if (!string.IsNullOrWhiteSpace(one)) labels.Add(one.Trim());
+        }
+
+        convo.LabelsCsv = string.Join(",", labels.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+        convo.LastMessageAtUtc = DateTime.UtcNow;
+        return labels.Count;
+    }
+
+    private async Task<(int statusCode, bool success, string savedAs)> TryInvokeWebhookAsync(ExecuteRequest req, FlowNode node, CancellationToken ct)
+    {
+        var method = ResolveValue(node.Config, req.Payload, "method");
+        if (string.IsNullOrWhiteSpace(method)) method = "POST";
+        var url = ResolveValue(node.Config, req.Payload, "url", "endpoint");
+        if (string.IsNullOrWhiteSpace(url))
+            throw new InvalidOperationException("Webhook node requires url.");
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Webhook url must be absolute https.");
+        if (string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Webhook url localhost is not allowed.");
+        if (uri.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Webhook .local domains are not allowed.");
+        if (IPAddress.TryParse(uri.Host, out var ip) && IsPrivateOrLoopback(ip))
+            throw new InvalidOperationException("Webhook private/loopback IP is not allowed.");
+        await EnforceWebhookHostAllowListAsync(req.TenantId, uri.Host, ct);
+
+        var body = ResolveValue(node.Config, req.Payload, "body", "payload");
+        var saveAs = ResolveValue(node.Config, req.Payload, "saveAs");
+        if (string.IsNullOrWhiteSpace(saveAs)) saveAs = "webhook_response";
+
+        using var reqMsg = new HttpRequestMessage(new HttpMethod(method.ToUpperInvariant()), uri);
+        if (!string.IsNullOrWhiteSpace(body))
+            reqMsg.Content = new StringContent(Interpolate(body, req.Payload), System.Text.Encoding.UTF8, "application/json");
+
+        if (node.Config.TryGetValue("headers", out var headersRaw))
+        {
+            foreach (var pair in ReadStringMap(headersRaw))
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key)) continue;
+                if (!reqMsg.Headers.TryAddWithoutValidation(pair.Key, Interpolate(pair.Value, req.Payload)))
+                {
+                    reqMsg.Content ??= new StringContent(string.Empty);
+                    reqMsg.Content.Headers.TryAddWithoutValidation(pair.Key, Interpolate(pair.Value, req.Payload));
+                }
+            }
+        }
+
+        using var client = httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
+        using var res = await client.SendAsync(reqMsg, ct);
+        var responseText = await res.Content.ReadAsStringAsync(ct);
+
+        req.Payload[$"{saveAs}_status"] = (int)res.StatusCode;
+        req.Payload[$"{saveAs}_body"] = responseText;
+        req.Payload[$"{saveAs}_ok"] = res.IsSuccessStatusCode;
+
+        return ((int)res.StatusCode, res.IsSuccessStatusCode, saveAs);
+    }
+
+    private async Task EnforceWebhookHostAllowListAsync(Guid tenantId, string host, CancellationToken ct)
+    {
+        var entry = await controlDb.PlatformSettings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Scope == "mobile-app" && x.Key == "webhookAllowedHosts", ct);
+        if (entry is null || string.IsNullOrWhiteSpace(entry.ValueEncrypted))
+            return;
+
+        var raw = crypto.Decrypt(entry.ValueEncrypted);
+        var allowed = ParseStringArray(raw);
+        if (allowed.Count == 0) return;
+
+        var normalizedHost = host.Trim().ToLowerInvariant();
+        var isAllowed = allowed.Any(a =>
+        {
+            var x = a.Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(x)) return false;
+            return normalizedHost == x || normalizedHost.EndsWith("." + x, StringComparison.OrdinalIgnoreCase);
+        });
+
+        if (!isAllowed)
+        {
+            throw new InvalidOperationException($"Webhook host '{host}' is not in allow-list.");
+        }
     }
 
     private async Task TryScheduleResumeAsync(ExecuteRequest req, FlowNode node, int delaySeconds, string nextNodeId, CancellationToken ct)
@@ -912,6 +1191,125 @@ public class WorkflowExecutionEngine(
         }
 
         return ResolveValue(config, payload, "body", "message", "question", "prompt");
+    }
+
+    private static Dictionary<string, string> ReadStringMap(object? raw)
+    {
+        var outMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (raw is null) return outMap;
+
+        if (raw is IDictionary<string, object?> dict)
+        {
+            foreach (var kv in dict)
+                outMap[kv.Key] = SafeString(kv.Value);
+            return outMap;
+        }
+
+        if (raw is JsonElement j && j.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in j.EnumerateObject())
+                outMap[prop.Name] = SafeString(prop.Value);
+            return outMap;
+        }
+
+        return outMap;
+    }
+
+    private static List<string> ParseStringArray(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return [];
+        try
+        {
+            if (raw.TrimStart().StartsWith("[", StringComparison.Ordinal))
+            {
+                var fromJson = JsonSerializer.Deserialize<string[]>(raw);
+                if (fromJson is not null)
+                    return fromJson.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            }
+        }
+        catch
+        {
+            // fallback to csv/newline
+        }
+
+        return raw
+            .Split([',', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool IsPrivateOrLoopback(IPAddress ip)
+    {
+        if (IPAddress.IsLoopback(ip)) return true;
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var b = ip.GetAddressBytes();
+            if (b[0] == 10) return true;
+            if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return true;
+            if (b[0] == 192 && b[1] == 168) return true;
+            if (b[0] == 169 && b[1] == 254) return true;
+        }
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal) return true;
+        }
+        return false;
+    }
+
+    private static string NormalizeVariableName(string raw)
+    {
+        var cleaned = new string((raw ?? string.Empty).Trim().Select(ch => char.IsLetterOrDigit(ch) || ch == '_' ? ch : '_').ToArray());
+        cleaned = cleaned.Trim('_');
+        while (cleaned.Contains("__", StringComparison.Ordinal)) cleaned = cleaned.Replace("__", "_", StringComparison.Ordinal);
+        return string.IsNullOrWhiteSpace(cleaned) ? "user_input" : cleaned.ToLowerInvariant();
+    }
+
+    private static (bool valid, string normalized, string reason) ValidateCapturedInput(
+        string rawInput,
+        string validationType,
+        string regexPattern,
+        int minLength,
+        int maxLength)
+    {
+        var input = (rawInput ?? string.Empty).Trim();
+        if (minLength > 0 && input.Length < minLength) return (false, input, "min_length");
+        if (maxLength > 0 && input.Length > maxLength) return (false, input, "max_length");
+
+        var v = (validationType ?? "text").Trim().ToLowerInvariant();
+        if (v == "text" || string.IsNullOrWhiteSpace(v)) return (!string.IsNullOrWhiteSpace(input), input, string.IsNullOrWhiteSpace(input) ? "empty" : "ok");
+        if (v == "email")
+        {
+            var ok = System.Text.RegularExpressions.Regex.IsMatch(input, @"^[^\s@]+@[^\s@]+\.[^\s@]+$");
+            return (ok, input.ToLowerInvariant(), ok ? "ok" : "invalid_email");
+        }
+        if (v is "number" or "numeric" or "int")
+        {
+            var ok = decimal.TryParse(input, out _);
+            return (ok, input, ok ? "ok" : "invalid_number");
+        }
+        if (v is "phone" or "mobile")
+        {
+            var digits = new string(input.Where(char.IsDigit).ToArray());
+            var ok = digits.Length is >= 8 and <= 15;
+            return (ok, digits, ok ? "ok" : "invalid_phone");
+        }
+        if (v == "regex")
+        {
+            if (string.IsNullOrWhiteSpace(regexPattern)) return (true, input, "ok");
+            try
+            {
+                var ok = System.Text.RegularExpressions.Regex.IsMatch(input, regexPattern);
+                return (ok, input, ok ? "ok" : "regex_no_match");
+            }
+            catch
+            {
+                return (false, input, "regex_invalid");
+            }
+        }
+
+        return (!string.IsNullOrWhiteSpace(input), input, string.IsNullOrWhiteSpace(input) ? "empty" : "ok");
     }
 
     private static List<string> ReadStringOptions(object? raw, int max = 3)

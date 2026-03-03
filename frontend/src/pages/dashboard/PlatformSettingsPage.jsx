@@ -78,6 +78,7 @@ const PlatformSettingsPage = () => {
     termsUrl: "",
     privacyUrl: "",
     enforceApiAllowList: false,
+    webhookAllowedHosts: "",
     allowedApiPrefixes: "/api/auth\n/api/inbox\n/api/messages\n/hubs/inbox",
     apiCatalog: "/api/auth/login\n/api/auth/refresh\n/api/auth/logout\n/api/auth/me\n/api/auth/projects\n/api/auth/switch-project\n/api/auth/app-bootstrap\n/api/inbox/conversations\n/api/inbox/conversations/{id}/messages\n/api/inbox/conversations/{id}/assign\n/api/inbox/conversations/{id}/transfer\n/api/inbox/conversations/{id}/labels\n/api/inbox/conversations/{id}/notes\n/api/inbox/typing\n/api/inbox/sla\n/api/messages/send\n/api/messages/media/{mediaId}\n/hubs/inbox",
   });
@@ -193,6 +194,7 @@ const PlatformSettingsPage = () => {
             termsUrl: values.termsUrl || "",
             privacyUrl: values.privacyUrl || "",
             enforceApiAllowList: String(values.enforceApiAllowList || "false").toLowerCase() === "true",
+            webhookAllowedHosts: values.webhookAllowedHosts || "",
             allowedApiPrefixes: values.allowedApiPrefixes || prev.allowedApiPrefixes,
             apiCatalog: values.apiCatalog || prev.apiCatalog,
           }));
@@ -315,7 +317,22 @@ const PlatformSettingsPage = () => {
     return () => {
       active = false;
     };
-  }, [tab, logProvider, securityStatusFilter]);
+  }, [
+    tab,
+    logProvider,
+    securityStatusFilter,
+    securityTenantId,
+    analyticsTenantId,
+    analyticsDays,
+    idemTenantId,
+    idemStatus,
+    idemStaleMinutes,
+    requestLogFilters.tenantId,
+    requestLogFilters.method,
+    requestLogFilters.statusCode,
+    requestLogFilters.pathContains,
+    requestLogFilters.limit,
+  ]);
 
   return (
     <div className="space-y-4" data-testid="platform-settings-page">
@@ -597,6 +614,16 @@ const PlatformSettingsPage = () => {
               <Input placeholder="https://textzy.in/privacy" value={appConfig.privacyUrl} onChange={(e) => setAppConfig((p) => ({ ...p, privacyUrl: e.target.value }))} />
             </div>
             <div className="space-y-2 md:col-span-2">
+              <Label>Webhook Allowed Hosts (newline or comma separated)</Label>
+              <textarea
+                className="min-h-[90px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                value={appConfig.webhookAllowedHosts}
+                onChange={(e) => setAppConfig((p) => ({ ...p, webhookAllowedHosts: e.target.value }))}
+                placeholder="api.example.com&#10;hooks.partner.com"
+              />
+              <p className="text-xs text-slate-500">Used by workflow webhook/api_call nodes. Keep empty to allow any public host.</p>
+            </div>
+            <div className="space-y-2 md:col-span-2">
               <Label>Allowed API Prefixes (newline or comma separated)</Label>
               <textarea
                 className="min-h-[110px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
@@ -638,6 +665,7 @@ const PlatformSettingsPage = () => {
                       termsUrl: appConfig.termsUrl || "",
                       privacyUrl: appConfig.privacyUrl || "",
                       enforceApiAllowList: appConfig.enforceApiAllowList ? "true" : "false",
+                      webhookAllowedHosts: appConfig.webhookAllowedHosts || "",
                       allowedApiPrefixes: appConfig.allowedApiPrefixes || "",
                       apiCatalog: appConfig.apiCatalog || "",
                     });

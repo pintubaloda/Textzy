@@ -737,6 +737,7 @@ const InboxPage = () => {
   }, []);
 
   useEffect(() => {
+    const localTabId = tabIdRef.current;
     acquireNotifyLeadership();
     try {
       if (typeof BroadcastChannel !== "undefined") {
@@ -758,7 +759,7 @@ const InboxPage = () => {
           }
           const key = String(data?.key || "");
           if (!key) return;
-          if (String(data?.tabId || "") === tabIdRef.current) return;
+          if (String(data?.tabId || "") === localTabId) return;
           markRealtimeEventSeen(key);
         };
         broadcastRef.current = ch;
@@ -773,7 +774,7 @@ const InboxPage = () => {
         if (isNotifyLeaderRef.current) {
           const raw = localStorage.getItem(NOTIFY_LEADER_KEY);
           const current = raw ? JSON.parse(raw) : null;
-          if (current?.tabId === tabIdRef.current) localStorage.removeItem(NOTIFY_LEADER_KEY);
+          if (current?.tabId === localTabId) localStorage.removeItem(NOTIFY_LEADER_KEY);
         }
       } catch {
         // ignore

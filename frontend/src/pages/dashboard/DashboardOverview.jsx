@@ -19,7 +19,7 @@ import {
   Plug,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet, authProjects, getSession, getTenantWebhookAnalytics, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaMapExisting, wabaStartOnboarding } from "@/lib/api";
 import { loadFacebookSdk } from "@/lib/facebookSdk";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -60,20 +60,7 @@ const DashboardOverview = () => {
     return !!wabaStatus?.isConnected || !!wabaStatus?.readyToSend || state === "ready";
   }, [wabaStatus]);
 
-  useEffect(() => {
-    Promise.all([apiGet("/api/messages"), apiGet("/api/contacts"), apiGet("/api/campaigns")])
-      .then(([m, c, cp]) => {
-        setMessages(m || []);
-        setContacts(c || []);
-        setCampaigns(cp || []);
-      })
-      .catch(() => {});
-    loadWabaStatus(true);
-    loadWebhookAnalytics(7);
-    ensureEmbeddedConfig();
-  }, []);
-
-  const ensureEmbeddedConfig = async () => {
+  const ensureEmbeddedConfig = useCallback(async () => {
     if (embeddedCfg.appId && embeddedCfg.configId) return;
     try {
       const cfg = await wabaGetEmbeddedConfig();
@@ -86,7 +73,7 @@ const DashboardOverview = () => {
     } catch {
       // Keep env-based values only.
     }
-  };
+  }, [embeddedCfg.appId, embeddedCfg.configId]);
 
   const resolveEmbeddedConfig = async () => {
     let appId = embeddedCfg.appId;
@@ -103,23 +90,36 @@ const DashboardOverview = () => {
     return { appId, configId };
   };
 
-  const loadWabaStatus = async (force = false) => {
+  const loadWabaStatus = useCallback(async (force = false) => {
     try {
       const data = await wabaGetOnboardingStatus({ force });
       setWabaStatus(data || { state: "requested", isConnected: false, businessName: "", phone: "" });
     } catch {
       setWabaStatus({ state: "requested", isConnected: false, businessName: "", phone: "" });
     }
-  };
+  }, []);
 
-  const loadWebhookAnalytics = async (days) => {
+  const loadWebhookAnalytics = useCallback(async (days) => {
     try {
       const an = await getTenantWebhookAnalytics(days);
       setWebhookAnalytics(an || null);
     } catch {
       setWebhookAnalytics(null);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    Promise.all([apiGet("/api/messages"), apiGet("/api/contacts"), apiGet("/api/campaigns")])
+      .then(([m, c, cp]) => {
+        setMessages(m || []);
+        setContacts(c || []);
+        setCampaigns(cp || []);
+      })
+      .catch(() => {});
+    loadWabaStatus(true);
+    loadWebhookAnalytics(7);
+    ensureEmbeddedConfig();
+  }, [ensureEmbeddedConfig, loadWabaStatus, loadWebhookAnalytics]);
 
   const handleEmbeddedConnect = async () => {
     const { appId: facebookAppId, configId: embeddedConfigId } = await resolveEmbeddedConfig();

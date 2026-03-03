@@ -73,6 +73,8 @@ public class WorkflowDelayResumeWorker(
                     controlDb,
                     tenantDb,
                     scope.ServiceProvider.GetRequiredService<MessagingService>(),
+                    scope.ServiceProvider.GetRequiredService<IHttpClientFactory>(),
+                    scope.ServiceProvider.GetRequiredService<SecretCryptoService>(),
                     redactor,
                     runtimeOptions);
 

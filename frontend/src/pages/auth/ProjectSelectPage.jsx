@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,16 +18,7 @@ export default function ProjectSelectPage() {
 
   const session = getSession();
 
-  useEffect(() => {
-    if (!session.email) {
-      navigate("/login", { replace: true });
-      return;
-    }
-
-    loadProjects();
-  }, []);
-
-  const loadProjects = async () => {
+  const loadProjects = useCallback(async () => {
     setLoading(true);
     try {
       const data = await authProjects();
@@ -38,7 +29,15 @@ export default function ProjectSelectPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!session.email) {
+      navigate("/login", { replace: true });
+      return;
+    }
+    loadProjects();
+  }, [loadProjects, navigate, session.email]);
 
   const slides = useMemo(() => {
     if (!projects.length) return [{ name: "Create your first project", role: "owner", slug: "first" }];

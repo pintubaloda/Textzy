@@ -22,6 +22,27 @@ public class AutomationController(
     ILogger<AutomationController> logger) : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly HashSet<string> SupportedPublishNodeTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "start",
+        "text","text_message","textmessage","send_text","message",
+        "media",
+        "template",
+        "buttons",
+        "list",
+        "ask_question",
+        "capture_input",
+        "bot_reply","botreply",
+        "cta_url",
+        "condition","split",
+        "delay","wait",
+        "assign_agent","assignagent","handoff",
+        "request_intervention","requesthelp",
+        "tag_user","taguser",
+        "webhook","api_call",
+        "jump",
+        "end"
+    };
 
     private void EnsureAutomationSchema()
     {
@@ -525,6 +546,17 @@ public class AutomationController(
         if (flow is null) return NotFound();
         var version = await db.AutomationFlowVersions.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId && x.Id == versionId, ct);
         if (version is null) return NotFound();
+
+        var unsupported = GetUnsupportedNodeTypes(version.DefinitionJson);
+        if (unsupported.Count > 0)
+        {
+            return BadRequest(new
+            {
+                error = "unsupported_node_types",
+                message = "Flow contains node types that are not executable in runtime.",
+                unsupportedNodeTypes = unsupported
+            });
+        }
 
         if (req.RequireApproval && !rbac.HasAnyRole("owner", "admin", "super_admin"))
         {
@@ -1065,6 +1097,31 @@ public class AutomationController(
         {
             return fallback;
         }
+    }
+
+    private static List<string> GetUnsupportedNodeTypes(string definitionJson)
+    {
+        var unsupported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(definitionJson) ? "{}" : definitionJson);
+            if (!doc.RootElement.TryGetProperty("nodes", out var nodes) || nodes.ValueKind != JsonValueKind.Array)
+                return [];
+
+            foreach (var node in nodes.EnumerateArray())
+            {
+                if (!node.TryGetProperty("type", out var typeNode)) continue;
+                var type = (typeNode.ToString() ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_");
+                if (string.IsNullOrWhiteSpace(type)) continue;
+                if (!SupportedPublishNodeTypes.Contains(type))
+                    unsupported.Add(type);
+            }
+        }
+        catch
+        {
+            // keep current behavior for malformed JSON; other validators will handle parse failures.
+        }
+        return unsupported.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     private static Dictionary<string, object?> ParseObject(string json)

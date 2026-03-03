@@ -65,14 +65,16 @@ const BillingPage = () => {
   }, []);
 
   const currentPlan = sub?.plan || null;
-  const limits = currentPlan?.limits || {};
   const pct = (used, limit) => !limit ? 0 : Math.min(100, Math.round((used / limit) * 100));
-  const usage = useMemo(() => ({
-    whatsapp: { used: usageValues.whatsappMessages || 0, limit: limits.whatsappMessages || 0, percentage: pct(usageValues.whatsappMessages || 0, limits.whatsappMessages || 0) },
-    sms: { used: usageValues.smsCredits || 0, limit: limits.smsCredits || 0, percentage: pct(usageValues.smsCredits || 0, limits.smsCredits || 0) },
-    contacts: { used: usageValues.contacts || 0, limit: limits.contacts || 0, percentage: pct(usageValues.contacts || 0, limits.contacts || 0) },
-    team: { used: usageValues.teamMembers || 0, limit: limits.teamMembers || 0, percentage: pct(usageValues.teamMembers || 0, limits.teamMembers || 0) }
-  }), [usageValues, limits]);
+  const usage = useMemo(() => {
+    const limits = currentPlan?.limits || {};
+    return {
+      whatsapp: { used: usageValues.whatsappMessages || 0, limit: limits.whatsappMessages || 0, percentage: pct(usageValues.whatsappMessages || 0, limits.whatsappMessages || 0) },
+      sms: { used: usageValues.smsCredits || 0, limit: limits.smsCredits || 0, percentage: pct(usageValues.smsCredits || 0, limits.smsCredits || 0) },
+      contacts: { used: usageValues.contacts || 0, limit: limits.contacts || 0, percentage: pct(usageValues.contacts || 0, limits.contacts || 0) },
+      team: { used: usageValues.teamMembers || 0, limit: limits.teamMembers || 0, percentage: pct(usageValues.teamMembers || 0, limits.teamMembers || 0) }
+    };
+  }, [currentPlan, usageValues]);
 
   const ensureRazorpayScript = async () => {
     if (window.Razorpay) return true;
