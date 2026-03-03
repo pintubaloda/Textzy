@@ -254,6 +254,7 @@ Manage chatbot config via:
 - `401 Invalid or expired session` => refresh/login again.
 - `403 Invalid CSRF token` => missing/wrong `X-CSRF-Token` on unsafe call.
 - `403 Untrusted origin` => backend `AllowedOrigins` mismatch (production).
+- `502` on preflight/login/public endpoints can appear as CORS error in browser when backend is unhealthy or startup config fails.
 - `403` on switch-project => user not member of target tenant.
 - `500` with blank body => check backend deployment logs immediately.
 
@@ -289,6 +290,8 @@ Never store WABA/platform secrets in app.
 
 ## 13. Production Checklist
 - Backend `AllowedOrigins` contains app/web origins.
+- `AllowedOrigins` format is strict: use full origins (scheme + host), no paths. Example: `https://textzy-frontend-production.up.railway.app`.
+- If multiple origins are needed, separate with comma/semicolon/newline only.
 - CORS exposes headers: `Authorization`, `X-Access-Token`, `X-CSRF-Token`.
 - App always sends `Authorization` for protected APIs.
 - App sends `X-CSRF-Token` for all unsafe methods.

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Textzy.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+170c39245a8e058e9727c961ec7cde46e2ed13e6")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3962b94390f8c0d17c0555053d0f164fcbbac9a6")]
 [assembly: System.Reflection.AssemblyProductAttribute("Textzy.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Textzy.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

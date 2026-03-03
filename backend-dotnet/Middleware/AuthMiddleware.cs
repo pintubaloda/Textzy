@@ -184,11 +184,7 @@ public class AuthMiddleware(RequestDelegate next)
 
     private static bool IsTrustedOrigin(string origin, string referer, IConfiguration config)
     {
-        var allowed = (config["AllowedOrigins"] ?? string.Empty)
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(x => x.Trim().TrimEnd('/'))
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var allowed = ParseAllowedOrigins(config);
 
         if (allowed.Count == 0) return false;
         if (!string.IsNullOrWhiteSpace(origin) && allowed.Contains(origin)) return true;
@@ -202,5 +198,25 @@ public class AuthMiddleware(RequestDelegate next)
         }
 
         return false;
+    }
+
+    private static HashSet<string> ParseAllowedOrigins(IConfiguration config)
+    {
+        var raw = config["AllowedOrigins"] ?? string.Empty;
+        var parsed = raw
+            .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x.Trim().TrimEnd('/'))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (parsed.Count == 0)
+        {
+            parsed.Add("https://textzy-frontend-production.up.railway.app");
+            parsed.Add("https://textzy-backend-production.up.railway.app");
+            parsed.Add("http://localhost:3000");
+            parsed.Add("http://localhost:5173");
+        }
+
+        return parsed;
     }
 }

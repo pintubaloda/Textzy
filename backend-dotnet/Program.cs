@@ -71,17 +71,7 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
-var allowedOrigins = builder.Configuration["AllowedOrigins"]?
-    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-    .Select(o => (o ?? string.Empty).Trim().TrimEnd('/'))
-    .Where(o => !string.IsNullOrWhiteSpace(o))
-    .Distinct(StringComparer.OrdinalIgnoreCase)
-    .ToArray() ?? Array.Empty<string>();
-
-if (builder.Environment.IsProduction() && allowedOrigins.Length == 0)
-{
-    throw new InvalidOperationException("AllowedOrigins is required in Production and must include frontend origin(s).");
-}
+var allowedOrigins = ParseAllowedOrigins(builder.Configuration).ToArray();
 
 builder.Services.AddCors(options =>
 {
@@ -700,6 +690,28 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         """);
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_BillingPaymentAttempts_OrderId" ON "BillingPaymentAttempts" ("OrderId");""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingPaymentAttempts_TenantId_CreatedAtUtc" ON "BillingPaymentAttempts" ("TenantId","CreatedAtUtc");""");
+}
+
+static IEnumerable<string> ParseAllowedOrigins(IConfiguration config)
+{
+    var raw = config["AllowedOrigins"] ?? string.Empty;
+    var parsed = raw
+        .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(o => (o ?? string.Empty).Trim().TrimEnd('/'))
+        .Where(o => !string.IsNullOrWhiteSpace(o))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    // Production safety fallback to known Textzy frontend origins.
+    if (parsed.Count == 0)
+    {
+        parsed.Add("https://textzy-frontend-production.up.railway.app");
+        parsed.Add("https://textzy-backend-production.up.railway.app");
+        parsed.Add("http://localhost:3000");
+        parsed.Add("http://localhost:5173");
+    }
+
+    return parsed;
 }
 
 static string NormalizeConnectionString(string raw)

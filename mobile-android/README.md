@@ -1,13 +1,15 @@
 # Textzy Android Starter
 
-This Android app implements the new Textzy mobile flow:
+This Android app implements the production mobile flow from your Textzy backend:
 
 - Email/password login
-- Project selection and switch-project
 - QR pairing login (`/api/public/mobile/pair/exchange`)
+- Project selection and switch-project
 - Inbox list/messages/send
-- Secure token storage
-- Operational telemetry event push
+- Media upload/send (`/api/messages/upload-whatsapp-media`)
+- Share current location as a chat message
+- Secure token storage (EncryptedSharedPreferences)
+- Operational telemetry push (`/api/mobile/telemetry`)
 
 ## Prerequisites
 
@@ -19,10 +21,12 @@ This Android app implements the new Textzy mobile flow:
 
 1. Open `mobile-android` folder in Android Studio.
 2. Let Gradle sync dependencies.
-3. Build APK:
+3. Build Debug APK:
    - `Build > Build Bundle(s) / APK(s) > Build APK(s)`
 4. APK output:
    - `mobile-android/app/build/outputs/apk/debug/app-debug.apk`
+
+For release APK, configure signing in Android Studio and build `release`.
 
 ## Configure APK Download in Web Login
 
@@ -47,7 +51,12 @@ Permissions declared:
 - Media read (image/video)
 - Fine/Coarse location (share location)
 
-Request these at runtime only when feature is used.
+Request these at runtime only when feature is used:
+
+- Camera: QR scan
+- Microphone: voice/audio attachment picker
+- Location: share location action
+- Media read: image/video picker
 
 ## Telemetry
 

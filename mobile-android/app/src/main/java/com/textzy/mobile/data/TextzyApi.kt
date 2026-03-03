@@ -4,6 +4,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MultipartBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
@@ -149,18 +150,55 @@ class TextzyApi(private val baseUrl: String) {
     }
 
     fun sendMessage(session: SessionState, recipient: String, text: String) {
+        val idempotency = "android-${System.currentTimeMillis()}"
         val payload = JSONObject()
             .put("recipient", recipient)
             .put("body", text)
             .put("channel", "whatsapp")
-            .put("idempotencyKey", "android-${System.currentTimeMillis()}")
+            .put("idempotencyKey", idempotency)
 
         val request = req("/api/messages/send", "POST", payload, session, true).newBuilder()
-            .addHeader("Idempotency-Key", "android-${System.currentTimeMillis()}")
+            .addHeader("Idempotency-Key", idempotency)
             .build()
         val response = execute(request)
         response.use { res ->
             if (!res.isSuccessful) throw IllegalStateException(res.body?.string().orEmpty().ifBlank { "Send failed" })
+        }
+    }
+
+    fun uploadWhatsAppMedia(
+        session: SessionState,
+        recipient: String,
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray,
+        mediaType: String,
+        caption: String = ""
+    ): JSONObject {
+        val idempotency = "android-media-${System.currentTimeMillis()}"
+        val fileBody = bytes.toRequestBody((if (mimeType.isBlank()) "application/octet-stream" else mimeType).toMediaType())
+        val multipart = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("recipient", recipient)
+            .addFormDataPart("mediaType", mediaType)
+            .addFormDataPart("caption", caption)
+            .addFormDataPart("file", fileName.ifBlank { "upload.bin" }, fileBody)
+            .build()
+
+        val request = Request.Builder()
+            .url("$baseUrl/api/messages/upload-whatsapp-media")
+            .addHeader("Authorization", "Bearer ${session.accessToken}")
+            .addHeader("X-CSRF-Token", session.csrfToken)
+            .addHeader("X-Tenant-Slug", session.tenantSlug)
+            .addHeader("Idempotency-Key", idempotency)
+            .post(multipart)
+            .build()
+
+        val response = execute(request)
+        response.use { res ->
+            val text = res.body?.string().orEmpty()
+            if (!res.isSuccessful) throw IllegalStateException(text.ifBlank { "Media upload failed" })
+            return JSONObject(text.ifBlank { "{}" })
         }
     }
 
