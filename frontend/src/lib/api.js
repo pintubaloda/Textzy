@@ -280,6 +280,7 @@ export async function authLogin({ email, password, tenantSlug }) {
     credentials: 'include',
     body: JSON.stringify({ email, password })
   })
+  persistCsrfFromResponse(res)
   if (!res.ok) {
     const msg = await readErrorMessage(res, 'Login failed')
     throw new Error(msg)
@@ -334,6 +335,7 @@ export async function authAcceptInvite({ token, fullName, password }) {
     credentials: 'include',
     body: JSON.stringify({ token, fullName, password })
   })
+  persistCsrfFromResponse(res)
   if (!res.ok) {
     const msg = await res.text()
     throw new Error(msg || 'Failed to accept invite')
