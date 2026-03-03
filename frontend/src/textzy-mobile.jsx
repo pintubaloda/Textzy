@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect } from "react";
+﻿import { useState, useRef, useEffect } from "react";
 
-/* ═══════════════════════════════════════════════
-   TEXTZY MOBILE — NO BLACK PALETTE
-   Orange #F97316  ·  White #FFFFFF
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   TEXTZY MOBILE â€” NO BLACK PALETTE
+   Orange #F97316  Â·  White #FFFFFF
    All dark tones replaced with deep teal/slate
-═══════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const C = {
   /* brand */
   orange:       "#F97316",
@@ -27,7 +27,7 @@ const C = {
   inputBg:      "#FFFFFF",
   panelBg:      "#F8FAFC",
 
-  /* text — warm slates, never black */
+  /* text â€” warm slates, never black */
   textMain:     "#1E3A5F",
   textSub:      "#64748B",
   textMuted:    "#94A3B8",
@@ -68,29 +68,67 @@ const resolveCsrf = (token) => token || readCookie("textzy_csrf") || "";
 const parsePairingToken = (raw) => {
   const input = String(raw || "").trim();
   if (!input) return "";
-  try {
-    const obj = JSON.parse(input);
-    return (
-      obj.pairingToken ||
-      obj.token ||
-      obj.pairToken ||
-      obj?.payload?.pairingToken ||
-      obj?.payload?.token ||
-      ""
-    );
-  } catch {
-    // not JSON
-  }
-  const tokenFromUrl = input.match(/[?&](pairingToken|token)=([^&]+)/i);
-  if (tokenFromUrl?.[2]) return decodeURIComponent(tokenFromUrl[2]);
-  return input;
+
+  const fromObject = (obj) =>
+    obj?.pairingToken ||
+    obj?.pairing_token ||
+    obj?.pairToken ||
+    obj?.token ||
+    obj?.Token ||
+    obj?.payload?.pairingToken ||
+    obj?.payload?.pairing_token ||
+    obj?.payload?.token ||
+    obj?.payload?.Token ||
+    "";
+
+  const tryJson = (text) => {
+    try {
+      const obj = JSON.parse(text);
+      return fromObject(obj) || "";
+    } catch {
+      return "";
+    }
+  };
+
+  // Plain JSON
+  let token = tryJson(input);
+  if (token) return String(token).trim();
+
+  // URL-encoded JSON (common with QR image providers)
+  const decodedOnce = (() => {
+    try {
+      return decodeURIComponent(input);
+    } catch {
+      return input;
+    }
+  })();
+  token = tryJson(decodedOnce);
+  if (token) return String(token).trim();
+
+  // Query string token
+  const tokenFromUrl =
+    input.match(/[?&](pairingToken|pairing_token|pairToken|token)=([^&]+)/i) ||
+    decodedOnce.match(/[?&](pairingToken|pairing_token|pairToken|token)=([^&]+)/i);
+  if (tokenFromUrl?.[2]) return decodeURIComponent(tokenFromUrl[2]).trim();
+
+  // Regex extraction from JSON-like text
+  const tokenRegex =
+    /"(pairingToken|pairing_token|pairToken|token|Token)"\s*:\s*"([^"]+)"/i;
+  const directMatch = input.match(tokenRegex) || decodedOnce.match(tokenRegex);
+  if (directMatch?.[2]) return directMatch[2].trim();
+
+  return "";
 };
 
-async function apiFetch(path, { method = "GET", token = "", tenantSlug = "", csrfToken = "", body } = {}) {
-  const headers = {};
+async function apiFetch(path, { method = "GET", token = "", tenantSlug = "", csrfToken = "", body, extraHeaders = {} } = {}) {
+  const headers = { ...extraHeaders };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (tenantSlug && !path.startsWith("/api/auth/") && !path.startsWith("/api/public/")) headers["X-Tenant-Slug"] = tenantSlug;
-  if (body != null) headers["Content-Type"] = "application/json";
+  if (path === "/api/messages/send" && !headers["Idempotency-Key"]) {
+    headers["Idempotency-Key"] = body?.idempotencyKey || idempotencyKey();
+  }
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+  if (body != null && !isFormData) headers["Content-Type"] = "application/json";
   if (["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase())) {
     const csrf = resolveCsrf(csrfToken);
     if (csrf) headers["X-CSRF-Token"] = csrf;
@@ -99,7 +137,7 @@ async function apiFetch(path, { method = "GET", token = "", tenantSlug = "", csr
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
-    body: body != null ? JSON.stringify(body) : undefined,
+    body: body == null ? undefined : (isFormData ? body : JSON.stringify(body)),
     credentials: "include",
     cache: "no-store",
   });
@@ -149,16 +187,16 @@ const mapMessage = (x) => {
   };
 };
 
-/* ── MOCK DATA ── */
+/* â”€â”€ MOCK DATA â”€â”€ */
 const CONTACTS = [
   { id:1, name:"Alice Johnson",    avatar:"AJ", color:"#7C3AED",
-    online:true, unread:2, time:"10:42 AM", lastMsg:"Sure, I'll send the report by EOD 👍", typing:false,
+    online:true, unread:2, time:"10:42 AM", lastMsg:"Sure, I'll send the report by EOD ðŸ‘", typing:false,
     messages:[
       {id:1,text:"Hey! Did you review the Q3 report?",sent:false,time:"10:30 AM",status:"read"},
       {id:2,text:"Yes looks great! Just a few numbers to double-check.",sent:true,time:"10:35 AM",status:"read"},
       {id:3,text:"Which ones? I can fix right now.",sent:false,time:"10:38 AM",status:"read"},
-      {id:4,text:"Pages 4 and 7 — the revenue projections look off.",sent:true,time:"10:40 AM",status:"read"},
-      {id:5,text:"Sure, I'll send the report by EOD 👍",sent:false,time:"10:42 AM",status:"read"},
+      {id:4,text:"Pages 4 and 7 â€” the revenue projections look off.",sent:true,time:"10:40 AM",status:"read"},
+      {id:5,text:"Sure, I'll send the report by EOD ðŸ‘",sent:false,time:"10:42 AM",status:"read"},
     ]},
   { id:2, name:"Bob Martinez",     avatar:"BM", color:"#DC2626",
     online:false, unread:0, time:"9:15 AM", lastMsg:"Meeting rescheduled to 3 PM", typing:false,
@@ -168,19 +206,19 @@ const CONTACTS = [
       {id:3,text:"Meeting rescheduled to 3 PM",sent:false,time:"9:15 AM",status:"read"},
     ]},
   { id:3, name:"Customer Support", avatar:"CS", color:"#0891B2",
-    online:true, unread:1, time:"Yesterday", lastMsg:"Ticket #4821 has been resolved ✅", typing:true,
+    online:true, unread:1, time:"Yesterday", lastMsg:"Ticket #4821 has been resolved âœ…", typing:true,
     messages:[
       {id:1,text:"Hello, I need help with my subscription.",sent:true,time:"Yesterday",status:"read"},
       {id:2,text:"Hi! Happy to help. Can you share your account email?",sent:false,time:"Yesterday",status:"read"},
       {id:3,text:"It's user@example.com",sent:true,time:"Yesterday",status:"read"},
-      {id:4,text:"Ticket #4821 has been resolved ✅",sent:false,time:"Yesterday",status:"read"},
+      {id:4,text:"Ticket #4821 has been resolved âœ…",sent:false,time:"Yesterday",status:"read"},
     ]},
-  { id:4, name:"Dev Team 🛠️",      avatar:"DT", color:"#059669",
-    online:true, unread:0, time:"Yesterday", lastMsg:"Deployment to prod done 🚀", typing:false,
+  { id:4, name:"Dev Team ðŸ› ï¸",      avatar:"DT", color:"#059669",
+    online:true, unread:0, time:"Yesterday", lastMsg:"Deployment to prod done ðŸš€", typing:false,
     messages:[
       {id:1,text:"Starting prod deployment...",sent:false,time:"Yesterday",status:"read"},
-      {id:2,text:"Pipeline passed all checks 🟢",sent:false,time:"Yesterday",status:"read"},
-      {id:3,text:"Deployment to prod done 🚀",sent:false,time:"Yesterday",status:"read"},
+      {id:2,text:"Pipeline passed all checks ðŸŸ¢",sent:false,time:"Yesterday",status:"read"},
+      {id:3,text:"Deployment to prod done ðŸš€",sent:false,time:"Yesterday",status:"read"},
     ]},
   { id:5, name:"Sarah Patel",      avatar:"SP", color:"#9333EA",
     online:false, unread:0, time:"Mon", lastMsg:"Can you review my PR?", typing:false,
@@ -190,27 +228,27 @@ const CONTACTS = [
       {id:3,text:"Can you review my PR when free?",sent:false,time:"Mon",status:"read"},
     ]},
   { id:6, name:"Marketing Hub",    avatar:"MH", color:"#D97706",
-    online:false, unread:3, time:"Sun", lastMsg:"New campaign brief ready 📎", typing:false,
+    online:false, unread:3, time:"Sun", lastMsg:"New campaign brief ready ðŸ“Ž", typing:false,
     messages:[
       {id:1,text:"Q4 campaign planning started!",sent:false,time:"Sun",status:"read"},
-      {id:2,text:"New campaign brief ready 📎",sent:false,time:"Sun",status:"read"},
+      {id:2,text:"New campaign brief ready ðŸ“Ž",sent:false,time:"Sun",status:"read"},
     ]},
 ];
 
 const PROJECTS = [
-  {slug:"moneyart",  name:"MoneyArt",  icon:"💰", role:"Agent"},
-  {slug:"techcorp",  name:"TechCorp",  icon:"🖥️", role:"Admin"},
-  {slug:"retailhub", name:"RetailHub", icon:"🛒", role:"Agent"},
+  {slug:"moneyart",  name:"MoneyArt",  icon:"ðŸ’°", role:"Agent"},
+  {slug:"techcorp",  name:"TechCorp",  icon:"ðŸ–¥ï¸", role:"Admin"},
+  {slug:"retailhub", name:"RetailHub", icon:"ðŸ›’", role:"Agent"},
 ];
 
 const REPLIES = [
-  "Got it! 👍","Sure thing!","I'll check and get back to you.",
-  "Sounds good!","On it 🚀","Thanks!","Will do ✅","Let me look into this.","Perfect! 🙌",
+  "Got it! ðŸ‘","Sure thing!","I'll check and get back to you.",
+  "Sounds good!","On it ðŸš€","Thanks!","Will do âœ…","Let me look into this.","Perfect! ðŸ™Œ",
 ];
 
-/* ════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    TEXTZY LOGO
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const Logo = ({ size=32 }) => (
   <svg width={size} height={size} viewBox="0 0 40 40" fill="none">
     <rect width="40" height="40" rx="10" fill="#F97316"/>
@@ -218,9 +256,9 @@ const Logo = ({ size=32 }) => (
   </svg>
 );
 
-/* ════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    ICONS
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const I = {
   Send:    ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>,
   Mic:     ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>,
@@ -240,9 +278,9 @@ const I = {
   Device:  ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>,
 };
 
-/* ════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    AVATAR
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const Avatar = ({ name, color, size=46, online=false }) => (
   <div style={{ position:"relative", flexShrink:0 }}>
     <div style={{
@@ -264,9 +302,9 @@ const Avatar = ({ name, color, size=46, online=false }) => (
   </div>
 );
 
-/* ════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    TYPING INDICATOR
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const Typing = () => (
   <div style={{ display:"flex", gap:5, alignItems:"center", padding:"11px 15px" }}>
     {[0,1,2].map(i=>(
@@ -279,9 +317,9 @@ const Typing = () => (
   </div>
 );
 
-/* ════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    QR CODE (decorative)
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const QRCode = ({ size=175 }) => {
   const cells=21, cs=size/cells;
   const grid = Array.from({length:cells},(_,r)=>
@@ -311,9 +349,9 @@ const QRCode = ({ size=175 }) => {
   );
 };
 
-/* ════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    SCAN ANIMATION (camera view)
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const Scanner = ({ onDone }) => {
   const [pct, setPct]   = useState(0);
   const [done, setDone] = useState(false);
@@ -512,7 +550,7 @@ const Scanner = ({ onDone }) => {
             </svg>
           </div>
           <p style={{ color:"#fff", fontWeight:700, fontSize:16, margin:0 }}>QR Detected!</p>
-          <p style={{ color:"rgba(255,255,255,0.7)", fontSize:13, margin:0 }}>Logging you in…</p>
+          <p style={{ color:"rgba(255,255,255,0.7)", fontSize:13, margin:0 }}>Logging you inâ€¦</p>
         </div>
       )}
 
@@ -539,14 +577,15 @@ const Scanner = ({ onDone }) => {
   );
 };
 
-/* ══════════════════════════════════════
-   SCREEN 1 — MOBILE LOGIN
-   Orange gradient bg · no black
-══════════════════════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   SCREEN 1 â€” MOBILE LOGIN
+   Orange gradient bg Â· no black
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const LoginScreen = ({ onLogin }) => {
   const [tab,setTab]     = useState("password");
   const [email,setEmail] = useState("admin@textzy.io");
   const [pass,setPass]   = useState("password123");
+  const [showPass,setShowPass] = useState(false);
   const [loading,setLoad]= useState(false);
   const [err,setErr]     = useState("");
 
@@ -571,33 +610,34 @@ const LoginScreen = ({ onLogin }) => {
     }}>
       {/* top hero */}
       <div style={{
-        flex:1, display:"flex", flexDirection:"column",
+        flex:"0 0 auto", display:"flex", flexDirection:"column",
         alignItems:"center", justifyContent:"center",
-        padding:"48px 32px 24px",
+        padding:"24px 24px 12px",
       }}>
         <div style={{
-          width:80, height:80, borderRadius:22,
+          width:62, height:62, borderRadius:18,
           background:"rgba(255,255,255,0.18)",
           backdropFilter:"blur(8px)",
           display:"flex", alignItems:"center", justifyContent:"center",
-          marginBottom:16,
+          marginBottom:10,
           boxShadow:"0 8px 32px rgba(0,0,0,0.12)",
         }}>
-          <Logo size={48}/>
+          <Logo size={38}/>
         </div>
-        <h1 style={{ margin:0, fontSize:32, fontWeight:800, color:"#fff", letterSpacing:"-0.5px" }}>Textzy</h1>
-        <p style={{ margin:"6px 0 0", color:"rgba(255,255,255,0.75)", fontSize:14 }}>WhatsApp Business Inbox</p>
+        <h1 style={{ margin:0, fontSize:28, fontWeight:800, color:"#fff", letterSpacing:"-0.5px" }}>Textzy</h1>
+        <p style={{ margin:"4px 0 0", color:"rgba(255,255,255,0.75)", fontSize:14 }}>Business Inbox</p>
       </div>
 
       {/* card */}
       <div style={{
+        flex:1,
         background:"#fff", borderRadius:"28px 28px 0 0",
-        padding:"28px 24px 40px",
+        padding:"22px 24px 36px",
         boxShadow:"0 -8px 40px rgba(0,0,0,0.12)",
       }}>
         {/* tab switcher */}
         <div style={{ display:"flex", background:C.panelBg, borderRadius:12, padding:4, marginBottom:22 }}>
-          {[["password","🔑  Password"],["qr","📷  Scan QR"]].map(([m,label])=>(
+          {[["password","ðŸ”‘  Password"],["qr","ðŸ“·  Scan QR"]].map(([m,label])=>(
             <button key={m} onClick={()=>{setTab(m);setErr("");}} style={{
               flex:1, padding:"10px 0", border:"none", borderRadius:9,
               background:tab===m?"#fff":"transparent",
@@ -612,17 +652,35 @@ const LoginScreen = ({ onLogin }) => {
 
         {tab==="password" ? (
           <>
-            {[
-              {l:"Email",v:email,s:setEmail,t:"email",p:"you@company.com"},
-              {l:"Password",v:pass,s:setPass,t:"password",p:"••••••••"},
-            ].map(f=>(
-              <div key={f.l} style={{ marginBottom:14 }}>
-                <label style={{ display:"block",fontSize:11,fontWeight:700,color:C.textSub,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.7px" }}>{f.l}</label>
-                <input type={f.t} value={f.v} placeholder={f.p}
-                  onChange={e=>{f.s(e.target.value);setErr("");}}
+            <div style={{ marginBottom:14 }}>
+              <label style={{ display:"block",fontSize:11,fontWeight:700,color:C.textSub,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.7px" }}>Email</label>
+              <input
+                type="email"
+                value={email}
+                placeholder="you@company.com"
+                onChange={e=>{setEmail(e.target.value);setErr("");}}
+                onKeyDown={e=>e.key==="Enter"&&submit()}
+                style={{
+                  width:"100%", padding:"13px 15px", borderRadius:12, boxSizing:"border-box",
+                  border:`1.5px solid ${C.divider}`, fontSize:15, color:C.textMain,
+                  outline:"none", fontFamily:"inherit", transition:"border-color 0.2s",
+                  background:"#fff",
+                }}
+                onFocus={e=>e.target.style.borderColor=C.orange}
+                onBlur={e=>e.target.style.borderColor=C.divider}
+              />
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <label style={{ display:"block",fontSize:11,fontWeight:700,color:C.textSub,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.7px" }}>Password</label>
+              <div style={{ position:"relative" }}>
+                <input
+                  type={showPass ? "text" : "password"}
+                  value={pass}
+                  placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                  onChange={e=>{setPass(e.target.value);setErr("");}}
                   onKeyDown={e=>e.key==="Enter"&&submit()}
                   style={{
-                    width:"100%", padding:"13px 15px", borderRadius:12, boxSizing:"border-box",
+                    width:"100%", padding:"13px 72px 13px 15px", borderRadius:12, boxSizing:"border-box",
                     border:`1.5px solid ${C.divider}`, fontSize:15, color:C.textMain,
                     outline:"none", fontFamily:"inherit", transition:"border-color 0.2s",
                     background:"#fff",
@@ -630,8 +688,19 @@ const LoginScreen = ({ onLogin }) => {
                   onFocus={e=>e.target.style.borderColor=C.orange}
                   onBlur={e=>e.target.style.borderColor=C.divider}
                 />
+                <button
+                  type="button"
+                  onClick={()=>setShowPass(v=>!v)}
+                  style={{
+                    position:"absolute", right:10, top:"50%", transform:"translateY(-50%)",
+                    border:"none", background:"transparent", color:C.textSub, cursor:"pointer",
+                    fontSize:12, fontWeight:700, padding:"4px 6px",
+                  }}
+                >
+                  {showPass ? "Hide" : "View"}
+                </button>
               </div>
-            ))}
+            </div>
             {err&&<p style={{ color:C.danger,fontSize:13,marginBottom:10,textAlign:"center" }}>{err}</p>}
             <button onClick={submit} disabled={loading} style={{
               width:"100%", padding:15, borderRadius:14, border:"none",
@@ -643,11 +712,11 @@ const LoginScreen = ({ onLogin }) => {
               opacity:loading?0.85:1, transition:"opacity 0.2s",
             }}>
               {loading
-                ? <><div style={{ width:20,height:20,border:"2.5px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin 0.7s linear infinite" }}/>Signing in…</>
-                : "Sign In →"}
+                ? <><div style={{ width:20,height:20,border:"2.5px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin 0.7s linear infinite" }}/>Signing inâ€¦</>
+                : "Sign In â†’"}
             </button>
             <p style={{ textAlign:"center",marginTop:16,fontSize:12,color:C.textMuted }}>
-              🔒 Secure session · HTTPS only
+              ðŸ”’ Secure session Â· HTTPS only
             </p>
           </>
         ) : (
@@ -657,23 +726,23 @@ const LoginScreen = ({ onLogin }) => {
               background:C.orangePale, borderRadius:12, padding:"11px 14px",
               marginBottom:16, display:"flex", alignItems:"center", gap:10,
             }}>
-              <span style={{ fontSize:20 }}>🖥️</span>
+              <span style={{ fontSize:20 }}>ðŸ–¥ï¸</span>
               <div>
                 <div style={{ fontWeight:700,fontSize:13,color:C.textMain }}>Scan from your computer</div>
-                <div style={{ fontSize:11,color:C.textSub,marginTop:1 }}>Textzy web → Link Mobile → QR appears</div>
+                <div style={{ fontSize:11,color:C.textSub,marginTop:1 }}>Textzy web â†’ Link Mobile â†’ QR appears</div>
               </div>
             </div>
             <Scanner onDone={async (raw)=>{
               try {
-                const pairingToken = parsePairingToken(raw) || window.prompt("Paste pairing token (fallback)");
-                if (!pairingToken) throw new Error("Pairing token is required.");
+                const pairingToken = parsePairingToken(raw);
+                if (!pairingToken) throw new Error("Could not read pairing token from QR. Please regenerate QR and scan again.");
                 await onLogin({ mode: "qr", pairingToken });
               } catch (e) {
                 setErr(e?.message || "QR login failed.");
               }
             }}/>
             <p style={{ textAlign:"center",marginTop:12,fontSize:12,color:C.textMuted }}>
-              🔒 One-time token · auto-expires in 3 min
+              ðŸ”’ One-time token Â· auto-expires in 3 min
             </p>
           </div>
         )}
@@ -683,9 +752,9 @@ const LoginScreen = ({ onLogin }) => {
   );
 };
 
-/* ══════════════════════════════════════
-   SCREEN 2 — PROJECT PICKER
-══════════════════════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   SCREEN 2 â€” PROJECT PICKER
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const ProjectPicker = ({ projects, onSelect }) => {
   const [sel, setSel] = useState(null);
   const rows = projects?.length ? projects : PROJECTS;
@@ -714,7 +783,7 @@ const ProjectPicker = ({ projects, onSelect }) => {
               <div style={{ width:46,height:46,borderRadius:12,background:a?C.orangeLight2:C.panelBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0 }}>{p.icon}</div>
               <div style={{ flex:1 }}>
                 <div style={{ fontWeight:700,fontSize:15,color:C.textMain }}>{p.name}</div>
-                <div style={{ fontSize:12,color:C.textSub,marginTop:2 }}>{p.role} · /{p.slug}</div>
+                <div style={{ fontSize:12,color:C.textSub,marginTop:2 }}>{p.role} Â· /{p.slug}</div>
               </div>
               {a&&<div style={{ width:24,height:24,borderRadius:"50%",background:C.orange,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -728,15 +797,15 @@ const ProjectPicker = ({ projects, onSelect }) => {
           color:sel?"#fff":C.textMuted, fontWeight:700, fontSize:16,
           cursor:sel?"pointer":"not-allowed", fontFamily:"inherit",
           boxShadow:sel?`0 6px 24px ${C.orange}55`:"none", transition:"all 0.2s",
-        }}>Continue →</button>
+        }}>Continue â†’</button>
       </div>
     </div>
   );
 };
 
-/* ══════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    MAIN MOBILE APP
-══════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 export default function TextzyMobile() {
   const restored = (() => {
     try {
@@ -760,12 +829,22 @@ export default function TextzyMobile() {
   const [search, setSearch]   = useState("");
   const [tab, setTab]         = useState("All");
   const [view, setView]       = useState("list"); // "list" | "chat" | "profile"
+  const [showMainMenu, setShowMainMenu] = useState(false);
+  const [showChatMenu, setShowChatMenu] = useState(false);
+  const [starred, setStarred] = useState({});
   const msgEnd  = useRef(null);
   const inputRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const active       = contacts.find(c=>c.id===activeId);
   const unreadCount  = contacts.filter(c=>c.unread>0).length;
   const authCtx = { token: session.accessToken, csrfToken: session.csrfToken, tenantSlug: session.tenantSlug };
+  const activeRecipient = (() => {
+    const raw = String(active?.customerPhone || active?.phone || "").trim();
+    if (raw) return raw;
+    const fromName = String(active?.name || "").replace(/[^\d+]/g, "");
+    return fromName.length >= 8 ? fromName : "";
+  })();
 
   useEffect(()=>{ msgEnd.current?.scrollIntoView({behavior:"smooth"}); },
     [active?.messages?.length, active?.typing]);
@@ -788,7 +867,7 @@ export default function TextzyMobile() {
       slug: p.slug || p.Slug,
       name: p.name || p.Name,
       role: p.role || p.Role || "agent",
-      icon: ["💰", "🖥️", "🛒", "🏢", "🧩"][idx % 5],
+      icon: ["ðŸ’°", "ðŸ–¥ï¸", "ðŸ›’", "ðŸ¢", "ðŸ§©"][idx % 5],
     }));
     setProjects(mapped);
     return mapped;
@@ -816,6 +895,16 @@ export default function TextzyMobile() {
     setCons((prev) => prev.map((c) => (c.id === conversationId ? { ...c, messages: mapped } : c)));
   };
 
+  const loadTeamMembers = async (ctx = authCtx) => {
+    const { res } = await apiFetch("/api/auth/team-members", {
+      token: ctx.token,
+      tenantSlug: ctx.tenantSlug,
+    });
+    if (!res.ok) return [];
+    const rows = await res.json().catch(() => []);
+    return Array.isArray(rows) ? rows : [];
+  };
+
   const handleLogin = async (payload) => {
     if (payload?.mode === "qr") {
       const { res, nextTokenHeader, nextCsrfHeader } = await apiFetch("/api/public/mobile/pair/exchange", {
@@ -834,14 +923,28 @@ export default function TextzyMobile() {
       const json = await res.json().catch(() => ({}));
       const accessToken = json.accessToken || json.AccessToken || nextTokenHeader;
       const csrfToken = resolveCsrf(json.csrfToken || json.CsrfToken || nextCsrfHeader);
-      const tenantSlug = json.tenantSlug || json.TenantSlug || "";
+      const tenantSlug =
+        json.tenantSlug ||
+        json.TenantSlug ||
+        json.projectSlug ||
+        json.ProjectSlug ||
+        json.project?.slug ||
+        json.Project?.Slug ||
+        json.tenant?.slug ||
+        json.Tenant?.Slug ||
+        "";
       const loggedUser = json.user || json.User || { email: "mobile@textzy.io" };
       const nextSession = { accessToken, csrfToken, tenantSlug };
       setSession(nextSession);
       setUser(loggedUser);
-      const projList = await loadProjects(accessToken);
-      if (tenantSlug && projList.length > 0) {
-        const selected = projList.find((p) => p.slug === tenantSlug) || projList[0];
+      const projList = await loadProjects(accessToken).catch(() => []);
+      if (tenantSlug) {
+        const selected = projList.find((p) => String(p.slug).toLowerCase() === String(tenantSlug).toLowerCase()) || {
+          slug: tenantSlug,
+          name: tenantSlug.charAt(0).toUpperCase() + tenantSlug.slice(1),
+          role: "agent",
+          icon: "ðŸ’¼",
+        };
         setProject(selected);
         setScreen("app");
         persistSession(nextSession, loggedUser, selected);
@@ -930,29 +1033,186 @@ export default function TextzyMobile() {
     setTimeout(()=>inputRef.current?.focus(),150);
   };
 
+  const handleEmoji = () => {
+    setInput((prev) => `${prev}🙂`);
+    setTimeout(()=>inputRef.current?.focus(), 60);
+  };
+
+  const handleAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleMicInput = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      window.alert("Voice input is not supported on this device.");
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-US";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = (e) => {
+      const spoken = e?.results?.[0]?.[0]?.transcript || "";
+      if (spoken) setInput((prev) => `${prev}${prev ? " " : ""}${spoken}`);
+      setTimeout(()=>inputRef.current?.focus(), 60);
+    };
+    rec.onerror = () => {
+      window.alert("Could not capture voice. Please try again.");
+    };
+    rec.start();
+  };
+
+  const handleAttachmentSelected = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!activeId) {
+      window.alert("Open a chat before attaching a file.");
+      return;
+    }
+    if (!activeRecipient) {
+      window.alert("Recipient phone is missing for this conversation.");
+      return;
+    }
+    const formData = new FormData();
+    formData.append("recipient", activeRecipient);
+    formData.append("file", file);
+    if (file.type.startsWith("image/")) formData.append("mediaType", "image");
+    else if (file.type.startsWith("video/")) formData.append("mediaType", "video");
+    else if (file.type.startsWith("audio/")) formData.append("mediaType", "audio");
+    else formData.append("mediaType", "document");
+
+    const { res } = await apiFetch("/api/messages/upload-whatsapp-media", {
+      method: "POST",
+      token: authCtx.token,
+      tenantSlug: authCtx.tenantSlug,
+      csrfToken: authCtx.csrfToken,
+      body: formData,
+      extraHeaders: { "Idempotency-Key": idempotencyKey() },
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      window.alert(err || "Attachment send failed.");
+      return;
+    }
+    await loadMessages(activeId);
+    await loadConversations();
+  };
+
   const send = async () => {
     const txt = input.trim();
     if (!txt||!activeId) return;
+    if (!activeRecipient) {
+      window.alert("Recipient phone is missing for this conversation.");
+      return;
+    }
     const m = {id:Date.now(),text:txt,sent:true,time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),status:"sent"};
     setCons(p=>p.map(c=>c.id===activeId?{...c,messages:[...c.messages,m],lastMsg:txt,time:m.time,unread:0}:c));
     setInput("");
     try {
-      await apiFetch("/api/messages/send", {
+      const { res } = await apiFetch("/api/messages/send", {
         method: "POST",
         token: authCtx.token,
         tenantSlug: authCtx.tenantSlug,
         csrfToken: authCtx.csrfToken,
         body: {
-          recipient: active?.customerPhone || "",
+          recipient: activeRecipient,
           body: txt,
           channel: "whatsapp",
           idempotencyKey: idempotencyKey(),
         },
       });
+      if (!res.ok) {
+        const err = await res.text();
+        window.alert(err || "Message send failed.");
+        return;
+      }
       await loadMessages(activeId);
       await loadConversations();
-    } catch {
-      // optimistic UI already rendered
+    } catch (e) {
+      window.alert(e?.message || "Message send failed.");
+    }
+  };
+
+  const handleTransferConversation = async () => {
+    if (!activeId) return;
+    const members = await loadTeamMembers();
+    const fallback = window.prompt("Enter assignee name");
+    let picked = null;
+    if (members.length > 0) {
+      picked = members.find((m) => String(m.fullName || m.email || "").toLowerCase() === String(fallback || "").toLowerCase())
+        || members.find((m) => String(m.email || "").toLowerCase() === String(fallback || "").toLowerCase());
+    }
+    const userName = picked?.fullName || picked?.name || fallback || "Agent";
+    const userId = picked?.id || picked?.userId || null;
+    const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/transfer`, {
+      method: "POST",
+      token: authCtx.token,
+      tenantSlug: authCtx.tenantSlug,
+      csrfToken: authCtx.csrfToken,
+      body: { userId, userName },
+    });
+    if (!res.ok) {
+      window.alert((await res.text()) || "Transfer failed");
+      return;
+    }
+    await loadConversations();
+    await loadMessages(activeId);
+    setShowChatMenu(false);
+  };
+
+  const handleSetLabels = async () => {
+    if (!activeId) return;
+    const labelsRaw = window.prompt("Enter labels (comma separated)");
+    if (labelsRaw == null) return;
+    const labels = labelsRaw.split(",").map((x) => x.trim()).filter(Boolean);
+    const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/labels`, {
+      method: "POST",
+      token: authCtx.token,
+      tenantSlug: authCtx.tenantSlug,
+      csrfToken: authCtx.csrfToken,
+      body: { labels },
+    });
+    if (!res.ok) {
+      window.alert((await res.text()) || "Labels update failed");
+      return;
+    }
+    await loadConversations();
+    await loadMessages(activeId);
+    setShowChatMenu(false);
+  };
+
+  const handleNewChat = async () => {
+    const recipient = window.prompt("Enter WhatsApp number (with country code)");
+    if (!recipient) return;
+    const body = window.prompt("Start message") || "Hello";
+    const { res } = await apiFetch("/api/messages/send", {
+      method: "POST",
+      token: authCtx.token,
+      tenantSlug: authCtx.tenantSlug,
+      csrfToken: authCtx.csrfToken,
+      body: {
+        recipient,
+        body,
+        channel: "whatsapp",
+        idempotencyKey: idempotencyKey(),
+      },
+    });
+    if (!res.ok) {
+      window.alert((await res.text()) || "Unable to start chat");
+      return;
+    }
+    await loadConversations();
+  };
+
+  const openProjectSwitch = async () => {
+    setShowMainMenu(false);
+    try {
+      await loadProjects(authCtx.token);
+      setScreen("project");
+    } catch (e) {
+      window.alert(e?.message || "Unable to load projects");
     }
   };
 
@@ -1000,7 +1260,7 @@ export default function TextzyMobile() {
 
   const uname=(user?.email||"User").split("@")[0];
 
-  /* ── PROFILE PANEL ── */
+  /* â”€â”€ PROFILE PANEL â”€â”€ */
   if (view==="profile") return (
     <div style={{ minHeight:"100vh",fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#fff" }}>
       {/* header */}
@@ -1016,23 +1276,34 @@ export default function TextzyMobile() {
         <div>
           <div style={{ color:"#fff",fontWeight:800,fontSize:20 }}>{uname}</div>
           <div style={{ color:"rgba(255,255,255,0.8)",fontSize:13 }}>{user?.email}</div>
-          <div style={{ color:"rgba(255,255,255,0.7)",fontSize:12,marginTop:3 }}>{project?.icon} {project?.name} · {project?.role}</div>
+          <div style={{ color:"rgba(255,255,255,0.7)",fontSize:12,marginTop:3 }}>{project?.icon} {project?.name} Â· {project?.role}</div>
         </div>
       </div>
 
       {/* menu items */}
       <div style={{ padding:"8px 0" }}>
         {[
-          {ic:"⭐",label:"Starred Messages"},
-          {ic:"🏷️",label:"Labels"},
-          {ic:"📱",label:"Linked Devices"},
-          {ic:"⚙️",label:"Settings"},
-          {ic:"🔔",label:"Notifications"},
+          {
+            ic:"⭐",
+            label:"Starred Messages",
+            onClick: ()=>{
+              setView("list");
+              setTab("All");
+              const firstStarredId = Object.keys(starred).find((k)=>starred[k]);
+              if (firstStarredId) setAId(Number(firstStarredId));
+            },
+          },
+          { ic:"🏷️", label:"Labels", onClick: handleSetLabels },
+          { ic:"📱", label:"Linked Devices", onClick: ()=>window.alert("Linked devices screen coming next.") },
+          { ic:"⚙️", label:"Settings", onClick: ()=>window.alert("Settings screen coming next.") },
+          { ic:"🔔", label:"Notifications", onClick: ()=>window.alert("Notifications screen coming next.") },
+          { ic:"💼", label:"Switch Project", onClick: openProjectSwitch },
         ].map((item,i)=>(
           <div key={i} style={{
             display:"flex",alignItems:"center",gap:14,padding:"16px 20px",
             borderBottom:`1px solid ${C.divider}`,cursor:"pointer",
           }}
+            onClick={item.onClick}
             onMouseEnter={e=>e.currentTarget.style.background=C.orangePale}
             onMouseLeave={e=>e.currentTarget.style.background="transparent"}
           >
@@ -1067,7 +1338,7 @@ export default function TextzyMobile() {
     </div>
   );
 
-  /* ── CHAT VIEW ── */
+  /* â”€â”€ CHAT VIEW â”€â”€ */
   if (view==="chat" && active) return (
     <div style={{ height:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Segoe UI',system-ui,sans-serif",background:C.chatBg }}>
       {/* header */}
@@ -1077,6 +1348,7 @@ export default function TextzyMobile() {
         display:"flex",alignItems:"center",gap:10,flexShrink:0,
         boxShadow:"0 2px 12px rgba(30,58,95,0.3)",
         paddingTop:"calc(10px + env(safe-area-inset-top,0px))",
+        position:"relative",
       }}>
         <button onClick={()=>setView("list")} style={{ background:"rgba(255,255,255,0.12)",border:"none",color:"#fff",padding:"7px 9px",borderRadius:10,cursor:"pointer",display:"flex",flexShrink:0 }}>
           <I.Back/>
@@ -1086,7 +1358,7 @@ export default function TextzyMobile() {
           <div style={{ color:"#fff",fontWeight:700,fontSize:15,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{active.name}</div>
           <div style={{ fontSize:12 }}>
             {active.typing
-              ? <span style={{color:C.orangeLight,fontStyle:"italic"}}>typing…</span>
+              ? <span style={{color:C.orangeLight,fontStyle:"italic"}}>typingâ€¦</span>
               : <span style={{color:"rgba(255,255,255,0.65)"}}>{active.online?"Online":"Last seen recently"}</span>}
           </div>
         </div>
@@ -1096,10 +1368,22 @@ export default function TextzyMobile() {
         <button style={{ background:"rgba(255,255,255,0.12)",border:"none",color:"#fff",padding:"8px",borderRadius:10,cursor:"pointer",display:"flex" }}>
           <I.Video/>
         </button>
-        <button style={{ background:"rgba(255,255,255,0.12)",border:"none",color:"#fff",padding:"8px",borderRadius:10,cursor:"pointer",display:"flex" }}>
+        <button onClick={()=>setShowChatMenu(v=>!v)} style={{ background:"rgba(255,255,255,0.12)",border:"none",color:"#fff",padding:"8px",borderRadius:10,cursor:"pointer",display:"flex" }}>
           <I.More/>
         </button>
-      </div>
+            </div>
+      {showChatMenu && (
+        <div style={{ position:"absolute", top:"calc(10px + env(safe-area-inset-top,0px) + 58px)", right:12, zIndex:5, background:"#fff", borderRadius:12, boxShadow:"0 8px 24px rgba(0,0,0,0.2)", overflow:"hidden" }}>
+          {[
+            { label: "Transfer", onClick: handleTransferConversation },
+            { label: "Labels", onClick: handleSetLabels },
+            { label: starred[activeId] ? "Unstar Chat" : "Star Chat", onClick: () => { setStarred((p)=>({ ...p, [activeId]: !p[activeId] })); setShowChatMenu(false);} },
+            { label: "Insert QA", onClick: () => { setInput((p)=> (p ? `${p}\n` : "") + "QA: Thank you for contacting Textzy. How can I assist you today?"); setShowChatMenu(false); setTimeout(()=>inputRef.current?.focus(),80);} },
+          ].map((item)=> (
+            <button key={item.label} onClick={item.onClick} style={{ display:"block", width:"100%", textAlign:"left", background:"#fff", border:"none", padding:"11px 14px", fontSize:14, cursor:"pointer" }}>{item.label}</button>
+          ))}
+        </div>
+      )}
 
       {/* messages */}
       <div style={{
@@ -1146,10 +1430,10 @@ export default function TextzyMobile() {
         boxShadow:"0 -2px 12px rgba(0,0,0,0.06)",
         paddingBottom:"calc(10px + env(safe-area-inset-bottom,0px))",
       }}>
-        <button style={{ background:"none",border:"none",color:C.iconColor,cursor:"pointer",padding:"6px",display:"flex",borderRadius:"50%" }}>
+        <button onClick={handleEmoji} style={{ background:"none",border:"none",color:C.iconColor,cursor:"pointer",padding:"6px",display:"flex",borderRadius:"50%" }}>
           <I.Emoji/>
         </button>
-        <button style={{ background:"none",border:"none",color:C.iconColor,cursor:"pointer",padding:"6px",display:"flex",borderRadius:"50%" }}>
+        <button onClick={handleAttachClick} style={{ background:"none",border:"none",color:C.iconColor,cursor:"pointer",padding:"6px",display:"flex",borderRadius:"50%" }}>
           <I.Attach/>
         </button>
         <div style={{ flex:1,background:C.panelBg,borderRadius:22,padding:"11px 16px",border:`1.5px solid ${C.divider}`,display:"flex",alignItems:"center",transition:"border-color 0.2s" }}
@@ -1159,21 +1443,27 @@ export default function TextzyMobile() {
           <input ref={inputRef} value={input}
             onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()}
-            placeholder="Type a message…"
+            placeholder="Type a messageâ€¦"
             style={{ border:"none",outline:"none",flex:1,fontSize:15,color:C.textMain,background:"transparent",fontFamily:"inherit" }}
           />
         </div>
-        <button onClick={input.trim()?send:undefined} style={{
+        <button onClick={input.trim()?send:handleMicInput} style={{
           width:48,height:48,borderRadius:"50%",border:"none",flexShrink:0,
           background:input.trim()?`linear-gradient(135deg,${C.orange},${C.orangeLight})`:C.divider,
           color:input.trim()?"#fff":C.textSub,
-          cursor:input.trim()?"pointer":"default",
+          cursor:"pointer",
           display:"flex",alignItems:"center",justifyContent:"center",
           boxShadow:input.trim()?`0 4px 16px ${C.orange}55`:"none",
           transition:"all 0.2s",
         }}>
           {input.trim()?<I.Send/>:<I.Mic/>}
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          style={{ display:"none" }}
+          onChange={handleAttachmentSelected}
+        />
       </div>
 
       <style>{`
@@ -1185,7 +1475,7 @@ export default function TextzyMobile() {
     </div>
   );
 
-  /* ── INBOX LIST VIEW ── */
+  /* â”€â”€ INBOX LIST VIEW â”€â”€ */
   return (
     <div style={{ height:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#fff" }}>
       {/* header */}
@@ -1195,6 +1485,7 @@ export default function TextzyMobile() {
         paddingTop:"calc(10px + env(safe-area-inset-top,0px))",
         flexShrink:0,
         boxShadow:"0 2px 16px rgba(249,115,22,0.35)",
+        position:"relative",
       }}>
         <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:12 }}>
           <button onClick={()=>setView("profile")} style={{ background:"none",border:"none",padding:0,cursor:"pointer",flexShrink:0 }}>
@@ -1207,15 +1498,26 @@ export default function TextzyMobile() {
           <button style={{ background:"rgba(255,255,255,0.18)",border:"none",color:"#fff",padding:"8px",borderRadius:10,cursor:"pointer",display:"flex",backdropFilter:"blur(4px)" }}>
             <I.Search/>
           </button>
-          <button style={{ background:"rgba(255,255,255,0.18)",border:"none",color:"#fff",padding:"8px",borderRadius:10,cursor:"pointer",display:"flex",backdropFilter:"blur(4px)" }}>
+          <button onClick={()=>setShowMainMenu(v=>!v)} style={{ background:"rgba(255,255,255,0.18)",border:"none",color:"#fff",padding:"8px",borderRadius:10,cursor:"pointer",display:"flex",backdropFilter:"blur(4px)" }}>
             <I.More/>
           </button>
-        </div>
+                </div>
+        {showMainMenu && (
+          <div style={{ position:"absolute", right:16, top:"calc(10px + env(safe-area-inset-top,0px) + 50px)", zIndex:6, background:"#fff", borderRadius:12, boxShadow:"0 8px 24px rgba(0,0,0,0.18)", overflow:"hidden", minWidth:170 }}>
+            {[
+              { label: "Switch Project", onClick: openProjectSwitch },
+              { label: "Settings", onClick: ()=>{ setShowMainMenu(false); setView("profile"); } },
+              { label: "Notifications", onClick: ()=>{ setShowMainMenu(false); window.alert("Notifications screen coming next."); } },
+            ].map(item => (
+              <button key={item.label} onClick={item.onClick} style={{ display:"block", width:"100%", textAlign:"left", border:"none", background:"#fff", padding:"11px 14px", fontSize:14, cursor:"pointer" }}>{item.label}</button>
+            ))}
+          </div>
+        )}
 
         {/* search bar */}
         <div style={{ display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.22)",borderRadius:12,padding:"9px 14px",backdropFilter:"blur(4px)" }}>
           <span style={{ color:"rgba(255,255,255,0.8)",display:"flex",flexShrink:0 }}><I.Search/></span>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search conversations…"
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search conversationsâ€¦"
             style={{ border:"none",outline:"none",flex:1,fontSize:14,color:"#fff",background:"transparent",fontFamily:"inherit" }}
           />
           {search&&<button onClick={()=>setSearch("")} style={{ background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.7)",padding:0,display:"flex" }}><I.Close/></button>}
@@ -1246,7 +1548,7 @@ export default function TextzyMobile() {
       <div style={{ flex:1,overflowY:"auto" }}>
         {filtered.length===0 ? (
           <div style={{ textAlign:"center",padding:"60px 20px",color:C.textMuted }}>
-            <div style={{ fontSize:44,marginBottom:10 }}>💬</div>
+            <div style={{ fontSize:44,marginBottom:10 }}>ðŸ’¬</div>
             <div style={{ fontSize:15,fontWeight:500 }}>No conversations found</div>
           </div>
         ) : filtered.map((c,i)=>(
@@ -1267,7 +1569,7 @@ export default function TextzyMobile() {
               </div>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
                 <span style={{ fontSize:13,color:C.textSub,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"82%" }}>
-                  {c.typing?<em style={{color:C.orange,fontStyle:"normal",fontWeight:500}}>typing…</em>:c.lastMsg}
+                  {c.typing?<em style={{color:C.orange,fontStyle:"normal",fontWeight:500}}>typingâ€¦</em>:c.lastMsg}
                 </span>
                 {c.unread>0&&(
                   <span style={{ background:C.unread,color:"#fff",borderRadius:20,padding:"2px 8px",fontSize:11,fontWeight:700,flexShrink:0,boxShadow:`0 2px 6px ${C.orange}44` }}>
@@ -1281,7 +1583,7 @@ export default function TextzyMobile() {
       </div>
 
       {/* fab */}
-      <button style={{
+      <button onClick={handleNewChat} style={{
         position:"fixed",bottom:28,right:20,
         width:58,height:58,borderRadius:"50%",border:"none",
         background:`linear-gradient(135deg,${C.orange},${C.orangeLight})`,
@@ -1289,7 +1591,7 @@ export default function TextzyMobile() {
         display:"flex",alignItems:"center",justifyContent:"center",
         boxShadow:`0 6px 24px ${C.orange}66`,
         fontSize:26,fontWeight:300,
-      }}>＋</button>
+      }}>ï¼‹</button>
 
       <style>{`
         *{box-sizing:border-box;margin:0;padding:0;}
@@ -1301,3 +1603,6 @@ export default function TextzyMobile() {
     </div>
   );
 }
+
+
+
