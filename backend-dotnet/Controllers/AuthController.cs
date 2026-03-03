@@ -438,15 +438,23 @@ public class AuthController(
             var client = httpClientFactory.CreateClient();
             var qrBytes = await client.GetByteArrayAsync(qrUrl, ct);
             var qrBase64 = Convert.ToBase64String(qrBytes);
-            var logoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "textzy-logo.png");
+            var logoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "textzy-landing-logo.svg");
             if (!System.IO.File.Exists(logoPath))
-                logoPath = Path.Combine(Directory.GetCurrentDirectory(), "Assets", "textzy-logo.png");
+                logoPath = Path.Combine(Directory.GetCurrentDirectory(), "Assets", "textzy-landing-logo.svg");
+            if (!System.IO.File.Exists(logoPath))
+                logoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "textzy-logo-full.png");
+            if (!System.IO.File.Exists(logoPath))
+                logoPath = Path.Combine(Directory.GetCurrentDirectory(), "Assets", "textzy-logo-full.png");
+
             var logoBase64 = System.IO.File.Exists(logoPath)
                 ? Convert.ToBase64String(await System.IO.File.ReadAllBytesAsync(logoPath, ct))
                 : string.Empty;
+            var logoMime = logoPath.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
+                ? "image/svg+xml"
+                : "image/png";
             var logoOverlay = string.IsNullOrWhiteSpace(logoBase64)
                 ? string.Empty
-                : $"<image x=\"39%\" y=\"39%\" width=\"22%\" height=\"22%\" href=\"data:image/png;base64,{logoBase64}\" preserveAspectRatio=\"xMidYMid meet\" />";
+                : $"<image x=\"31%\" y=\"43%\" width=\"38%\" height=\"14%\" href=\"data:{logoMime};base64,{logoBase64}\" preserveAspectRatio=\"xMidYMid meet\" />";
             var svg = $"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"320\" height=\"320\" viewBox=\"0 0 320 320\"><image x=\"0\" y=\"0\" width=\"320\" height=\"320\" href=\"data:image/png;base64,{qrBase64}\"/>{logoOverlay}</svg>";
             return Content(svg, "image/svg+xml; charset=utf-8");
         }

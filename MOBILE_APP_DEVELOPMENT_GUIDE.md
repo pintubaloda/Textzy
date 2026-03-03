@@ -100,7 +100,11 @@ Web side (logged-in user):
    - `pairingToken` (same token inside payload)
    - `expiresAtUtc`
    - device limit summary
-4. Web renders QR via backend-hosted image endpoint (`GET /api/auth/devices/pair-qr-image?pairingToken=...`) and optional token fallback.
+4. Web renders QR via backend-hosted image endpoint:
+   - `GET /api/auth/devices/pair-qr-image?pairingToken=...`
+   - response content type: `image/svg+xml`
+   - QR includes Textzy logo overlay in center.
+5. Optional fallback: display pairing token text if QR image is unavailable.
 
 App side (scan + login):
 1. App scans QR and parses `qrPayload`.
@@ -122,7 +126,8 @@ Security properties:
 - Device limit enforced per user + tenant.
 - User can revoke devices from web (`DELETE /api/auth/devices/{id}`).
 - No third-party QR JavaScript is executed in browser; QR image is served from backend path.
-- QR image is rendered server-side and delivered from Textzy backend endpoint.
+- QR image is delivered from Textzy backend endpoint.
+- Current implementation: backend generates QR image response using provider-backed raster + server-side logo overlay (no browser-side QR dependency).
 - Textzy logo is embedded in center of QR image payload.
 - Pairing endpoints enforce HTTPS transport.
 
@@ -136,6 +141,10 @@ Security properties:
   - token stored hashed server-side
   - token is short-lived and one-time-use
   - device binding via `installId` hash
+- Pairing QR security:
+  - QR endpoint requires authenticated user context
+  - pair token must belong to same user + tenant and be unconsumed
+  - pair token expiry enforced before QR image is returned
 - Sensitive platform secrets remain server-side only (never sent to app).
 
 ## 7. Inbox APIs for Native App
@@ -253,6 +262,7 @@ Never store WABA/platform secrets in app.
 - Token refresh/re-login path is implemented for 401.
 - QR pairing TTL and device limit are configured in `mobile-app` settings.
 - Connected device revoke flow is tested (web remove -> app relogin required after session expiry/revocation policy).
+- `GET /api/auth/devices/pair-qr-image` works from production backend and returns SVG QR.
 
 ## 14. Recommended Next Upgrade (Permanent Hardening)
 To align with long-term mobile security model:

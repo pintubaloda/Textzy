@@ -3275,11 +3275,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "d:\\Project\\Textzy\\Textzy-main\\backend-dotnet\\Textzy.Api.csproj",
+      "projectUniqueName": "D:\\Project\\Textzy\\Textzy-main\\backend-dotnet\\Textzy.Api.csproj",
       "projectName": "Textzy.Api",
-      "projectPath": "d:\\Project\\Textzy\\Textzy-main\\backend-dotnet\\Textzy.Api.csproj",
+      "projectPath": "D:\\Project\\Textzy\\Textzy-main\\backend-dotnet\\Textzy.Api.csproj",
       "packagesPath": "C:\\Users\\Admin\\.nuget\\packages\\",
-      "outputPath": "d:\\Project\\Textzy\\Textzy-main\\backend-dotnet\\obj\\",
+      "outputPath": "D:\\Project\\Textzy\\Textzy-main\\backend-dotnet\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\Admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
