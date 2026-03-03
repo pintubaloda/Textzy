@@ -82,9 +82,40 @@ const DashboardLayout = () => {
   ];
 
   useEffect(() => {
+    let active = true;
     initializeMe();
-    authProjects().then((res) => setProjects(Array.isArray(res) ? res : [])).catch(() => setProjects([]));
-  }, []);
+    authProjects()
+      .then(async (res) => {
+        if (!active) return;
+        const rows = Array.isArray(res) ? res : [];
+        setProjects(rows);
+        if (!rows.length) return;
+
+        const currentSlug = String(getSession().tenantSlug || "").trim().toLowerCase();
+        const hasCurrent = !!rows.find((p) => String(p?.slug || "").trim().toLowerCase() === currentSlug);
+        if (hasCurrent) return;
+
+        const fallbackSlug = String(rows[0]?.slug || "").trim();
+        if (!fallbackSlug) return;
+        try {
+          setSwitchingProject(fallbackSlug);
+          await switchProject(fallbackSlug);
+          window.location.assign("/dashboard");
+        } catch {
+          clearSession();
+          navigate("/login", { replace: true });
+        } finally {
+          setSwitchingProject("");
+        }
+      })
+      .catch(() => {
+        if (!active) return;
+        setProjects([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [navigate]);
   useEffect(() => {
     let active = true;
     apiGet("/api/inbox/conversations")
@@ -114,6 +145,8 @@ const DashboardLayout = () => {
 
   const handleProjectSwitch = async (slug) => {
     if (!slug || slug === session.tenantSlug) return;
+    const isAllowed = projects.some((p) => p.slug === slug);
+    if (!isAllowed) return;
     try {
       setSwitchingProject(slug);
       await switchProject(slug);
