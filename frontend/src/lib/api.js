@@ -127,7 +127,7 @@ async function baseFetch(path, options = {}, useAuth = true) {
     '/api/payment/webhooks'
   ]
   const requiresTenant = useAuth && !tenantOptionalPrefixes.some((p) => path.startsWith(p))
-  if (s.tenantSlug) headers['X-Tenant-Slug'] = s.tenantSlug
+  if (requiresTenant && s.tenantSlug) headers['X-Tenant-Slug'] = s.tenantSlug
   if (useAuth && s.accessToken && !headers.Authorization) {
     headers.Authorization = `Bearer ${s.accessToken}`
   }

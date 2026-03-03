@@ -7,7 +7,13 @@ public class TenantMiddleware(RequestDelegate next)
 {
     private readonly RequestDelegate _next = next;
 
-    public async Task Invoke(HttpContext context, ControlDbContext db, TenancyContext tenancy, TenantSchemaGuardService schemaGuard)
+    public async Task Invoke(
+        HttpContext context,
+        ControlDbContext db,
+        TenancyContext tenancy,
+        TenantSchemaGuardService schemaGuard,
+        SessionService sessions,
+        AuthCookieService authCookie)
     {
         if (HttpMethods.IsOptions(context.Request.Method))
         {
@@ -28,15 +34,47 @@ public class TenantMiddleware(RequestDelegate next)
             return;
         }
 
-        if (!context.Request.Headers.TryGetValue("X-Tenant-Slug", out var tenantSlug))
+        var header = context.Request.Headers.Authorization.ToString();
+        var bearerToken = header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+            ? header["Bearer ".Length..].Trim()
+            : string.Empty;
+        var cookieToken = authCookie.ReadToken(context) ?? string.Empty;
+        var opaqueToken = !string.IsNullOrWhiteSpace(bearerToken) ? bearerToken : cookieToken;
+
+        // For authenticated requests, session tenant is the single source of truth.
+        // Ignore X-Tenant-Slug to avoid stale/mismatched tenant context.
+        if (!string.IsNullOrWhiteSpace(opaqueToken))
         {
-            var authHeader = context.Request.Headers.Authorization.ToString();
-            var hasCookieSession = context.Request.Cookies.ContainsKey(AuthCookieService.CookieName);
-            if (authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) || hasCookieSession)
+            var session = sessions.Validate(opaqueToken);
+            if (session is not null)
             {
+                var sessionTenant = db.Tenants.FirstOrDefault(t => t.Id == session.TenantId);
+                if (sessionTenant is null)
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    await context.Response.WriteAsync("Session tenant not found.");
+                    return;
+                }
+
+                tenancy.SetTenant(sessionTenant.Id, sessionTenant.Slug, sessionTenant.DataConnectionString);
+                try
+                {
+                    await schemaGuard.EnsureContactEncryptionColumnsAsync(sessionTenant.Id, sessionTenant.DataConnectionString, context.RequestAborted);
+                }
+                catch
+                {
+                    context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                    await context.Response.WriteAsync("Tenant schema initialization failed.");
+                    return;
+                }
+
                 await _next(context);
                 return;
             }
+        }
+
+        if (!context.Request.Headers.TryGetValue("X-Tenant-Slug", out var tenantSlug))
+        {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             await context.Response.WriteAsync("Missing X-Tenant-Slug header.");
             return;
