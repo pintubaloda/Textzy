@@ -365,6 +365,14 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
 
+    // Backward-compatible guard for older control-plane schemas where SessionTokens columns may be missing.
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "UserId" uuid;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "TenantId" uuid;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "TokenHash" text;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "ExpiresAtUtc" timestamp with time zone;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now();""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "RevokedAtUtc" timestamp with time zone NULL;""");
+
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SessionTokens_TokenHash" ON "SessionTokens" ("TokenHash");""");
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "PlatformSettings" (
