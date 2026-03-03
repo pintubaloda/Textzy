@@ -319,12 +319,14 @@ const Scanner = ({ onDone }) => {
   const [done, setDone] = useState(false);
   const [camErr, setCamErr] = useState("");
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
   const rafRef = useRef(0);
 
   useEffect(() => {
     let active = true;
     let stream = null;
     let detector = null;
+    let useJsQrFallback = false;
     const w = window;
 
     const stop = () => {
@@ -346,12 +348,55 @@ const Scanner = ({ onDone }) => {
             setTimeout(() => onDone?.(rawValue), 700);
             return;
           }
+        } else if (useJsQrFallback && video && video.readyState >= 2 && w.jsQR) {
+          const canvas = canvasRef.current;
+          if (canvas) {
+            const size = 360;
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext("2d", { willReadFrequently: true });
+            if (ctx) {
+              ctx.drawImage(video, 0, 0, size, size);
+              const image = ctx.getImageData(0, 0, size, size);
+              const code = w.jsQR(image.data, image.width, image.height, {
+                inversionAttempts: "dontInvert",
+              });
+              if (code?.data) {
+                setDone(true);
+                stop();
+                setTimeout(() => onDone?.(code.data), 700);
+                return;
+              }
+            }
+          }
         }
       } catch {
         // keep scanning
       }
       rafRef.current = requestAnimationFrame(scanLoop);
     };
+
+    const ensureJsQr = () =>
+      new Promise((resolve) => {
+        if (w.jsQR) {
+          resolve(true);
+          return;
+        }
+        const id = "jsqr-lib-script";
+        const existing = document.getElementById(id);
+        if (existing) {
+          existing.addEventListener("load", () => resolve(true), { once: true });
+          existing.addEventListener("error", () => resolve(false), { once: true });
+          return;
+        }
+        const script = document.createElement("script");
+        script.id = id;
+        script.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
+        script.async = true;
+        script.onload = () => resolve(true);
+        script.onerror = () => resolve(false);
+        document.head.appendChild(script);
+      });
 
     const start = async () => {
       try {
@@ -370,10 +415,15 @@ const Scanner = ({ onDone }) => {
 
         if ("BarcodeDetector" in w) {
           detector = new w.BarcodeDetector({ formats: ["qr_code"] });
-          rafRef.current = requestAnimationFrame(scanLoop);
         } else {
-          setCamErr("QR scanner not supported here. Use manual token.");
+          const ok = await ensureJsQr();
+          if (ok && w.jsQR) {
+            useJsQrFallback = true;
+          } else {
+            setCamErr("QR scanner not supported here. Use manual token.");
+          }
         }
+        rafRef.current = requestAnimationFrame(scanLoop);
       } catch {
         setCamErr("Camera permission denied or unavailable.");
       }
@@ -409,6 +459,7 @@ const Scanner = ({ onDone }) => {
           opacity: done ? 0 : 0.55,
         }}
       />
+      <canvas ref={canvasRef} style={{ display: "none" }} />
 
       {/* animated scan line */}
       {!done && (
