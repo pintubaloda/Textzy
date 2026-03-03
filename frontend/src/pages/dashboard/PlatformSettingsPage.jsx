@@ -19,6 +19,7 @@ import {
   updatePlatformBillingPlan,
   archivePlatformBillingPlan,
   getPlatformQueueHealth,
+  getPlatformMobileTelemetry,
   listWabaErrorPolicies,
   upsertWabaErrorPolicy,
   deactivateWabaErrorPolicy,
@@ -87,6 +88,10 @@ const PlatformSettingsPage = () => {
     pairCodeTtlSeconds: "180",
     minSupportedAppVersion: "",
     pairSchemaVersion: "1",
+    androidApkUrl: "",
+    androidVersionName: "",
+    androidVersionCode: "",
+    androidReleaseNotesUrl: "",
     webhookAllowedHosts: "",
     allowedApiPrefixes: "/api/auth\n/api/inbox\n/api/messages\n/hubs/inbox",
     apiCatalog: "/api/auth/login\n/api/auth/refresh\n/api/auth/logout\n/api/auth/me\n/api/auth/projects\n/api/auth/switch-project\n/api/auth/app-bootstrap\n/api/inbox/conversations\n/api/inbox/conversations/{id}/messages\n/api/inbox/conversations/{id}/assign\n/api/inbox/conversations/{id}/transfer\n/api/inbox/conversations/{id}/labels\n/api/inbox/conversations/{id}/notes\n/api/inbox/typing\n/api/inbox/sla\n/api/messages/send\n/api/messages/media/{mediaId}\n/hubs/inbox",
@@ -140,6 +145,8 @@ const PlatformSettingsPage = () => {
   const [requestLogs, setRequestLogs] = useState([]);
   const [wabaWebhookHealth, setWabaWebhookHealth] = useState(null);
   const [wabaTenantProbe, setWabaTenantProbe] = useState(null);
+  const [mobileTelemetryRows, setMobileTelemetryRows] = useState([]);
+  const [mobileTelemetryDays, setMobileTelemetryDays] = useState("1");
   const [requestLogFilters, setRequestLogFilters] = useState({
     tenantId: "",
     method: "",
@@ -212,10 +219,17 @@ const PlatformSettingsPage = () => {
             pairCodeTtlSeconds: values.pairCodeTtlSeconds || "180",
             minSupportedAppVersion: values.minSupportedAppVersion || "",
             pairSchemaVersion: values.pairSchemaVersion || "1",
+            androidApkUrl: values.androidApkUrl || "",
+            androidVersionName: values.androidVersionName || "",
+            androidVersionCode: values.androidVersionCode || "",
+            androidReleaseNotesUrl: values.androidReleaseNotesUrl || "",
             webhookAllowedHosts: values.webhookAllowedHosts || "",
             allowedApiPrefixes: values.allowedApiPrefixes || prev.allowedApiPrefixes,
             apiCatalog: values.apiCatalog || prev.apiCatalog,
           }));
+          const telemetry = await getPlatformMobileTelemetry({ take: 200, days: Number(mobileTelemetryDays || 1) }).catch(() => []);
+          if (!active) return;
+          setMobileTelemetryRows(telemetry || []);
         } else if (tab === "payment-gateway") {
           const res = await getPlatformSettings("payment-gateway");
           const values = res?.values || {};
@@ -356,6 +370,7 @@ const PlatformSettingsPage = () => {
     requestLogFilters.statusCode,
     requestLogFilters.pathContains,
     requestLogFilters.limit,
+    mobileTelemetryDays,
   ]);
 
   return (
@@ -452,6 +467,61 @@ const PlatformSettingsPage = () => {
               }}>
                 {exportingSql ? "Exporting..." : "Export SQL Backup"}
               </Button>
+            </div>
+            <div className="md:col-span-2 space-y-2 rounded-lg border border-slate-200 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">Daily Mobile Telemetry</p>
+                  <p className="text-xs text-slate-500">Operational telemetry from mobile app users (non-invasive).</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    className="w-[90px]"
+                    type="number"
+                    min="1"
+                    max="30"
+                    value={mobileTelemetryDays}
+                    onChange={(e) => setMobileTelemetryDays(e.target.value)}
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      setMobileTelemetryRows(await getPlatformMobileTelemetry({ take: 200, days: Number(mobileTelemetryDays || 1) }).catch(() => []));
+                    }}
+                  >
+                    Refresh
+                  </Button>
+                </div>
+              </div>
+              <div className="max-h-[320px] overflow-auto rounded border border-slate-200">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-2 py-1 text-left">Time (UTC)</th>
+                      <th className="px-2 py-1 text-left">User</th>
+                      <th className="px-2 py-1 text-left">Event</th>
+                      <th className="px-2 py-1 text-left">Device</th>
+                      <th className="px-2 py-1 text-left">Data</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(mobileTelemetryRows || []).map((r) => (
+                      <tr key={r.id} className="border-t border-slate-100 align-top">
+                        <td className="px-2 py-1 whitespace-nowrap">{r.eventAtUtc || "-"}</td>
+                        <td className="px-2 py-1">{r.userEmail || "-"}</td>
+                        <td className="px-2 py-1">{r.eventType || "-"}</td>
+                        <td className="px-2 py-1">{r.deviceId || "-"}</td>
+                        <td className="px-2 py-1 break-all">{r.dataJson || "{}"}</td>
+                      </tr>
+                    ))}
+                    {(!mobileTelemetryRows || mobileTelemetryRows.length === 0) && (
+                      <tr>
+                        <td className="px-2 py-3 text-slate-500" colSpan={5}>No telemetry data available.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -721,6 +791,38 @@ const PlatformSettingsPage = () => {
                 onChange={(e) => setAppConfig((p) => ({ ...p, pairSchemaVersion: e.target.value }))}
               />
             </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Android APK URL (public download)</Label>
+              <Input
+                placeholder="https://your-cdn/textzy-android-latest.apk"
+                value={appConfig.androidApkUrl}
+                onChange={(e) => setAppConfig((p) => ({ ...p, androidApkUrl: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Android Version Name</Label>
+              <Input
+                placeholder="1.0.0"
+                value={appConfig.androidVersionName}
+                onChange={(e) => setAppConfig((p) => ({ ...p, androidVersionName: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Android Version Code</Label>
+              <Input
+                placeholder="1"
+                value={appConfig.androidVersionCode}
+                onChange={(e) => setAppConfig((p) => ({ ...p, androidVersionCode: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Android Release Notes URL</Label>
+              <Input
+                placeholder="https://your-site/releases/android"
+                value={appConfig.androidReleaseNotesUrl}
+                onChange={(e) => setAppConfig((p) => ({ ...p, androidReleaseNotesUrl: e.target.value }))}
+              />
+            </div>
             <div className="md:col-span-2 flex gap-2">
               <Button
                 className="bg-orange-500 hover:bg-orange-600"
@@ -741,6 +843,10 @@ const PlatformSettingsPage = () => {
                       pairCodeTtlSeconds: appConfig.pairCodeTtlSeconds || "180",
                       minSupportedAppVersion: appConfig.minSupportedAppVersion || "",
                       pairSchemaVersion: appConfig.pairSchemaVersion || "1",
+                      androidApkUrl: appConfig.androidApkUrl || "",
+                      androidVersionName: appConfig.androidVersionName || "",
+                      androidVersionCode: appConfig.androidVersionCode || "",
+                      androidReleaseNotesUrl: appConfig.androidReleaseNotesUrl || "",
                       webhookAllowedHosts: appConfig.webhookAllowedHosts || "",
                       allowedApiPrefixes: appConfig.allowedApiPrefixes || "",
                       apiCatalog: appConfig.apiCatalog || "",

@@ -328,6 +328,19 @@ export async function checkApiHealth() {
   return true
 }
 
+export async function getPublicMobileDownloadInfo() {
+  const res = await fetch(`${API_BASE}/api/public/mobile/download`, {
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store'
+  })
+  if (!res.ok) {
+    const msg = await readErrorMessage(res, 'Failed to load mobile download info')
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
 export async function authAcceptInvite({ token, fullName, password }) {
   const res = await fetch(`${API_BASE}/api/auth/accept-invite`, {
     method: 'POST',
@@ -527,6 +540,13 @@ export async function getPlatformRequestLogs({ tenantId = "", method = "", statu
 
 export async function getPlatformQueueHealth() {
   return apiGet('/api/platform/queue-health')
+}
+
+export async function getPlatformMobileTelemetry({ take = 200, days = 1 } = {}) {
+  const q = new URLSearchParams()
+  q.set("take", String(take))
+  q.set("days", String(days))
+  return apiGet(`/api/platform/mobile-telemetry?${q.toString()}`)
 }
 
 export async function getPlatformSecuritySignals({ status = "open", limit = 100 } = {}) {

@@ -562,6 +562,21 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_MobilePairingRequests_Expiry" ON "MobilePairingRequests" ("ExpiresAtUtc");""");
 
     db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "MobileTelemetryEvents" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NOT NULL,
+            "UserId" uuid NOT NULL,
+            "DeviceId" uuid NULL,
+            "EventType" text NOT NULL DEFAULT '',
+            "DataJson" text NOT NULL DEFAULT '{}',
+            "EventAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+            "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now()
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_MobileTelemetryEvents_Tenant_EventAt" ON "MobileTelemetryEvents" ("TenantId","EventAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_MobileTelemetryEvents_User_EventAt" ON "MobileTelemetryEvents" ("UserId","EventAtUtc");""");
+
+    db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "TeamInvitations" (
             "Id" uuid PRIMARY KEY,
             "TenantId" uuid NOT NULL,

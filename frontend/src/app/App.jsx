@@ -15,6 +15,7 @@ import SmsFlowsPage from '../pages/modules/sms/SmsFlowsPage'
 import SmsBuilderPage from '../pages/modules/sms/SmsBuilderPage'
 import SmsInputsPage from '../pages/modules/sms/SmsInputsPage'
 import SmsFramesPage from '../pages/modules/sms/SmsFramesPage'
+import TextzyApp from '../textzy-app'
 
 const R = {
   all: ['owner', 'admin', 'manager', 'support', 'marketing', 'finance', 'super_admin'],
@@ -29,6 +30,7 @@ export default function App() {
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/unauthorized" element={<UnauthorizedPage />} />
+      <Route path="/desktop" element={<TextzyApp />} />
 
       <Route path="/modules/waba/dashboard" element={<ProtectedRoute allowRoles={R.all}><WabaDashboardPage /></ProtectedRoute>} />
       <Route path="/modules/waba/templates" element={<ProtectedRoute allowRoles={R.all}><WabaTemplatesPage /></ProtectedRoute>} />

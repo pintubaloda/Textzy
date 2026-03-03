@@ -147,6 +147,41 @@ Security properties:
   - pair token expiry enforced before QR image is returned
 - Sensitive platform secrets remain server-side only (never sent to app).
 
+## 6D. First-Time Mobile Login Policy
+- First-time mobile login supports two modes:
+  - `Email + Password` (default onboarding path)
+  - `QR Pair Login` (only when user is already logged in on web/desktop)
+- Recommended UX:
+  1. Show `Email Login` and `Scan QR` buttons on first screen.
+  2. If login with email/password succeeds: fetch projects and force project selection.
+  3. If scan QR succeeds: call pair exchange and continue with returned tenant session.
+- If user has exactly one project after login, app may auto-switch that project.
+
+## 6E. Permissions Model (Feature-Based Runtime)
+- Do not ask all permissions on app startup.
+- Ask permission only when user uses a related feature:
+  - Camera: QR scan / camera capture
+  - Microphone: voice message recording
+  - Media/Storage: attach image/video/file
+  - Location: only when user taps `Share Location`
+- If permission denied, show fallback UX (text chat still works).
+
+## 6F. Telemetry Policy (Operational, Non-Invasive)
+- Telemetry is for reliability and support diagnostics only.
+- Use app `installId` (app-generated), not IMEI.
+- Allowed telemetry examples:
+  - login success/failure
+  - app version / os version / device model
+  - API latency / error code summary
+  - crash summary
+- Not allowed by default:
+  - continuous GPS tracking
+  - covert background surveillance
+  - IMEI/MSISDN harvesting without explicit legal basis and consent
+- Recommended cadence:
+  - send batched telemetry daily or on app open
+  - keep data retention policy (e.g., 30-90 days)
+
 ## 7. Inbox APIs for Native App
 Base: `/api/inbox`
 - `GET /conversations?take=100`

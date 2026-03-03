@@ -5,15 +5,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { MessageSquare, Eye, EyeOff, ArrowRight } from "lucide-react";
+import { MessageSquare, Eye, EyeOff, ArrowRight, Download } from "lucide-react";
 import { toast } from "sonner";
-import { authLogin, checkApiHealth, initializeMe } from "@/lib/api";
+import { authLogin, checkApiHealth, getPublicMobileDownloadInfo, initializeMe } from "@/lib/api";
 
 const LoginPage = () => {
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [healthChecked, setHealthChecked] = useState(false);
+  const [apkInfo, setApkInfo] = useState(null);
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -53,6 +54,9 @@ const LoginPage = () => {
     checkApiHealth().catch((err) => {
       toast.error(err?.message || "Backend health check failed. Verify API_BASE/env.js.");
     });
+    getPublicMobileDownloadInfo()
+      .then((data) => setApkInfo(data || null))
+      .catch(() => {});
   }, [healthChecked]);
 
   return (
@@ -182,6 +186,29 @@ const LoginPage = () => {
                   Sign up for free
                 </Link>
               </p>
+
+              {apkInfo?.enabled && apkInfo?.apkUrl && (
+                <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">Android App</p>
+                      <p className="text-xs text-slate-600">
+                        {apkInfo.versionName ? `Version ${apkInfo.versionName}` : "Download latest APK"}
+                      </p>
+                    </div>
+                    <a
+                      href={apkInfo.apkUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
+                      data-testid="download-android-apk-btn"
+                    >
+                      <Download className="h-4 w-4" />
+                      Download APK
+                    </a>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
