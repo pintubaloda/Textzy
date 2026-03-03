@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Textzy.Api.Data;
+using Textzy.Api.DTOs;
 using Textzy.Api.Models;
 using WebPush;
 
@@ -1163,6 +1164,9 @@ public class WabaWebhookWorker(
         TriggerInboundContext inbound,
         CancellationToken ct)
     {
+        if (await TryAutoHandoffAsync(sp, controlDb, tenantDb, tenantId, phoneNumberId, inbound, ct))
+            return;
+
         var flows = await tenantDb.AutomationFlows
             .AsNoTracking()
             .Where(x => x.TenantId == tenantId && x.IsActive && (x.PublishedVersionId != null || x.CurrentVersionId != null))
@@ -1210,6 +1214,7 @@ public class WabaWebhookWorker(
 
         var tenancy = sp.GetRequiredService<TenancyContext>();
         tenancy.SetTenant(tenantId, tenantSlug, tenantConnectionString);
+        var anyMatchedFlow = false;
 
         foreach (var flow in flows)
         {
@@ -1320,6 +1325,7 @@ public class WabaWebhookWorker(
                 CreatedAtUtc = DateTime.UtcNow
             });
             await controlDb.SaveChangesAsync(ct);
+            anyMatchedFlow = true;
 
             var idempotencyKey = $"auto:{flow.Id}:{inbound.MessageId}";
             var existing = await tenantDb.AutomationRuns
@@ -1361,6 +1367,192 @@ public class WabaWebhookWorker(
                 ResumeSourceNodeId = resumeSourceNodeId
             }, ct);
             await tenantDb.SaveChangesAsync(ct);
+        }
+
+        if (!anyMatchedFlow && !inbound.IsInteractiveReply)
+        {
+            await TryFaqAutoReplyAsync(sp, controlDb, tenantDb, tenantId, phoneNumberId, inbound, ct);
+        }
+    }
+
+    private async Task<bool> TryAutoHandoffAsync(
+        IServiceProvider sp,
+        ControlDbContext controlDb,
+        TenantDbContext tenantDb,
+        Guid tenantId,
+        string phoneNumberId,
+        TriggerInboundContext inbound,
+        CancellationToken ct)
+    {
+        var normalized = NormalizeMatchText(NormalizeInboundMessageText(inbound.MessageText));
+        if (!ContainsHandoffIntent(normalized)) return false;
+
+        var conversation = await tenantDb.Set<Conversation>()
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.CustomerPhone == inbound.From, ct);
+        if (conversation is not null)
+        {
+            conversation.Status = "Open";
+            conversation.AssignedUserId = string.Empty;
+            conversation.AssignedUserName = string.Empty;
+            conversation.LabelsCsv = MergeLabels(conversation.LabelsCsv, "needs_human");
+            conversation.LastMessageAtUtc = DateTime.UtcNow;
+
+            tenantDb.Set<ConversationNote>().Add(new ConversationNote
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                ConversationId = conversation.Id,
+                Body = "Auto-handoff requested by customer message intent.",
+                CreatedByUserId = Guid.Empty,
+                CreatedByName = "system",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await tenantDb.SaveChangesAsync(ct);
+        }
+
+        try
+        {
+            var messaging = sp.GetRequiredService<MessagingService>();
+            await messaging.EnqueueAsync(new SendMessageRequest
+            {
+                Recipient = inbound.From,
+                Body = "I understand. I am connecting you with a support agent now.",
+                Channel = ChannelType.WhatsApp,
+                IdempotencyKey = $"auto-handoff:{tenantId}:{inbound.MessageId}"
+            }, ct);
+        }
+        catch
+        {
+            // Keep escalation path resilient even if auto-reply fails.
+        }
+
+        controlDb.AuditLogs.Add(new AuditLog
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            ActorUserId = Guid.Empty,
+            Action = "waba.workflow.auto_handoff",
+            Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; from={inbound.From}; reason=handoff_intent_keyword",
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        await controlDb.SaveChangesAsync(ct);
+        return true;
+    }
+
+    private static bool ContainsHandoffIntent(string normalizedMessage)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedMessage)) return false;
+        var triggers = new[]
+        {
+            "talk to agent",
+            "need agent",
+            "human",
+            "customer support",
+            "connect me to support",
+            "not satisfied",
+            "not helpful",
+            "this didnt help",
+            "issue not solved",
+            "still not working",
+            "complaint"
+        };
+        return triggers.Any(t => normalizedMessage.Contains(t, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string MergeLabels(string existingCsv, string label)
+    {
+        var labels = (existingCsv ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        labels.Add(label);
+        return string.Join(",", labels.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private async Task<bool> TryFaqAutoReplyAsync(
+        IServiceProvider sp,
+        ControlDbContext controlDb,
+        TenantDbContext tenantDb,
+        Guid tenantId,
+        string phoneNumberId,
+        TriggerInboundContext inbound,
+        CancellationToken ct)
+    {
+        var inboundText = NormalizeInboundMessageText(inbound.MessageText);
+        var normalizedInbound = NormalizeMatchText(inboundText);
+        if (string.IsNullOrWhiteSpace(normalizedInbound)) return false;
+
+        List<FaqKnowledgeItem> faqs;
+        try
+        {
+            faqs = await tenantDb.FaqKnowledgeItems
+                .AsNoTracking()
+                .Where(x => x.TenantId == tenantId && x.IsActive)
+                .OrderByDescending(x => x.UpdatedAtUtc)
+                .ToListAsync(ct);
+        }
+        catch
+        {
+            // Keep webhook runtime safe on tenants where FAQ table might not exist yet.
+            return false;
+        }
+
+        var best = faqs
+            .Select(f =>
+            {
+                var q = NormalizeMatchText(f.Question ?? string.Empty);
+                if (string.IsNullOrWhiteSpace(q)) return new { faq = f, score = 0, reason = "empty_question" };
+                if (string.Equals(normalizedInbound, q, StringComparison.OrdinalIgnoreCase))
+                    return new { faq = f, score = 100, reason = "exact" };
+                if (normalizedInbound.StartsWith(q, StringComparison.OrdinalIgnoreCase) || q.StartsWith(normalizedInbound, StringComparison.OrdinalIgnoreCase))
+                    return new { faq = f, score = 80, reason = "starts_with" };
+                if (normalizedInbound.Contains(q, StringComparison.OrdinalIgnoreCase) || q.Contains(normalizedInbound, StringComparison.OrdinalIgnoreCase))
+                    return new { faq = f, score = 60, reason = "contains" };
+                return new { faq = f, score = 0, reason = "no_match" };
+            })
+            .Where(x => x.score > 0 && !string.IsNullOrWhiteSpace(x.faq.Answer))
+            .OrderByDescending(x => x.score)
+            .ThenByDescending(x => x.faq.UpdatedAtUtc)
+            .FirstOrDefault();
+
+        if (best is null) return false;
+
+        try
+        {
+            var messaging = sp.GetRequiredService<MessagingService>();
+            await messaging.EnqueueAsync(new SendMessageRequest
+            {
+                Recipient = inbound.From,
+                Body = best.faq.Answer.Trim(),
+                Channel = ChannelType.WhatsApp,
+                IdempotencyKey = $"auto-faq:{best.faq.Id}:{inbound.MessageId}"
+            }, ct);
+
+            controlDb.AuditLogs.Add(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                ActorUserId = Guid.Empty,
+                Action = "waba.workflow.faq_match",
+                Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; faqId={best.faq.Id}; score={best.score}; reason={best.reason}",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await controlDb.SaveChangesAsync(ct);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            controlDb.AuditLogs.Add(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                ActorUserId = Guid.Empty,
+                Action = "waba.workflow.faq_match_failed",
+                Details = $"phoneNumberId={phoneNumberId}; inboundMessageId={inbound.MessageId}; faqId={best.faq.Id}; error={redactor.RedactText(ex.Message)}",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await controlDb.SaveChangesAsync(ct);
+            return false;
         }
     }
 
