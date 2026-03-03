@@ -536,7 +536,7 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "Platform" text NOT NULL DEFAULT '',
             "AppVersion" text NOT NULL DEFAULT '',
             "InstallIdHash" text NOT NULL DEFAULT '',
-            "MetadataJson" text NOT NULL DEFAULT '{}',
+            "MetadataJson" text NOT NULL DEFAULT '{{}}',
             "LastSeenAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
             "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
             "RevokedAtUtc" timestamp with time zone NULL
@@ -551,7 +551,7 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "UserId" uuid NOT NULL,
             "TenantId" uuid NOT NULL,
             "PairingTokenHash" text NOT NULL,
-            "PairingPayloadJson" text NOT NULL DEFAULT '{}',
+            "PairingPayloadJson" text NOT NULL DEFAULT '{{}}',
             "ExpiresAtUtc" timestamp with time zone NOT NULL,
             "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
             "ConsumedAtUtc" timestamp with time zone NULL,
