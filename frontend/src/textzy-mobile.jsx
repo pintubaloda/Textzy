@@ -1,10 +1,11 @@
-﻿import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
+import * as signalR from "@microsoft/signalr";
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   TEXTZY MOBILE â€” NO BLACK PALETTE
-   Orange #F97316  Â·  White #FFFFFF
+/* ═══════════════════════════════════════════════
+   TEXTZY MOBILE — NO BLACK PALETTE
+   Orange #F97316  ·  White #FFFFFF
    All dark tones replaced with deep teal/slate
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+═══════════════════════════════════════════════ */
 const C = {
   /* brand */
   orange:       "#F97316",
@@ -27,7 +28,7 @@ const C = {
   inputBg:      "#FFFFFF",
   panelBg:      "#F8FAFC",
 
-  /* text â€” warm slates, never black */
+  /* text — warm slates, never black */
   textMain:     "#1E3A5F",
   textSub:      "#64748B",
   textMuted:    "#94A3B8",
@@ -174,8 +175,14 @@ const mapConversation = (x) => {
 const mapMessage = (x) => {
   const rawStatus = String(x.status ?? x.Status ?? "").toLowerCase();
   const sender = rawStatus === "received" ? "customer" : "agent";
-  const text = String(x.body ?? x.Body ?? "");
+  const messageType = String(x.messageType ?? x.MessageType ?? "session");
+  let text = String(x.body ?? x.Body ?? "");
+  if (messageType === "template") {
+    const name = String(x.body ?? x.Body ?? "").split("|")[0] || "template";
+    text = `Template: ${name}`;
+  }
   const createdAt = x.createdAtUtc ?? x.CreatedAtUtc;
+  const interactiveButtons = parseInteractiveButtonsFromType(messageType);
   return {
     id: x.id ?? x.Id ?? `${Date.now()}-${Math.random()}`,
     sent: sender === "agent",
@@ -186,10 +193,12 @@ const mapMessage = (x) => {
       : "now",
     createdAtMs: createdAt ? new Date(createdAt).getTime() : null,
     status: rawStatus || "sent",
+    messageType,
+    interactiveButtons,
   };
 };
 
-/* â”€â”€ MOCK DATA â”€â”€ */
+/* ── MOCK DATA ── */
 const CONTACTS = [
   { id:1, name:"Alice Johnson",    avatar:"AJ", color:"#7C3AED",
     online:true, unread:2, time:"10:42 AM", lastMsg:"Sure, I'll send the report by EOD.", typing:false,
@@ -248,9 +257,9 @@ const REPLIES = [
   "Sounds good!", "On it.", "Thanks!", "Will do.", "Let me look into this.", "Perfect!",
 ];
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ════════════════════════════
    TEXTZY LOGO
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+════════════════════════════ */
 const Logo = ({ size=32 }) => (
   <svg width={size} height={size} viewBox="0 0 40 40" fill="none">
     <rect width="40" height="40" rx="10" fill="#F97316"/>
@@ -258,9 +267,9 @@ const Logo = ({ size=32 }) => (
   </svg>
 );
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ════════════════════════════
    ICONS
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+════════════════════════════ */
 const I = {
   Send:    ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>,
   Key:     ()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="7.5" cy="15.5" r="3.5"/><path d="M11 13l9-9"/><path d="M16 4l4 4"/><path d="M14 6l4 4"/></svg>,
@@ -296,9 +305,27 @@ const QA_LIBRARY = [
   "QA: I am connecting you with our support specialist now.",
 ];
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+const EMOJI_SET = [
+  0x1F600, 0x1F601, 0x1F602, 0x1F923, 0x1F60A, 0x1F60D, 0x1F618, 0x1F60E,
+  0x1F91D, 0x1F64F, 0x1F44D, 0x1F44B, 0x1F4AC, 0x1F525, 0x2705, 0x1F389,
+].map((cp) => String.fromCodePoint(cp));
+
+const parseInteractiveButtonsFromType = (messageType) => {
+  const raw = String(messageType || "");
+  if (!raw.startsWith("interactive:")) return [];
+  const parts = raw.split(":");
+  if (parts.length < 3) return [];
+  const encoded = parts.slice(2).join(":");
+  return encoded
+    .split("~")
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+};
+
+/* ════════════════════════════
    AVATAR
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+════════════════════════════ */
 const Avatar = ({ name, color, size=46, online=false }) => (
   <div style={{ position:"relative", flexShrink:0 }}>
     <div style={{
@@ -320,9 +347,9 @@ const Avatar = ({ name, color, size=46, online=false }) => (
   </div>
 );
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ════════════════════════════
    TYPING INDICATOR
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+════════════════════════════ */
 const Typing = () => (
   <div style={{ display:"flex", gap:5, alignItems:"center", padding:"11px 15px" }}>
     {[0,1,2].map(i=>(
@@ -335,9 +362,9 @@ const Typing = () => (
   </div>
 );
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ════════════════════════════
    QR CODE (decorative)
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+════════════════════════════ */
 const QRCode = ({ size=175 }) => {
   const cells=21, cs=size/cells;
   const grid = Array.from({length:cells},(_,r)=>
@@ -367,9 +394,9 @@ const QRCode = ({ size=175 }) => {
   );
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ════════════════════════════
    SCAN ANIMATION (camera view)
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+════════════════════════════ */
 const Scanner = ({ onDone }) => {
   const [pct, setPct]   = useState(0);
   const [done, setDone] = useState(false);
@@ -595,10 +622,10 @@ const Scanner = ({ onDone }) => {
   );
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   SCREEN 1 â€” MOBILE LOGIN
-   Orange gradient bg Â· no black
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+/* ══════════════════════════════════════
+   SCREEN 1 — MOBILE LOGIN
+   Orange gradient bg · no black
+══════════════════════════════════════ */
 const LoginScreen = ({ onLogin }) => {
   const [tab,setTab]     = useState("password");
   const [email,setEmail] = useState("admin@textzy.io");
@@ -628,9 +655,9 @@ const LoginScreen = ({ onLogin }) => {
     }}>
       {/* top hero */}
       <div style={{
-        flex:"0 0 auto", display:"flex", flexDirection:"column",
+        flex:"0 0 32vh", display:"flex", flexDirection:"column",
         alignItems:"center", justifyContent:"center",
-        padding:"16px 20px 8px",
+        padding:"12px 20px 6px",
       }}>
         <div style={{
           width:58, height:58, borderRadius:16,
@@ -649,7 +676,7 @@ const LoginScreen = ({ onLogin }) => {
       {/* card */}
       <div style={{
         flex:1,
-        minHeight:"72vh",
+        minHeight:"68vh",
         background:"#fff", borderRadius:"28px 28px 0 0",
         padding:"24px 24px 42px",
         boxShadow:"0 -8px 40px rgba(0,0,0,0.12)",
@@ -778,9 +805,9 @@ const LoginScreen = ({ onLogin }) => {
   );
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   SCREEN 2 â€” PROJECT PICKER
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+/* ══════════════════════════════════════
+   SCREEN 2 — PROJECT PICKER
+══════════════════════════════════════ */
 const ProjectPicker = ({ projects, onSelect, loading = false }) => {
   const [sel, setSel] = useState(null);
   const rows = projects?.length ? projects : PROJECTS;
@@ -790,12 +817,12 @@ const ProjectPicker = ({ projects, onSelect, loading = false }) => {
       background:`linear-gradient(165deg,${C.orange} 0%,#EA6C0A 30%,#C2560A 65%,#1E3A5F 100%)`,
       fontFamily:"'Segoe UI',system-ui,sans-serif",
     }}>
-      <div style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"40px 24px 20px" }}>
-        <Logo size={44}/>
-        <h2 style={{ margin:"14px 0 4px",fontSize:24,fontWeight:800,color:"#fff" }}>Select Workspace</h2>
+      <div style={{ flex:"0 0 30vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"20px 24px 10px" }}>
+        <Logo size={40}/>
+        <h2 style={{ margin:"12px 0 4px",fontSize:24,fontWeight:800,color:"#fff" }}>Select Workspace</h2>
         <p style={{ margin:0,color:"rgba(255,255,255,0.7)",fontSize:13 }}>Choose a project to continue</p>
       </div>
-      <div style={{ background:"#fff",borderRadius:"28px 28px 0 0",padding:"28px 20px 40px",boxShadow:"0 -8px 40px rgba(0,0,0,0.12)" }}>
+      <div style={{ flex:1, minHeight:"70vh", background:"#fff",borderRadius:"28px 28px 0 0",padding:"28px 20px 40px",boxShadow:"0 -8px 40px rgba(0,0,0,0.12)" }}>
         {rows.map(p=>{
           const a=sel===p.slug;
           return (
@@ -830,9 +857,9 @@ const ProjectPicker = ({ projects, onSelect, loading = false }) => {
   );
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ══════════════════════════════════════
    MAIN MOBILE APP
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+══════════════════════════════════════ */
 export default function TextzyMobile() {
   const restored = (() => {
     try {
@@ -869,6 +896,7 @@ export default function TextzyMobile() {
   const [showLabelsModal, setShowLabelsModal] = useState(false);
   const [labelsInput, setLabelsInput] = useState("");
   const [showQaModal, setShowQaModal] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showDevicesModal, setShowDevicesModal] = useState(false);
   const [devices, setDevices] = useState([]);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -885,6 +913,9 @@ export default function TextzyMobile() {
     devices: false,
   });
   const msgEnd  = useRef(null);
+  const unreadTotalRef = useRef(0);
+  const signalConnRef = useRef(null);
+  const audioCtxRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -927,11 +958,39 @@ export default function TextzyMobile() {
     }
   };
 
+  const playNotificationTone = (frequency = 880, durationMs = 140) => {
+    if (!notifEnabled) return;
+    if (typeof window === "undefined") return;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    try {
+      if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
+      const ctx = audioCtxRef.current;
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + durationMs / 1000);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + durationMs / 1000);
+    } catch {
+      // no-op
+    }
+  };
+
   useEffect(()=>{ msgEnd.current?.scrollIntoView({behavior:"smooth"}); },
     [active?.messages?.length, active?.typing]);
 
   useEffect(() => {
     localStorage.setItem("textzy.mobile.notif.enabled", notifEnabled ? "1" : "0");
+    if (notifEnabled && typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
   }, [notifEnabled]);
 
   useEffect(() => {
@@ -974,7 +1033,17 @@ export default function TextzyMobile() {
     });
     if (!res.ok) throw new Error(await res.text() || "Failed to load conversations");
     const rows = await res.json();
-    setCons((rows || []).map(mapConversation));
+    setCons((prev) => (rows || []).map((r) => {
+      const mapped = mapConversation(r);
+      const existing = prev.find((c) => String(c.id) === String(mapped.id));
+      if (!existing) return mapped;
+      return {
+        ...mapped,
+        // Preserve loaded chat history so list refresh does not blank chat view.
+        messages: existing.messages || [],
+        typing: existing.typing || false,
+      };
+    }));
   };
 
   const loadMessages = async (conversationId, ctx = authCtx) => {
@@ -985,7 +1054,11 @@ export default function TextzyMobile() {
     if (!res.ok) throw new Error(await res.text() || "Failed to load messages");
     const rows = await res.json();
     const mapped = (rows || []).map(mapMessage);
-    setCons((prev) => prev.map((c) => (c.id === conversationId ? { ...c, messages: mapped } : c)));
+    setCons((prev) => prev.map((c) => {
+      if (c.id !== conversationId) return c;
+      if (mapped.length === 0 && (c.messages || []).length > 0) return c;
+      return { ...c, messages: mapped };
+    }));
   };
 
   const loadTeamMembers = async (ctx = authCtx) => {
@@ -1154,6 +1227,7 @@ export default function TextzyMobile() {
 
   const openChat = async (id) => {
     setAId(id); setView("chat");
+    setShowEmojiPicker(false);
     setCons(p=>p.map(c=>c.id===id?{...c,unread:0}:c));
     try {
       await loadMessages(id);
@@ -1164,8 +1238,7 @@ export default function TextzyMobile() {
   };
 
   const handleEmoji = () => {
-    setInput((prev) => `${prev}🙂`);
-    setTimeout(()=>inputRef.current?.focus(), 60);
+    setShowEmojiPicker((v) => !v);
   };
 
   const handleAttachClick = () => {
@@ -1245,6 +1318,7 @@ export default function TextzyMobile() {
       const m = {id:Date.now(),text:txt,sent:true,time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),status:"sent"};
       setCons(p=>p.map(c=>c.id===activeId?{...c,messages:[...c.messages,m],lastMsg:txt,time:m.time,unread:0}:c));
       setInput("");
+      setShowEmojiPicker(false);
       try {
         const { res } = await apiFetch("/api/messages/send", {
           method: "POST",
@@ -1263,8 +1337,11 @@ export default function TextzyMobile() {
           setNotice(parseErrorText(err) || "Message send failed.");
           return;
         }
-        await loadMessages(activeId);
-        await loadConversations();
+        await Promise.all([loadMessages(activeId), loadConversations()]);
+        setTimeout(() => {
+          loadMessages(activeId).catch(() => {});
+          loadConversations().catch(() => {});
+        }, 1200);
       } catch (e) {
         setNotice(e?.message || "Message send failed.");
       }
@@ -1441,6 +1518,92 @@ export default function TextzyMobile() {
       });
   }, []);
 
+  useEffect(() => {
+    if (screen !== "app") return;
+    if (!authCtx.token || !authCtx.tenantSlug) return;
+    const tick = () => {
+      loadConversations().catch(() => {});
+      if (view === "chat" && activeId) loadMessages(activeId).catch(() => {});
+    };
+    const timer = setInterval(tick, 3000);
+    return () => clearInterval(timer);
+  }, [screen, authCtx.token, authCtx.tenantSlug, view, activeId]);
+
+  useEffect(() => {
+    if (screen !== "app") return;
+    if (!authCtx.token || !authCtx.tenantSlug) return;
+    const runtimeConfig = typeof window !== "undefined" ? (window.__APP_CONFIG__ || {}) : {};
+    const baseUrl =
+      runtimeConfig.API_BASE ||
+      process.env.REACT_APP_API_BASE ||
+      process.env.VITE_API_BASE ||
+      "https://textzy-backend-production.up.railway.app";
+
+    const connection = new signalR.HubConnectionBuilder()
+      .withUrl(`${baseUrl}/hubs/inbox?tenantSlug=${encodeURIComponent(authCtx.tenantSlug)}`, {
+        withCredentials: true,
+        accessTokenFactory: () => authCtx.token || "",
+      })
+      .withAutomaticReconnect()
+      .build();
+    signalConnRef.current = connection;
+
+    const refresh = () => {
+      loadConversations().catch(() => {});
+      if (view === "chat" && activeId) loadMessages(activeId).catch(() => {});
+    };
+
+    connection.on("message.queued", () => refresh());
+    connection.on("message.sent", () => refresh());
+    connection.on("webhook.inbound", () => {
+      refresh();
+      playNotificationTone(760, 170);
+    });
+    connection.on("conversation.assigned", () => refresh());
+    connection.on("conversation.transferred", () => refresh());
+    connection.on("conversation.labels", () => refresh());
+    connection.onreconnected(() => {
+      connection.invoke("JoinTenantRoom", authCtx.tenantSlug).catch(() => {});
+      refresh();
+    });
+
+    connection.start()
+      .then(() => {
+        connection.invoke("JoinTenantRoom", authCtx.tenantSlug).catch(() => {});
+      })
+      .catch(() => {});
+
+    return () => {
+      signalConnRef.current = null;
+      if (
+        connection.state === signalR.HubConnectionState.Connected ||
+        connection.state === signalR.HubConnectionState.Reconnecting
+      ) {
+        connection.stop().catch(() => {});
+      }
+    };
+  }, [screen, authCtx.token, authCtx.tenantSlug, view, activeId]);
+
+  useEffect(() => {
+    const total = contacts.reduce((sum, c) => sum + (Number(c.unread) || 0), 0);
+    const prev = unreadTotalRef.current;
+    if (screen === "app" && notifEnabled && total > prev) {
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        navigator.vibrate(120);
+      }
+      playNotificationTone(880, 150);
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        try {
+          const diff = total - prev;
+          new Notification("Textzy", { body: `${diff} new message${diff > 1 ? "s" : ""}` });
+        } catch {
+          // Ignore notification errors in embedded webviews.
+        }
+      }
+    }
+    unreadTotalRef.current = total;
+  }, [contacts, screen, notifEnabled]);
+
   const Overlay = ({ children }) => (
     <div style={{
       position:"fixed", inset:0, zIndex:60, background:"rgba(15,23,42,0.45)",
@@ -1608,7 +1771,7 @@ export default function TextzyMobile() {
 
   const uname=(user?.email||"User").split("@")[0];
 
-  /* â”€â”€ PROFILE PANEL â”€â”€ */
+  /* ── PROFILE PANEL ── */
   if (view==="profile") return (
     <div style={{ minHeight:"100vh",fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#fff" }}>
       {/* header */}
@@ -1687,7 +1850,7 @@ export default function TextzyMobile() {
     </div>
   );
 
-  /* â”€â”€ CHAT VIEW â”€â”€ */
+  /* ── CHAT VIEW ── */
   if (view==="chat" && active) return (
     <div style={{ height:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Segoe UI',system-ui,sans-serif",background:C.chatBg }}>
       {/* header */}
@@ -1753,6 +1916,28 @@ export default function TextzyMobile() {
               boxShadow:msg.sent?`0 2px 8px ${C.orange}22`:"0 1px 4px rgba(0,0,0,0.08)",
             }}>
               <p style={{ margin:0,fontSize:15,color:C.textMain,lineHeight:1.45,wordBreak:"break-word" }}>{msg.text}</p>
+              {Array.isArray(msg.interactiveButtons) && msg.interactiveButtons.length > 0 ? (
+                <div style={{ marginTop:8, display:"grid", gap:6 }}>
+                  {msg.interactiveButtons.map((btn, idx) => (
+                    <button
+                      key={`${msg.id}-btn-${idx}`}
+                      onClick={() => { setInput(btn); setTimeout(() => inputRef.current?.focus(), 40); }}
+                      style={{
+                        height:32,
+                        borderRadius:8,
+                        border:"1px solid #BAE6FD",
+                        background:"#F0F9FF",
+                        color:"#0369A1",
+                        fontSize:12,
+                        fontWeight:600,
+                        cursor:"pointer",
+                      }}
+                    >
+                      ↩ {btn}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <div style={{ display:"flex",justifyContent:"flex-end",alignItems:"center",gap:3,marginTop:4 }}>
                 <span style={{ fontSize:11,color:C.textMuted }}>{msg.time}</span>
                 {msg.sent&&(msg.status==="read"?<I.DblChk/>:<I.Check/>)}
@@ -1770,6 +1955,36 @@ export default function TextzyMobile() {
         )}
         <div ref={msgEnd}/>
       </div>
+
+      {showEmojiPicker && (
+        <div style={{
+          background:"#fff",
+          borderTop:`1px solid ${C.divider}`,
+          padding:"10px 12px",
+          display:"grid",
+          gridTemplateColumns:"repeat(8, 1fr)",
+          gap:8,
+          flexShrink:0,
+        }}>
+          {EMOJI_SET.map((e) => (
+            <button
+              key={e}
+              onClick={() => { setInput((p) => `${p}${e}`); setTimeout(()=>inputRef.current?.focus(), 40); }}
+              style={{
+                border:`1px solid ${C.divider}`,
+                background:"#fff",
+                borderRadius:10,
+                height:34,
+                fontSize:20,
+                lineHeight:1,
+                cursor:"pointer",
+              }}
+            >
+              {e}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* input bar */}
       <div style={{
@@ -1791,6 +2006,7 @@ export default function TextzyMobile() {
         >
           <input ref={inputRef} value={input}
             onChange={e=>setInput(e.target.value)}
+            onFocus={() => setShowEmojiPicker(false)}
             onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()}
             placeholder="Type a message..."
             style={{ border:"none",outline:"none",flex:1,fontSize:15,color:C.textMain,background:"transparent",fontFamily:"inherit" }}
@@ -1829,7 +2045,7 @@ export default function TextzyMobile() {
     </div>
   );
 
-  /* â”€â”€ INBOX LIST VIEW â”€â”€ */
+  /* ── INBOX LIST VIEW ── */
   return (
     <div style={{ height:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#fff" }}>
       {/* header */}
@@ -1959,6 +2175,8 @@ export default function TextzyMobile() {
     </div>
   );
 }
+
+
 
 
 
