@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ import {
   wabaExchangeCode,
   wabaMapExisting,
   wabaRecheckOnboarding,
+  wabaDisconnectOnboarding,
   authProjects,
   getSession,
 } from "@/lib/api";
@@ -71,12 +72,7 @@ export default function WhatsAppOnboardingPage() {
     }
   }
 
-  useEffect(() => {
-    loadStatus(false);
-    ensureEmbeddedConfig();
-  }, []);
-
-  async function ensureEmbeddedConfig() {
+  const ensureEmbeddedConfig = useCallback(async () => {
     if (embeddedCfg.appId && embeddedCfg.configId) return;
     try {
       const cfg = await wabaGetEmbeddedConfig();
@@ -89,7 +85,12 @@ export default function WhatsAppOnboardingPage() {
     } catch {
       // Keep env-based values only.
     }
-  }
+  }, [embeddedCfg.appId, embeddedCfg.configId]);
+
+  useEffect(() => {
+    loadStatus(false);
+    ensureEmbeddedConfig();
+  }, [ensureEmbeddedConfig]);
 
   async function resolveEmbeddedConfig() {
     let appId = embeddedCfg.appId;
@@ -173,6 +174,18 @@ export default function WhatsAppOnboardingPage() {
       toast.error(e.message || "Failed to refresh checks");
     } finally {
       setChecking(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    const ok = window.confirm("Disconnect this project's WABA now?");
+    if (!ok) return;
+    try {
+      await wabaDisconnectOnboarding();
+      await loadStatus(true);
+      toast.success("WABA disconnected for this project");
+    } catch (e) {
+      toast.error(e?.message || "Failed to disconnect WABA");
     }
   }
 
@@ -312,6 +325,11 @@ export default function WhatsAppOnboardingPage() {
                 {connecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 Map Existing WABA
               </Button>
+              {status?.isConnected || status?.readyToSend || String(status?.state || "").toLowerCase() === "ready" ? (
+                <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-50" onClick={handleDisconnect}>
+                  Disconnect WABA
+                </Button>
+              ) : null}
             </div>
             <p className="text-sm text-slate-500 mt-2">
               If this WhatsApp Business is already onboarded with your app, use <b>Map Existing WABA</b> to attach it to this project.

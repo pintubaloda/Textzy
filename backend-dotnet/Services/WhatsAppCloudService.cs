@@ -195,6 +195,27 @@ public class WhatsAppCloudService(
         return config;
     }
 
+    public async Task<TenantWabaConfig> DisconnectTenantWabaAsync(string reason, CancellationToken ct = default)
+    {
+        var config = await GetTenantConfigRowAsync(onlyActive: false, ct)
+            ?? throw new InvalidOperationException("WABA config not found for this project.");
+
+        config.IsActive = false;
+        config.OnboardingState = "disabled";
+        config.PermissionAuditPassed = false;
+        config.WebhookSubscribedAtUtc = null;
+        config.WebhookVerifiedAtUtc = null;
+        config.LastError = string.IsNullOrWhiteSpace(reason)
+            ? "Disconnected by tenant admin."
+            : reason.Trim();
+
+        await tenantDb.SaveChangesAsync(ct);
+        if (!string.IsNullOrWhiteSpace(config.PhoneNumberId))
+            await tenantResolver.InvalidateAsync(config.PhoneNumberId, ct);
+
+        return config;
+    }
+
     public async Task<TenantWabaConfig> ExchangeEmbeddedCodeAsync(string code, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(code)) throw new InvalidOperationException("Code is required.");

@@ -96,6 +96,21 @@ public class WabaOnboardingController(
         return Ok(await whatsapp.GetOnboardingStatusAsync(ct));
     }
 
+    [HttpPost("onboarding/disconnect")]
+    public async Task<IActionResult> Disconnect(CancellationToken ct)
+    {
+        if (!rbac.HasPermission(InboxWrite)) return Forbid();
+        try
+        {
+            var cfg = await whatsapp.DisconnectTenantWabaAsync("Disconnected by tenant admin.", ct);
+            return Ok(new { ok = true, cfg.TenantId, cfg.OnboardingState, cfg.IsActive });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
     [HttpPost("onboarding/reuse-existing")]
     public async Task<IActionResult> ReuseExisting([FromBody] WabaReuseExistingRequest request, CancellationToken ct)
     {

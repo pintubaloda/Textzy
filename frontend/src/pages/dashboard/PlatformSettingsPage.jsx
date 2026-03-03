@@ -32,8 +32,13 @@ import {
   getPlatformIdempotencyDiagnostics,
   getPlatformWabaOnboardingSummary,
   cancelPlatformWabaRequest,
+  getPlatformWabaLifecycle,
+  reissuePlatformWabaToken,
+  deactivatePlatformWabaLifecycle,
   platformLookupByPhone,
   platformLookupByWaba,
+  getWabaDebugTenantProbe,
+  getWabaDebugWebhookHealth,
   exportPlatformSqlBackup
 } from "@/lib/api";
 
@@ -119,6 +124,9 @@ const PlatformSettingsPage = () => {
   const [idemStaleMinutes, setIdemStaleMinutes] = useState("30");
   const [idemData, setIdemData] = useState(null);
   const [onboardingSummary, setOnboardingSummary] = useState(null);
+  const [lifecycleTenantId, setLifecycleTenantId] = useState("");
+  const [lifecycleData, setLifecycleData] = useState(null);
+  const [lifecycleLoading, setLifecycleLoading] = useState(false);
   const [wabaLookupTenantId, setWabaLookupTenantId] = useState("");
   const [lookupPhoneId, setLookupPhoneId] = useState("");
   const [lookupWabaId, setLookupWabaId] = useState("");
@@ -130,6 +138,8 @@ const PlatformSettingsPage = () => {
   const [securityControls, setSecurityControls] = useState({ circuitBreakerEnabled: false, ratePerMinuteOverride: 0, reason: "" });
   const [securityStatusFilter, setSecurityStatusFilter] = useState("open");
   const [requestLogs, setRequestLogs] = useState([]);
+  const [wabaWebhookHealth, setWabaWebhookHealth] = useState(null);
+  const [wabaTenantProbe, setWabaTenantProbe] = useState(null);
   const [requestLogFilters, setRequestLogFilters] = useState({
     tenantId: "",
     method: "",
@@ -252,6 +262,8 @@ const PlatformSettingsPage = () => {
             const rows = await getPlatformWabaOnboardingSummary();
             if (!active) return;
             setOnboardingSummary(rows || null);
+            const firstTenantId = (rows?.projects || [])[0]?.tenantId || "";
+            if (firstTenantId) setLifecycleTenantId((prev) => prev || firstTenantId);
           } else if (tab === "waba-lookup") {
             const customers = await getPlatformCustomers("").catch(() => []);
             if (!active) return;
@@ -300,15 +312,19 @@ const PlatformSettingsPage = () => {
               setIdemData(null);
             }
           } else {
-            const [res, qh, customers, an] = await Promise.all([
+            const [res, qh, customers, an, wh, tp] = await Promise.all([
               getPlatformWebhookLogs({ provider: logProvider, limit: 100 }),
               getPlatformQueueHealth().catch(() => null),
               getPlatformCustomers("").catch(() => []),
               getPlatformWebhookAnalytics(analyticsTenantId, Number(analyticsDays || 7)).catch(() => null),
+              getWabaDebugWebhookHealth().catch(() => null),
+              getWabaDebugTenantProbe().catch(() => null),
             ]);
             if (!active) return;
             setLogs(res || []);
             setQueueHealth(qh);
+            setWabaWebhookHealth(wh);
+            setWabaTenantProbe(tp);
             const list = customers || [];
             setTenants(list);
             if (!analyticsTenantId && list.length) setAnalyticsTenantId(list[0].tenantId);
@@ -400,7 +416,19 @@ const PlatformSettingsPage = () => {
               }}>
                 Save
               </Button>
-              <Button variant="outline" onClick={() => toast.info("Webhook verification requested")}>
+              <Button variant="outline" onClick={async () => {
+                try {
+                  const health = await getWabaDebugWebhookHealth();
+                  setWabaWebhookHealth(health || null);
+                  if (health?.configured?.verifyToken && health?.configured?.appSecret && health?.configured?.callbackUrl) {
+                    toast.success("Webhook config is valid.");
+                  } else {
+                    toast.error("Webhook config is incomplete. Check verify token/app secret/callback URL.");
+                  }
+                } catch (e) {
+                  toast.error(e?.message || "Failed to test webhook.");
+                }
+              }}>
                 Test Webhook
               </Button>
               <Button variant="outline" disabled={exportingSql} onClick={async () => {
@@ -756,6 +784,44 @@ const PlatformSettingsPage = () => {
                 <div className="text-xs text-slate-500">retrying: {queueHealth?.webhook?.retrying ?? 0}</div>
               </div>
             </div>
+            <div className="rounded-lg border border-slate-200 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-slate-900">WABA Debug Health</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    const [wh, tp] = await Promise.all([
+                      getWabaDebugWebhookHealth().catch(() => null),
+                      getWabaDebugTenantProbe().catch(() => null),
+                    ]);
+                    setWabaWebhookHealth(wh);
+                    setWabaTenantProbe(tp);
+                  }}
+                >
+                  Refresh Health
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <div className="rounded border border-slate-200 p-3">
+                  <div className="text-xs text-slate-500">Webhook</div>
+                  <div className="mt-1 text-slate-900">
+                    verifyToken: {wabaWebhookHealth?.configured?.verifyToken ? "yes" : "no"},
+                    {" "}appSecret: {wabaWebhookHealth?.configured?.appSecret ? "yes" : "no"},
+                    {" "}callbackUrl: {wabaWebhookHealth?.configured?.callbackUrl ? "yes" : "no"}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1 break-all">{wabaWebhookHealth?.configured?.callbackUrlValue || "-"}</div>
+                </div>
+                <div className="rounded border border-slate-200 p-3">
+                  <div className="text-xs text-slate-500">Tenant Probe</div>
+                  <div className="mt-1 text-slate-900">
+                    connected: {wabaTenantProbe?.connected ? "yes" : "no"},
+                    {" "}wabaId: {wabaTenantProbe?.wabaId || "-"}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1 break-all">{wabaTenantProbe?.reason || "-"}</div>
+                </div>
+              </div>
+            </div>
             <div className="flex gap-2">
               <Select value={logProvider || "all"} onValueChange={(v) => setLogProvider(v === "all" ? "" : v)}>
                 <SelectTrigger className="w-[220px]"><SelectValue /></SelectTrigger>
@@ -989,6 +1055,90 @@ const PlatformSettingsPage = () => {
                 Refresh
               </Button>
             </div>
+            <div className="rounded-lg border border-slate-200 p-3 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Select value={lifecycleTenantId || "none"} onValueChange={(v) => setLifecycleTenantId(v === "none" ? "" : v)}>
+                  <SelectTrigger className="w-[320px]"><SelectValue placeholder="Select project for lifecycle" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Select project</SelectItem>
+                    {(onboardingSummary?.projects || []).map((p) => (
+                      <SelectItem key={p.tenantId} value={p.tenantId}>{p.tenantName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  disabled={!lifecycleTenantId || lifecycleLoading}
+                  onClick={async () => {
+                    try {
+                      setLifecycleLoading(true);
+                      const data = await getPlatformWabaLifecycle(lifecycleTenantId);
+                      setLifecycleData(data || null);
+                    } catch (e) {
+                      toast.error(e?.message || "Failed to load lifecycle.");
+                    } finally {
+                      setLifecycleLoading(false);
+                    }
+                  }}
+                >
+                  Lifecycle
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={!lifecycleTenantId || lifecycleLoading}
+                  onClick={async () => {
+                    try {
+                      setLifecycleLoading(true);
+                      await reissuePlatformWabaToken(lifecycleTenantId);
+                      toast.success("System user token reissued.");
+                      setLifecycleData(await getPlatformWabaLifecycle(lifecycleTenantId));
+                      setOnboardingSummary(await getPlatformWabaOnboardingSummary());
+                    } catch (e) {
+                      toast.error(e?.message || "Failed to reissue token.");
+                    } finally {
+                      setLifecycleLoading(false);
+                    }
+                  }}
+                >
+                  Reissue Token
+                </Button>
+                <Button
+                  variant="outline"
+                  className="text-red-600 border-red-200 hover:bg-red-50"
+                  disabled={!lifecycleTenantId || lifecycleLoading}
+                  onClick={async () => {
+                    if (!window.confirm("Deactivate WABA for this project?")) return;
+                    try {
+                      setLifecycleLoading(true);
+                      await deactivatePlatformWabaLifecycle(lifecycleTenantId);
+                      toast.success("Tenant WABA deactivated.");
+                      setLifecycleData(await getPlatformWabaLifecycle(lifecycleTenantId).catch(() => null));
+                      setOnboardingSummary(await getPlatformWabaOnboardingSummary());
+                    } catch (e) {
+                      toast.error(e?.message || "Failed to deactivate.");
+                    } finally {
+                      setLifecycleLoading(false);
+                    }
+                  }}
+                >
+                  Deactivate
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div className="rounded border border-slate-200 p-3">
+                  <div className="text-xs text-slate-500">State</div>
+                  <div className="text-slate-900">{lifecycleData?.onboardingState || "-"}</div>
+                </div>
+                <div className="rounded border border-slate-200 p-3">
+                  <div className="text-xs text-slate-500">System User</div>
+                  <div className="text-slate-900 break-all">{lifecycleData?.systemUserId || "-"}</div>
+                </div>
+                <div className="rounded border border-slate-200 p-3">
+                  <div className="text-xs text-slate-500">Token Source</div>
+                  <div className="text-slate-900">{lifecycleData?.tokenSource || "-"}</div>
+                </div>
+              </div>
+            </div>
             <div className="rounded-lg border border-slate-200 overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50">
@@ -1012,25 +1162,73 @@ const PlatformSettingsPage = () => {
                       <td className="px-3 py-2 text-slate-700">{x.displayPhoneNumber || "-"}</td>
                       <td className="px-3 py-2 text-slate-600 max-w-[320px] truncate">{x.lastError || "-"}</td>
                       <td className="px-3 py-2">
-                        {!["ready", "cancelled", "not_configured", "error"].includes((x.state || "").toLowerCase()) ? (
+                        <div className="flex flex-wrap gap-2">
+                          {!["ready", "cancelled", "not_configured", "error"].includes((x.state || "").toLowerCase()) ? (
+                            <Button
+                              variant="outline"
+                              className="h-8 px-3 text-xs"
+                              onClick={async () => {
+                                try {
+                                  await cancelPlatformWabaRequest(x.tenantId);
+                                  toast.success(`Cancelled onboarding for ${x.tenantName}`);
+                                  setOnboardingSummary(await getPlatformWabaOnboardingSummary());
+                                } catch (e) {
+                                  toast.error(e?.message || "Failed to cancel onboarding request.");
+                                }
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          ) : null}
                           <Button
                             variant="outline"
                             className="h-8 px-3 text-xs"
                             onClick={async () => {
                               try {
-                                await cancelPlatformWabaRequest(x.tenantId);
-                                toast.success(`Cancelled onboarding for ${x.tenantName}`);
-                                setOnboardingSummary(await getPlatformWabaOnboardingSummary());
+                                setLifecycleTenantId(x.tenantId);
+                                const data = await getPlatformWabaLifecycle(x.tenantId);
+                                setLifecycleData(data || null);
                               } catch (e) {
-                                toast.error(e?.message || "Failed to cancel onboarding request.");
+                                toast.error(e?.message || "Failed to load lifecycle.");
                               }
                             }}
                           >
-                            Cancel Request
+                            Lifecycle
                           </Button>
-                        ) : (
-                          <span className="text-xs text-slate-400">-</span>
-                        )}
+                          <Button
+                            variant="outline"
+                            className="h-8 px-3 text-xs"
+                            onClick={async () => {
+                              try {
+                                await reissuePlatformWabaToken(x.tenantId);
+                                toast.success("Token reissued");
+                                if (lifecycleTenantId === x.tenantId) {
+                                  setLifecycleData(await getPlatformWabaLifecycle(x.tenantId));
+                                }
+                              } catch (e) {
+                                toast.error(e?.message || "Reissue failed");
+                              }
+                            }}
+                          >
+                            Reissue
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="h-8 px-3 text-xs text-red-600 border-red-200 hover:bg-red-50"
+                            onClick={async () => {
+                              if (!window.confirm(`Deactivate WABA for ${x.tenantName}?`)) return;
+                              try {
+                                await deactivatePlatformWabaLifecycle(x.tenantId);
+                                toast.success("Tenant deactivated");
+                                setOnboardingSummary(await getPlatformWabaOnboardingSummary());
+                              } catch (e) {
+                                toast.error(e?.message || "Deactivate failed");
+                              }
+                            }}
+                          >
+                            Deactivate
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}

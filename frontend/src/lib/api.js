@@ -459,6 +459,12 @@ export async function wabaRecheckOnboarding() {
   return out
 }
 
+export async function wabaDisconnectOnboarding() {
+  const out = await apiPost('/api/waba/onboarding/disconnect', {})
+  invalidateWabaStatusCache()
+  return out
+}
+
 export async function wabaReuseExisting(code) {
   return apiPost('/api/waba/onboarding/reuse-existing', { code })
 }
@@ -573,6 +579,28 @@ export async function getPlatformWabaOnboardingSummary() {
 
 export async function cancelPlatformWabaRequest(tenantId, reason = '') {
   return apiPost('/api/platform/waba/cancel-request', { tenantId, reason })
+}
+
+export async function getPlatformWabaLifecycle(tenantId) {
+  const q = new URLSearchParams()
+  q.set('tenantId', tenantId)
+  return apiGet(`/api/platform/waba/lifecycle?${q.toString()}`)
+}
+
+export async function reissuePlatformWabaToken(tenantId) {
+  return apiPost('/api/platform/waba/lifecycle/reissue-token', { tenantId })
+}
+
+export async function deactivatePlatformWabaLifecycle(tenantId) {
+  return apiPost('/api/platform/waba/lifecycle/deactivate', { tenantId })
+}
+
+export async function getWabaDebugTenantProbe() {
+  return apiGet('/api/waba/debug/tenant-probe')
+}
+
+export async function getWabaDebugWebhookHealth() {
+  return apiGet('/api/waba/debug/webhook-health')
 }
 
 export async function platformLookupByPhone(tenantId, phoneNumberId) {
