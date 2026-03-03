@@ -261,6 +261,7 @@ const Logo = ({ size=32 }) => (
 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const I = {
   Send:    ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>,
+  Key:     ()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="7.5" cy="15.5" r="3.5"/><path d="M11 13l9-9"/><path d="M16 4l4 4"/><path d="M14 6l4 4"/></svg>,
   Mic:     ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>,
   Attach:  ()=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>,
   Emoji:   ()=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>,
@@ -269,6 +270,10 @@ const I = {
   Phone:   ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.8 19.79 19.79 0 01.22 2.18 2 2 0 012.18 0h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L6.91 7.91a16 16 0 006.07 6.07l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg>,
   Video:   ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>,
   Search:  ()=><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+  Eye:     ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>,
+  EyeOff:  ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0112 19c-7 0-11-7-11-7a21.77 21.77 0 015.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0112 5c7 0 11 7 11 7a21.8 21.8 0 01-3.22 4.38"/><line x1="1" y1="1" x2="23" y2="23"/></svg>,
+  ArrowRight: ()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
+  Shield:  ()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l8 4v6c0 5-3.4 9.7-8 10-4.6-.3-8-5-8-10V6z"/></svg>,
   Close:   ()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
   Logout:  ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
   Camera:  ()=><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>,
@@ -612,41 +617,46 @@ const LoginScreen = ({ onLogin }) => {
       <div style={{
         flex:"0 0 auto", display:"flex", flexDirection:"column",
         alignItems:"center", justifyContent:"center",
-        padding:"24px 24px 12px",
+        padding:"16px 20px 8px",
       }}>
         <div style={{
-          width:62, height:62, borderRadius:18,
+          width:58, height:58, borderRadius:16,
           background:"rgba(255,255,255,0.18)",
           backdropFilter:"blur(8px)",
           display:"flex", alignItems:"center", justifyContent:"center",
-          marginBottom:10,
+          marginBottom:8,
           boxShadow:"0 8px 32px rgba(0,0,0,0.12)",
         }}>
-          <Logo size={38}/>
+          <Logo size={34}/>
         </div>
-        <h1 style={{ margin:0, fontSize:28, fontWeight:800, color:"#fff", letterSpacing:"-0.5px" }}>Textzy</h1>
-        <p style={{ margin:"4px 0 0", color:"rgba(255,255,255,0.75)", fontSize:14 }}>Business Inbox</p>
+        <h1 style={{ margin:0, fontSize:24, fontWeight:800, color:"#fff", letterSpacing:"-0.5px" }}>Textzy</h1>
+        <p style={{ margin:"2px 0 0", color:"rgba(255,255,255,0.75)", fontSize:13 }}>Business Inbox</p>
       </div>
 
       {/* card */}
       <div style={{
         flex:1,
+        minHeight:"72vh",
         background:"#fff", borderRadius:"28px 28px 0 0",
-        padding:"22px 24px 36px",
+        padding:"24px 24px 42px",
         boxShadow:"0 -8px 40px rgba(0,0,0,0.12)",
       }}>
         {/* tab switcher */}
         <div style={{ display:"flex", background:C.panelBg, borderRadius:12, padding:4, marginBottom:22 }}>
-          {[["password","ðŸ”‘  Password"],["qr","ðŸ“·  Scan QR"]].map(([m,label])=>(
-            <button key={m} onClick={()=>{setTab(m);setErr("");}} style={{
+          {[{ mode: "password", label: "Password", icon: <I.Key/> }, { mode: "qr", label: "Scan QR", icon: <I.Camera/> }].map((item)=>(
+            <button key={item.mode} onClick={()=>{setTab(item.mode);setErr("");}} style={{
               flex:1, padding:"10px 0", border:"none", borderRadius:9,
-              background:tab===m?"#fff":"transparent",
-              color:tab===m?C.orange:C.textSub,
-              fontWeight:tab===m?700:500, fontSize:14,
+              background:tab===item.mode?"#fff":"transparent",
+              color:tab===item.mode?C.orange:C.textSub,
+              fontWeight:tab===item.mode?700:500, fontSize:14,
               cursor:"pointer", fontFamily:"inherit",
-              boxShadow:tab===m?"0 1px 6px rgba(0,0,0,0.10)":"none",
+              boxShadow:tab===item.mode?"0 1px 6px rgba(0,0,0,0.10)":"none",
               transition:"all 0.2s",
-            }}>{label}</button>
+              display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+            }}>
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
           ))}
         </div>
 
@@ -676,7 +686,7 @@ const LoginScreen = ({ onLogin }) => {
                 <input
                   type={showPass ? "text" : "password"}
                   value={pass}
-                  placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                  placeholder="********"
                   onChange={e=>{setPass(e.target.value);setErr("");}}
                   onKeyDown={e=>e.key==="Enter"&&submit()}
                   style={{
@@ -694,10 +704,10 @@ const LoginScreen = ({ onLogin }) => {
                   style={{
                     position:"absolute", right:10, top:"50%", transform:"translateY(-50%)",
                     border:"none", background:"transparent", color:C.textSub, cursor:"pointer",
-                    fontSize:12, fontWeight:700, padding:"4px 6px",
+                    padding:"4px 6px", display:"flex", alignItems:"center", justifyContent:"center",
                   }}
                 >
-                  {showPass ? "Hide" : "View"}
+                  {showPass ? <I.EyeOff/> : <I.Eye/>}
                 </button>
               </div>
             </div>
@@ -713,10 +723,10 @@ const LoginScreen = ({ onLogin }) => {
             }}>
               {loading
                 ? <><div style={{ width:20,height:20,border:"2.5px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin 0.7s linear infinite" }}/>Signing inâ€¦</>
-                : "Sign In â†’"}
+                : <><span>Sign In</span><I.ArrowRight/></>}
             </button>
             <p style={{ textAlign:"center",marginTop:16,fontSize:12,color:C.textMuted }}>
-              ðŸ”’ Secure session Â· HTTPS only
+              <span style={{ display:"inline-flex",alignItems:"center",gap:6 }}><I.Shield/>Secure session | HTTPS only</span>
             </p>
           </>
         ) : (
@@ -726,10 +736,10 @@ const LoginScreen = ({ onLogin }) => {
               background:C.orangePale, borderRadius:12, padding:"11px 14px",
               marginBottom:16, display:"flex", alignItems:"center", gap:10,
             }}>
-              <span style={{ fontSize:20 }}>ðŸ–¥ï¸</span>
+              <span style={{ display:"inline-flex", color:C.orange }}><I.Camera/></span>
               <div>
                 <div style={{ fontWeight:700,fontSize:13,color:C.textMain }}>Scan from your computer</div>
-                <div style={{ fontSize:11,color:C.textSub,marginTop:1 }}>Textzy web â†’ Link Mobile â†’ QR appears</div>
+                <div style={{ fontSize:11,color:C.textSub,marginTop:1 }}>Textzy web -> Link Mobile -> QR appears</div>
               </div>
             </div>
             <Scanner onDone={async (raw)=>{
@@ -742,7 +752,7 @@ const LoginScreen = ({ onLogin }) => {
               }
             }}/>
             <p style={{ textAlign:"center",marginTop:12,fontSize:12,color:C.textMuted }}>
-              ðŸ”’ One-time token Â· auto-expires in 3 min
+              One-time token | auto-expires in 3 min
             </p>
           </div>
         )}
@@ -963,7 +973,7 @@ export default function TextzyMobile() {
     if (!res.ok) throw new Error(await res.text() || "Invalid credentials");
     const json = await res.json().catch(() => ({}));
     const accessToken = json.accessToken || json.AccessToken || nextTokenHeader;
-    const csrfToken = resolveCsrf(nextCsrfHeader);
+    const csrfToken = resolveCsrf(json.csrfToken || json.CsrfToken || nextCsrfHeader);
     const nextSession = { accessToken, csrfToken, tenantSlug: "" };
     const nextUser = { email: payload.email };
     setSession(nextSession);
@@ -974,6 +984,23 @@ export default function TextzyMobile() {
   };
 
   const handleSelectProject = async (p) => {
+    let workingToken = session.accessToken;
+    let workingCsrf = resolveCsrf(session.csrfToken);
+
+    // WebView can miss CSRF cookie; bootstrap one via refresh before switch.
+    if (!workingCsrf) {
+      const refreshed = await apiFetch("/api/auth/refresh", {
+        method: "POST",
+        token: workingToken,
+      });
+      if (refreshed.res.ok) {
+        const refreshedBody = await refreshed.res.json().catch(() => ({}));
+        workingToken = refreshedBody.accessToken || refreshedBody.AccessToken || refreshed.nextTokenHeader || workingToken;
+        workingCsrf = resolveCsrf(refreshedBody.csrfToken || refreshedBody.CsrfToken || refreshed.nextCsrfHeader || workingCsrf);
+        setSession((prev) => ({ ...prev, accessToken: workingToken, csrfToken: workingCsrf }));
+      }
+    }
+
     const trySwitch = async (accessToken, csrfToken) => apiFetch("/api/auth/switch-project", {
       method: "POST",
       token: accessToken,
@@ -981,7 +1008,7 @@ export default function TextzyMobile() {
       body: { slug: p.slug },
     });
 
-    let first = await trySwitch(session.accessToken, session.csrfToken);
+    let first = await trySwitch(workingToken, workingCsrf);
     let res = first.res;
     let nextTokenHeader = first.nextTokenHeader;
     let nextCsrfHeader = first.nextCsrfHeader;
