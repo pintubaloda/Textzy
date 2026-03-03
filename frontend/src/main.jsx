@@ -12,7 +12,9 @@ const params = new URLSearchParams(window.location.search)
 const desktopShell = params.get('desktopShell') === '1'
 const mobileShell =
   params.get('mobileShell') === '1' ||
-  window.location.pathname.startsWith('/mobile-shell')
+  window.location.pathname.startsWith('/mobile-shell') ||
+  window.location.href.includes('mobileShell=1') ||
+  window.navigator.userAgent.includes('TextzyMobileShell/1')
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

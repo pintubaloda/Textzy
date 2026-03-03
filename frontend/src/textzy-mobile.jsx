@@ -55,6 +55,16 @@ const SESSION_KEY = "textzy.mobile.session";
 const idempotencyKey = () =>
   `mobile-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
+const readCookie = (name) => {
+  if (typeof document === "undefined") return "";
+  const key = `${name}=`;
+  const parts = document.cookie.split(";").map((x) => x.trim());
+  const row = parts.find((x) => x.startsWith(key));
+  return row ? decodeURIComponent(row.slice(key.length)) : "";
+};
+
+const resolveCsrf = (token) => token || readCookie("textzy_csrf") || "";
+
 const parsePairingToken = (raw) => {
   const input = String(raw || "").trim();
   if (!input) return "";
@@ -81,7 +91,10 @@ async function apiFetch(path, { method = "GET", token = "", tenantSlug = "", csr
   if (token) headers.Authorization = `Bearer ${token}`;
   if (tenantSlug && !path.startsWith("/api/auth/") && !path.startsWith("/api/public/")) headers["X-Tenant-Slug"] = tenantSlug;
   if (body != null) headers["Content-Type"] = "application/json";
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase()) && csrfToken) headers["X-CSRF-Token"] = csrfToken;
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase())) {
+    const csrf = resolveCsrf(csrfToken);
+    if (csrf) headers["X-CSRF-Token"] = csrf;
+  }
 
   const res = await fetch(`${API_BASE}${path}`, {
     method,
@@ -769,7 +782,7 @@ export default function TextzyMobile() {
       if (!res.ok) throw new Error(await res.text() || "Pairing code expired or invalid.");
       const json = await res.json().catch(() => ({}));
       const accessToken = json.accessToken || json.AccessToken || nextTokenHeader;
-      const csrfToken = json.csrfToken || json.CsrfToken || nextCsrfHeader;
+      const csrfToken = resolveCsrf(json.csrfToken || json.CsrfToken || nextCsrfHeader);
       const tenantSlug = json.tenantSlug || json.TenantSlug || "";
       const loggedUser = json.user || json.User || { email: "mobile@textzy.io" };
       const nextSession = { accessToken, csrfToken, tenantSlug };
@@ -796,7 +809,7 @@ export default function TextzyMobile() {
     if (!res.ok) throw new Error(await res.text() || "Invalid credentials");
     const json = await res.json().catch(() => ({}));
     const accessToken = json.accessToken || json.AccessToken || nextTokenHeader;
-    const csrfToken = nextCsrfHeader;
+    const csrfToken = resolveCsrf(nextCsrfHeader);
     const nextSession = { accessToken, csrfToken, tenantSlug: "" };
     const nextUser = { email: payload.email };
     setSession(nextSession);
@@ -807,16 +820,42 @@ export default function TextzyMobile() {
   };
 
   const handleSelectProject = async (p) => {
-    const { res, nextTokenHeader, nextCsrfHeader } = await apiFetch("/api/auth/switch-project", {
+    const trySwitch = async (accessToken, csrfToken) => apiFetch("/api/auth/switch-project", {
       method: "POST",
-      token: session.accessToken,
-      csrfToken: session.csrfToken,
+      token: accessToken,
+      csrfToken: resolveCsrf(csrfToken),
       body: { slug: p.slug },
     });
-    if (!res.ok) throw new Error(await res.text() || "Project switch failed");
+
+    let first = await trySwitch(session.accessToken, session.csrfToken);
+    let res = first.res;
+    let nextTokenHeader = first.nextTokenHeader;
+    let nextCsrfHeader = first.nextCsrfHeader;
+
+    if (!res.ok) {
+      const errText = await res.text();
+      if (res.status === 403 && errText.toLowerCase().includes("csrf")) {
+        const refreshed = await apiFetch("/api/auth/refresh", {
+          method: "POST",
+          token: session.accessToken,
+        });
+        if (refreshed.res.ok) {
+          const refreshedBody = await refreshed.res.json().catch(() => ({}));
+          const refreshedToken = refreshedBody.accessToken || refreshedBody.AccessToken || refreshed.nextTokenHeader || session.accessToken;
+          const refreshedCsrf = resolveCsrf(refreshed.nextCsrfHeader || session.csrfToken);
+          setSession((prev) => ({ ...prev, accessToken: refreshedToken, csrfToken: refreshedCsrf }));
+          first = await trySwitch(refreshedToken, refreshedCsrf);
+          res = first.res;
+          nextTokenHeader = first.nextTokenHeader || refreshedToken;
+          nextCsrfHeader = first.nextCsrfHeader || refreshedCsrf;
+        }
+      }
+      if (!res.ok) throw new Error((await res.text()) || "Project switch failed");
+    }
+
     const json = await res.json().catch(() => ({}));
     const accessToken = json.accessToken || json.AccessToken || nextTokenHeader || session.accessToken;
-    const csrfToken = nextCsrfHeader || session.csrfToken;
+    const csrfToken = resolveCsrf(nextCsrfHeader || session.csrfToken);
     const tenantSlug = json.tenantSlug || json.TenantSlug || p.slug;
     const selectedProject = { ...p, role: json.role || json.Role || p.role };
     const nextSession = { accessToken, csrfToken, tenantSlug };
