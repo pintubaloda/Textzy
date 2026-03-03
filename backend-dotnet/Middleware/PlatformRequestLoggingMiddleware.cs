@@ -66,6 +66,7 @@ public class PlatformRequestLoggingMiddleware(RequestDelegate next)
     {
         var path = context.Request.Path.Value ?? string.Empty;
         if (SkipPaths.Contains(path)) return false;
+        if (path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)) return false;
         if (path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase)) return false;
         return path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
     }
