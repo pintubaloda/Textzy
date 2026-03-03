@@ -315,8 +315,10 @@ public class AuthController(
 
     private void WriteAuthHeaders(string token)
     {
+        var csrf = authCookie.EnsureCsrfToken(HttpContext);
         Response.Headers["Authorization"] = $"Bearer {token}";
         Response.Headers["X-Access-Token"] = token;
+        Response.Headers["X-CSRF-Token"] = csrf;
     }
 
     private static string NormalizeSlug(string value)

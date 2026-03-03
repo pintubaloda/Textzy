@@ -7,6 +7,7 @@ const API_BASE =
   process.env.VITE_API_BASE ||
   'https://textzy-backend-production.up.railway.app'
 const STORAGE_KEY = 'textzy.session'
+const CSRF_STORAGE_KEY = 'textzy.csrf'
 const WABA_STATUS_CACHE_PREFIX = 'textzy.wabaStatus'
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 let refreshPromise = null
@@ -18,13 +19,31 @@ export function getApiBase() {
 }
 
 function readCsrfToken() {
-  if (typeof document === 'undefined') return ''
-  const m = document.cookie.match(/(?:^|;\s*)textzy_csrf=([^;]+)/)
-  if (!m || !m[1]) return ''
+  if (typeof document !== 'undefined') {
+    const m = document.cookie.match(/(?:^|;\s*)textzy_csrf=([^;]+)/)
+    if (m && m[1]) {
+      try {
+        return decodeURIComponent(m[1])
+      } catch {
+        return m[1]
+      }
+    }
+  }
+
   try {
-    return decodeURIComponent(m[1])
+    return localStorage.getItem(CSRF_STORAGE_KEY) || ''
   } catch {
-    return m[1]
+    return ''
+  }
+}
+
+function persistCsrfFromResponse(res) {
+  const csrf = (res.headers.get('x-csrf-token') || '').trim()
+  if (!csrf) return
+  try {
+    localStorage.setItem(CSRF_STORAGE_KEY, csrf)
+  } catch {
+    // ignore storage failures
   }
 }
 
@@ -54,6 +73,7 @@ export function setSession(next) {
 
 export function clearSession() {
   localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem(CSRF_STORAGE_KEY)
 }
 
 function getWabaStatusCacheKey() {
@@ -126,7 +146,9 @@ async function baseFetch(path, options = {}, useAuth = true) {
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken
   }
 
-  return fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include', cache: 'no-store' })
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include', cache: 'no-store' })
+  persistCsrfFromResponse(res)
+  return res
 }
 
 async function readErrorMessage(res, fallback) {

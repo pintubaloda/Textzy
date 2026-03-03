@@ -87,7 +87,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("frontend", policy =>
     {
-        if (allowedOrigins.Length > 0) policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials().WithExposedHeaders("Authorization", "X-Access-Token");
+        if (allowedOrigins.Length > 0) policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials().WithExposedHeaders("Authorization", "X-Access-Token", "X-CSRF-Token");
         else policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
     });
 });
