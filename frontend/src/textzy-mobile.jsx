@@ -190,13 +190,13 @@ const mapMessage = (x) => {
 /* â”€â”€ MOCK DATA â”€â”€ */
 const CONTACTS = [
   { id:1, name:"Alice Johnson",    avatar:"AJ", color:"#7C3AED",
-    online:true, unread:2, time:"10:42 AM", lastMsg:"Sure, I'll send the report by EOD ðŸ‘", typing:false,
+    online:true, unread:2, time:"10:42 AM", lastMsg:"Sure, I'll send the report by EOD.", typing:false,
     messages:[
       {id:1,text:"Hey! Did you review the Q3 report?",sent:false,time:"10:30 AM",status:"read"},
       {id:2,text:"Yes looks great! Just a few numbers to double-check.",sent:true,time:"10:35 AM",status:"read"},
       {id:3,text:"Which ones? I can fix right now.",sent:false,time:"10:38 AM",status:"read"},
-      {id:4,text:"Pages 4 and 7 â€” the revenue projections look off.",sent:true,time:"10:40 AM",status:"read"},
-      {id:5,text:"Sure, I'll send the report by EOD ðŸ‘",sent:false,time:"10:42 AM",status:"read"},
+      {id:4,text:"Pages 4 and 7 - the revenue projections look off.",sent:true,time:"10:40 AM",status:"read"},
+      {id:5,text:"Sure, I'll send the report by EOD.",sent:false,time:"10:42 AM",status:"read"},
     ]},
   { id:2, name:"Bob Martinez",     avatar:"BM", color:"#DC2626",
     online:false, unread:0, time:"9:15 AM", lastMsg:"Meeting rescheduled to 3 PM", typing:false,
@@ -206,19 +206,19 @@ const CONTACTS = [
       {id:3,text:"Meeting rescheduled to 3 PM",sent:false,time:"9:15 AM",status:"read"},
     ]},
   { id:3, name:"Customer Support", avatar:"CS", color:"#0891B2",
-    online:true, unread:1, time:"Yesterday", lastMsg:"Ticket #4821 has been resolved âœ…", typing:true,
+    online:true, unread:1, time:"Yesterday", lastMsg:"Ticket #4821 has been resolved.", typing:true,
     messages:[
       {id:1,text:"Hello, I need help with my subscription.",sent:true,time:"Yesterday",status:"read"},
       {id:2,text:"Hi! Happy to help. Can you share your account email?",sent:false,time:"Yesterday",status:"read"},
       {id:3,text:"It's user@example.com",sent:true,time:"Yesterday",status:"read"},
-      {id:4,text:"Ticket #4821 has been resolved âœ…",sent:false,time:"Yesterday",status:"read"},
+      {id:4,text:"Ticket #4821 has been resolved.",sent:false,time:"Yesterday",status:"read"},
     ]},
-  { id:4, name:"Dev Team ðŸ› ï¸",      avatar:"DT", color:"#059669",
-    online:true, unread:0, time:"Yesterday", lastMsg:"Deployment to prod done ðŸš€", typing:false,
+  { id:4, name:"Dev Team",      avatar:"DT", color:"#059669",
+    online:true, unread:0, time:"Yesterday", lastMsg:"Deployment to prod done.", typing:false,
     messages:[
       {id:1,text:"Starting prod deployment...",sent:false,time:"Yesterday",status:"read"},
-      {id:2,text:"Pipeline passed all checks ðŸŸ¢",sent:false,time:"Yesterday",status:"read"},
-      {id:3,text:"Deployment to prod done ðŸš€",sent:false,time:"Yesterday",status:"read"},
+      {id:2,text:"Pipeline passed all checks.",sent:false,time:"Yesterday",status:"read"},
+      {id:3,text:"Deployment to prod done.",sent:false,time:"Yesterday",status:"read"},
     ]},
   { id:5, name:"Sarah Patel",      avatar:"SP", color:"#9333EA",
     online:false, unread:0, time:"Mon", lastMsg:"Can you review my PR?", typing:false,
@@ -228,22 +228,22 @@ const CONTACTS = [
       {id:3,text:"Can you review my PR when free?",sent:false,time:"Mon",status:"read"},
     ]},
   { id:6, name:"Marketing Hub",    avatar:"MH", color:"#D97706",
-    online:false, unread:3, time:"Sun", lastMsg:"New campaign brief ready ðŸ“Ž", typing:false,
+    online:false, unread:3, time:"Sun", lastMsg:"New campaign brief ready.", typing:false,
     messages:[
       {id:1,text:"Q4 campaign planning started!",sent:false,time:"Sun",status:"read"},
-      {id:2,text:"New campaign brief ready ðŸ“Ž",sent:false,time:"Sun",status:"read"},
+      {id:2,text:"New campaign brief ready.",sent:false,time:"Sun",status:"read"},
     ]},
 ];
 
 const PROJECTS = [
-  {slug:"moneyart",  name:"MoneyArt",  icon:"ðŸ’°", role:"Agent"},
-  {slug:"techcorp",  name:"TechCorp",  icon:"ðŸ–¥ï¸", role:"Admin"},
-  {slug:"retailhub", name:"RetailHub", icon:"ðŸ›’", role:"Agent"},
+  {slug:"moneyart",  name:"MoneyArt",  icon:"MA", role:"Agent"},
+  {slug:"techcorp",  name:"TechCorp",  icon:"TC", role:"Admin"},
+  {slug:"retailhub", name:"RetailHub", icon:"RH", role:"Agent"},
 ];
 
 const REPLIES = [
-  "Got it! ðŸ‘","Sure thing!","I'll check and get back to you.",
-  "Sounds good!","On it ðŸš€","Thanks!","Will do âœ…","Let me look into this.","Perfect! ðŸ™Œ",
+  "Got it!", "Sure thing!", "I'll check and get back to you.",
+  "Sounds good!", "On it.", "Thanks!", "Will do.", "Let me look into this.", "Perfect!",
 ];
 
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -555,7 +555,7 @@ const Scanner = ({ onDone }) => {
             </svg>
           </div>
           <p style={{ color:"#fff", fontWeight:700, fontSize:16, margin:0 }}>QR Detected!</p>
-          <p style={{ color:"rgba(255,255,255,0.7)", fontSize:13, margin:0 }}>Logging you inâ€¦</p>
+          <p style={{ color:"rgba(255,255,255,0.7)", fontSize:13, margin:0 }}>Logging you in...</p>
         </div>
       )}
 
@@ -722,11 +722,14 @@ const LoginScreen = ({ onLogin }) => {
               opacity:loading?0.85:1, transition:"opacity 0.2s",
             }}>
               {loading
-                ? <><div style={{ width:20,height:20,border:"2.5px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin 0.7s linear infinite" }}/>Signing inâ€¦</>
+                ? <><div style={{ width:20,height:20,border:"2.5px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin 0.7s linear infinite" }}/>Signing in...</>
                 : <><span>Sign In</span><I.ArrowRight/></>}
             </button>
             <p style={{ textAlign:"center",marginTop:16,fontSize:12,color:C.textMuted }}>
               <span style={{ display:"inline-flex",alignItems:"center",gap:6 }}><I.Shield/>Secure session | HTTPS only</span>
+            </p>
+            <p style={{ textAlign:"center",marginTop:8,fontSize:12,color:C.textMuted }}>
+              Powerd By - Moneyart Private Limited
             </p>
           </>
         ) : (
@@ -793,7 +796,7 @@ const ProjectPicker = ({ projects, onSelect }) => {
               <div style={{ width:46,height:46,borderRadius:12,background:a?C.orangeLight2:C.panelBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0 }}>{p.icon}</div>
               <div style={{ flex:1 }}>
                 <div style={{ fontWeight:700,fontSize:15,color:C.textMain }}>{p.name}</div>
-                <div style={{ fontSize:12,color:C.textSub,marginTop:2 }}>{p.role} Â· /{p.slug}</div>
+                <div style={{ fontSize:12,color:C.textSub,marginTop:2 }}>{p.role} | /{p.slug}</div>
               </div>
               {a&&<div style={{ width:24,height:24,borderRadius:"50%",background:C.orange,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -807,7 +810,7 @@ const ProjectPicker = ({ projects, onSelect }) => {
           color:sel?"#fff":C.textMuted, fontWeight:700, fontSize:16,
           cursor:sel?"pointer":"not-allowed", fontFamily:"inherit",
           boxShadow:sel?`0 6px 24px ${C.orange}55`:"none", transition:"all 0.2s",
-        }}>Continue â†’</button>
+        }}>Continue -></button>
       </div>
     </div>
   );
@@ -877,7 +880,7 @@ export default function TextzyMobile() {
       slug: p.slug || p.Slug,
       name: p.name || p.Name,
       role: p.role || p.Role || "agent",
-      icon: ["ðŸ’°", "ðŸ–¥ï¸", "ðŸ›’", "ðŸ¢", "ðŸ§©"][idx % 5],
+      icon: ["MA", "TC", "RH", "PR", "TM"][idx % 5],
     }));
     setProjects(mapped);
     return mapped;
@@ -953,7 +956,7 @@ export default function TextzyMobile() {
           slug: tenantSlug,
           name: tenantSlug.charAt(0).toUpperCase() + tenantSlug.slice(1),
           role: "agent",
-          icon: "ðŸ’¼",
+          icon: "PR",
         };
         setProject(selected);
         setScreen("app");
@@ -987,18 +990,16 @@ export default function TextzyMobile() {
     let workingToken = session.accessToken;
     let workingCsrf = resolveCsrf(session.csrfToken);
 
-    // WebView can miss CSRF cookie; bootstrap one via refresh before switch.
-    if (!workingCsrf) {
-      const refreshed = await apiFetch("/api/auth/refresh", {
-        method: "POST",
-        token: workingToken,
-      });
-      if (refreshed.res.ok) {
-        const refreshedBody = await refreshed.res.json().catch(() => ({}));
-        workingToken = refreshedBody.accessToken || refreshedBody.AccessToken || refreshed.nextTokenHeader || workingToken;
-        workingCsrf = resolveCsrf(refreshedBody.csrfToken || refreshedBody.CsrfToken || refreshed.nextCsrfHeader || workingCsrf);
-        setSession((prev) => ({ ...prev, accessToken: workingToken, csrfToken: workingCsrf }));
-      }
+    // Always refresh before switch to ensure CSRF cookie/header are synced in WebView.
+    const refreshed = await apiFetch("/api/auth/refresh", {
+      method: "POST",
+      token: workingToken,
+    });
+    if (refreshed.res.ok) {
+      const refreshedBody = await refreshed.res.json().catch(() => ({}));
+      workingToken = refreshedBody.accessToken || refreshedBody.AccessToken || refreshed.nextTokenHeader || workingToken;
+      workingCsrf = resolveCsrf(refreshedBody.csrfToken || refreshedBody.CsrfToken || refreshed.nextCsrfHeader || workingCsrf);
+      setSession((prev) => ({ ...prev, accessToken: workingToken, csrfToken: workingCsrf }));
     }
 
     const trySwitch = async (accessToken, csrfToken) => apiFetch("/api/auth/switch-project", {
@@ -1023,7 +1024,7 @@ export default function TextzyMobile() {
         if (refreshed.res.ok) {
           const refreshedBody = await refreshed.res.json().catch(() => ({}));
           const refreshedToken = refreshedBody.accessToken || refreshedBody.AccessToken || refreshed.nextTokenHeader || session.accessToken;
-          const refreshedCsrf = resolveCsrf(refreshed.nextCsrfHeader || session.csrfToken);
+          const refreshedCsrf = resolveCsrf(refreshedBody.csrfToken || refreshedBody.CsrfToken || refreshed.nextCsrfHeader || session.csrfToken);
           setSession((prev) => ({ ...prev, accessToken: refreshedToken, csrfToken: refreshedCsrf }));
           first = await trySwitch(refreshedToken, refreshedCsrf);
           res = first.res;
@@ -1303,7 +1304,7 @@ export default function TextzyMobile() {
         <div>
           <div style={{ color:"#fff",fontWeight:800,fontSize:20 }}>{uname}</div>
           <div style={{ color:"rgba(255,255,255,0.8)",fontSize:13 }}>{user?.email}</div>
-          <div style={{ color:"rgba(255,255,255,0.7)",fontSize:12,marginTop:3 }}>{project?.icon} {project?.name} Â· {project?.role}</div>
+          <div style={{ color:"rgba(255,255,255,0.7)",fontSize:12,marginTop:3 }}>{project?.icon} {project?.name} | {project?.role}</div>
         </div>
       </div>
 
@@ -1385,7 +1386,7 @@ export default function TextzyMobile() {
           <div style={{ color:"#fff",fontWeight:700,fontSize:15,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{active.name}</div>
           <div style={{ fontSize:12 }}>
             {active.typing
-              ? <span style={{color:C.orangeLight,fontStyle:"italic"}}>typingâ€¦</span>
+              ? <span style={{color:C.orangeLight,fontStyle:"italic"}}>typing...</span>
               : <span style={{color:"rgba(255,255,255,0.65)"}}>{active.online?"Online":"Last seen recently"}</span>}
           </div>
         </div>
@@ -1470,7 +1471,7 @@ export default function TextzyMobile() {
           <input ref={inputRef} value={input}
             onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()}
-            placeholder="Type a messageâ€¦"
+            placeholder="Type a message..."
             style={{ border:"none",outline:"none",flex:1,fontSize:15,color:C.textMain,background:"transparent",fontFamily:"inherit" }}
           />
         </div>
@@ -1544,7 +1545,7 @@ export default function TextzyMobile() {
         {/* search bar */}
         <div style={{ display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.22)",borderRadius:12,padding:"9px 14px",backdropFilter:"blur(4px)" }}>
           <span style={{ color:"rgba(255,255,255,0.8)",display:"flex",flexShrink:0 }}><I.Search/></span>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search conversationsâ€¦"
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search conversations..."
             style={{ border:"none",outline:"none",flex:1,fontSize:14,color:"#fff",background:"transparent",fontFamily:"inherit" }}
           />
           {search&&<button onClick={()=>setSearch("")} style={{ background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.7)",padding:0,display:"flex" }}><I.Close/></button>}
@@ -1575,7 +1576,7 @@ export default function TextzyMobile() {
       <div style={{ flex:1,overflowY:"auto" }}>
         {filtered.length===0 ? (
           <div style={{ textAlign:"center",padding:"60px 20px",color:C.textMuted }}>
-            <div style={{ fontSize:44,marginBottom:10 }}>ðŸ’¬</div>
+            <div style={{ fontSize:44,marginBottom:10 }}>...</div>
             <div style={{ fontSize:15,fontWeight:500 }}>No conversations found</div>
           </div>
         ) : filtered.map((c,i)=>(
@@ -1596,7 +1597,7 @@ export default function TextzyMobile() {
               </div>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
                 <span style={{ fontSize:13,color:C.textSub,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"82%" }}>
-                  {c.typing?<em style={{color:C.orange,fontStyle:"normal",fontWeight:500}}>typingâ€¦</em>:c.lastMsg}
+                  {c.typing?<em style={{color:C.orange,fontStyle:"normal",fontWeight:500}}>typing...</em>:c.lastMsg}
                 </span>
                 {c.unread>0&&(
                   <span style={{ background:C.unread,color:"#fff",borderRadius:20,padding:"2px 8px",fontSize:11,fontWeight:700,flexShrink:0,boxShadow:`0 2px 6px ${C.orange}44` }}>
