@@ -528,6 +528,40 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_UserNotificationPreferences_UserId" ON "UserNotificationPreferences" ("UserId");""");
 
     db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "UserMobileDevices" (
+            "Id" uuid PRIMARY KEY,
+            "UserId" uuid NOT NULL,
+            "TenantId" uuid NOT NULL,
+            "DeviceName" text NOT NULL DEFAULT '',
+            "Platform" text NOT NULL DEFAULT '',
+            "AppVersion" text NOT NULL DEFAULT '',
+            "InstallIdHash" text NOT NULL DEFAULT '',
+            "MetadataJson" text NOT NULL DEFAULT '{}',
+            "LastSeenAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+            "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+            "RevokedAtUtc" timestamp with time zone NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_UserMobileDevices_User_Tenant_Revoked" ON "UserMobileDevices" ("UserId","TenantId","RevokedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_UserMobileDevices_InstallHash" ON "UserMobileDevices" ("InstallIdHash");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "MobilePairingRequests" (
+            "Id" uuid PRIMARY KEY,
+            "UserId" uuid NOT NULL,
+            "TenantId" uuid NOT NULL,
+            "PairingTokenHash" text NOT NULL,
+            "PairingPayloadJson" text NOT NULL DEFAULT '{}',
+            "ExpiresAtUtc" timestamp with time zone NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+            "ConsumedAtUtc" timestamp with time zone NULL,
+            "ConsumedDeviceId" uuid NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_MobilePairingRequests_TokenHash" ON "MobilePairingRequests" ("PairingTokenHash");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_MobilePairingRequests_Expiry" ON "MobilePairingRequests" ("ExpiresAtUtc");""");
+
+    db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "TeamInvitations" (
             "Id" uuid PRIMARY KEY,
             "TenantId" uuid NOT NULL,

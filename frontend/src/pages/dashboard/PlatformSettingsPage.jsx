@@ -78,6 +78,10 @@ const PlatformSettingsPage = () => {
     termsUrl: "",
     privacyUrl: "",
     enforceApiAllowList: false,
+    maxDevicesPerUser: "3",
+    pairCodeTtlSeconds: "180",
+    minSupportedAppVersion: "",
+    pairSchemaVersion: "1",
     webhookAllowedHosts: "",
     allowedApiPrefixes: "/api/auth\n/api/inbox\n/api/messages\n/hubs/inbox",
     apiCatalog: "/api/auth/login\n/api/auth/refresh\n/api/auth/logout\n/api/auth/me\n/api/auth/projects\n/api/auth/switch-project\n/api/auth/app-bootstrap\n/api/inbox/conversations\n/api/inbox/conversations/{id}/messages\n/api/inbox/conversations/{id}/assign\n/api/inbox/conversations/{id}/transfer\n/api/inbox/conversations/{id}/labels\n/api/inbox/conversations/{id}/notes\n/api/inbox/typing\n/api/inbox/sla\n/api/messages/send\n/api/messages/media/{mediaId}\n/hubs/inbox",
@@ -194,6 +198,10 @@ const PlatformSettingsPage = () => {
             termsUrl: values.termsUrl || "",
             privacyUrl: values.privacyUrl || "",
             enforceApiAllowList: String(values.enforceApiAllowList || "false").toLowerCase() === "true",
+            maxDevicesPerUser: values.maxDevicesPerUser || "3",
+            pairCodeTtlSeconds: values.pairCodeTtlSeconds || "180",
+            minSupportedAppVersion: values.minSupportedAppVersion || "",
+            pairSchemaVersion: values.pairSchemaVersion || "1",
             webhookAllowedHosts: values.webhookAllowedHosts || "",
             allowedApiPrefixes: values.allowedApiPrefixes || prev.allowedApiPrefixes,
             apiCatalog: values.apiCatalog || prev.apiCatalog,
@@ -649,6 +657,42 @@ const PlatformSettingsPage = () => {
               />
               Enforce API allow-list in app runtime
             </label>
+            <div className="space-y-2">
+              <Label>Max Devices Per User</Label>
+              <Input
+                type="number"
+                min="1"
+                max="20"
+                value={appConfig.maxDevicesPerUser}
+                onChange={(e) => setAppConfig((p) => ({ ...p, maxDevicesPerUser: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Pair QR TTL (seconds)</Label>
+              <Input
+                type="number"
+                min="60"
+                max="600"
+                value={appConfig.pairCodeTtlSeconds}
+                onChange={(e) => setAppConfig((p) => ({ ...p, pairCodeTtlSeconds: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Min Supported App Version</Label>
+              <Input
+                placeholder="1.0.0"
+                value={appConfig.minSupportedAppVersion}
+                onChange={(e) => setAppConfig((p) => ({ ...p, minSupportedAppVersion: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Pair Schema Version</Label>
+              <Input
+                placeholder="1"
+                value={appConfig.pairSchemaVersion}
+                onChange={(e) => setAppConfig((p) => ({ ...p, pairSchemaVersion: e.target.value }))}
+              />
+            </div>
             <div className="md:col-span-2 flex gap-2">
               <Button
                 className="bg-orange-500 hover:bg-orange-600"
@@ -665,6 +709,10 @@ const PlatformSettingsPage = () => {
                       termsUrl: appConfig.termsUrl || "",
                       privacyUrl: appConfig.privacyUrl || "",
                       enforceApiAllowList: appConfig.enforceApiAllowList ? "true" : "false",
+                      maxDevicesPerUser: appConfig.maxDevicesPerUser || "3",
+                      pairCodeTtlSeconds: appConfig.pairCodeTtlSeconds || "180",
+                      minSupportedAppVersion: appConfig.minSupportedAppVersion || "",
+                      pairSchemaVersion: appConfig.pairSchemaVersion || "1",
                       webhookAllowedHosts: appConfig.webhookAllowedHosts || "",
                       allowedApiPrefixes: appConfig.allowedApiPrefixes || "",
                       apiCatalog: appConfig.apiCatalog || "",

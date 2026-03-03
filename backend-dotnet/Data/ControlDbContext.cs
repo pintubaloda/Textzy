@@ -28,4 +28,6 @@ public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbCo
     public DbSet<TenantSecurityControl> TenantSecurityControls => Set<TenantSecurityControl>();
     public DbSet<UserPushSubscription> UserPushSubscriptions => Set<UserPushSubscription>();
     public DbSet<UserNotificationPreference> UserNotificationPreferences => Set<UserNotificationPreference>();
+    public DbSet<UserMobileDevice> UserMobileDevices => Set<UserMobileDevice>();
+    public DbSet<MobilePairingRequest> MobilePairingRequests => Set<MobilePairingRequest>();
 }

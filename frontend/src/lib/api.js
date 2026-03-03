@@ -367,6 +367,18 @@ export async function getAppBootstrap() {
   return apiGet('/api/auth/app-bootstrap')
 }
 
+export async function getConnectedDevices() {
+  return apiGet('/api/auth/devices')
+}
+
+export async function createPairingQr(payload = {}) {
+  return apiPost('/api/auth/devices/pair-qr', payload)
+}
+
+export async function removeConnectedDevice(deviceId) {
+  return apiDelete(`/api/auth/devices/${encodeURIComponent(deviceId)}`)
+}
+
 export async function createProject(name) {
   const data = await apiPost('/api/auth/projects', { name })
   setSession({

@@ -39,6 +39,7 @@ import {
   Check,
   Send,
   GitBranch,
+  Smartphone,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { apiGet, authProjects, clearSession, getSession, initializeMe, switchProject } from "@/lib/api";
@@ -167,6 +168,7 @@ const DashboardLayout = () => {
     { name: "Team", href: "/dashboard/team", icon: UsersRound },
     { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
     { name: "Settings", href: "/dashboard/settings", icon: Settings },
+    { name: "Mobile Devices", href: "/dashboard/mobile-devices", icon: Smartphone },
   ];
 
   const platformNavigation = [

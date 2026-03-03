@@ -29,6 +29,7 @@ import AdminPage from "@/pages/dashboard/AdminPage";
 import TeamPage from "@/pages/dashboard/TeamPage";
 import PlatformSettingsPage from "@/pages/dashboard/PlatformSettingsPage";
 import SmsSetupPage from "@/pages/dashboard/SmsSetupPage";
+import MobileDevicesPage from "@/pages/dashboard/MobileDevicesPage";
 
 function App() {
   const session = getSession();
@@ -62,6 +63,7 @@ function App() {
             <Route path="whatsapp-onboarding" element={<Navigate to="/dashboard/settings?tab=whatsapp" replace />} />
             <Route path="billing" element={<BillingPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="mobile-devices" element={<MobileDevicesPage />} />
             <Route path="team" element={<TeamPage />} />
             <Route path="admin" element={isPlatformOwner ? <AdminPage /> : <Navigate to="/dashboard" replace />} />
             <Route path="platform-settings" element={isPlatformOwner ? <PlatformSettingsPage /> : <Navigate to="/dashboard" replace />} />

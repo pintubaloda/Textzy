@@ -61,6 +61,10 @@ Cookies used by backend:
 - `POST /api/auth/switch-project` body: `{ "slug": "..." }`
 - `GET /api/auth/team-members`
 - `GET /api/auth/app-bootstrap` (new: runtime app config for logged-in user)
+- `GET /api/auth/devices` (connected devices for current user + selected tenant)
+- `POST /api/auth/devices/pair-qr` (generate one-time pairing QR payload)
+- `DELETE /api/auth/devices/{id}` (revoke connected mobile device)
+- `POST /api/public/mobile/pair/exchange` (mobile app exchanges pairing token and receives auth session)
 
 ## 6A. Platform Owner App Base Settings (New Module)
 Configured in platform owner UI:
@@ -78,10 +82,61 @@ Fields supported:
 - `enforceApiAllowList` (`true`/`false`)
 - `allowedApiPrefixes` (newline/csv or JSON array)
 - `apiCatalog` (newline/csv or JSON array)
+- `maxDevicesPerUser` (default `3`, range `1..20`)
+- `pairCodeTtlSeconds` (default `180`, range `60..600`)
+- `minSupportedAppVersion` (e.g. `1.0.0`)
+- `pairSchemaVersion` (default `1`)
 
 App bootstrap response now returns:
 - `app` object with above non-secret runtime settings
 - `auth` object with current user/tenant/role/permissions
+
+## 6B. QR Device Pairing Flow (New)
+Web side (logged-in user):
+1. User opens `Connect Mobile` in dashboard.
+2. Web calls `POST /api/auth/devices/pair-qr`.
+3. Backend returns:
+   - `qrPayload` (JSON string to encode as QR)
+   - `pairingToken` (same token inside payload)
+   - `expiresAtUtc`
+   - device limit summary
+4. Web renders QR via backend-hosted image endpoint (`GET /api/auth/devices/pair-qr-image?pairingToken=...`) and optional token fallback.
+
+App side (scan + login):
+1. App scans QR and parses `qrPayload`.
+2. App reads `apiBaseUrl`, `tenantSlug`, `token`, `v`, expiry and app version constraints.
+3. App calls `POST /api/public/mobile/pair/exchange` with:
+   - `pairingToken`
+   - `installId` (required unique install identifier)
+   - `deviceName`, `devicePlatform`, `deviceModel`, `osVersion`, `appVersion`
+4. Backend validates one-time token + expiry + device limit and returns:
+   - `accessToken`
+   - `csrfToken`
+   - `tenantSlug`, `role`, `user`
+   - `device` details
+5. App uses returned token/session exactly like normal login flow.
+
+Security properties:
+- Pairing token is one-time use and short TTL.
+- Pairing token is stored hashed server-side.
+- Device limit enforced per user + tenant.
+- User can revoke devices from web (`DELETE /api/auth/devices/{id}`).
+- No third-party QR JavaScript is executed in browser; QR image is served from backend path.
+- QR image is rendered server-side and delivered from Textzy backend endpoint.
+- Textzy logo is embedded in center of QR image payload.
+- Pairing endpoints enforce HTTPS transport.
+
+## 6C. Encryption Model (Mobile <-> Backend)
+- Transport encryption: HTTPS/TLS required for login, refresh, pairing, and all protected APIs.
+- Session credential security:
+  - access token sent in `Authorization: Bearer ...`
+  - CSRF token required on unsafe methods
+  - session token stored hashed server-side
+- Pairing security:
+  - token stored hashed server-side
+  - token is short-lived and one-time-use
+  - device binding via `installId` hash
+- Sensitive platform secrets remain server-side only (never sent to app).
 
 ## 7. Inbox APIs for Native App
 Base: `/api/inbox`
@@ -181,6 +236,13 @@ Never store WABA/platform secrets in app.
 6. Call `/api/auth/switch-project`.
 7. Start Inbox APIs + SignalR with switched token/tenant.
 
+## 12A. Minimal App QR Login Flow
+1. User is already logged in on web and generates QR from `Connect Mobile`.
+2. App scans QR and validates `expiresAtUtc`.
+3. App calls `/api/public/mobile/pair/exchange`.
+4. Store `accessToken`, `csrfToken`, `tenantSlug` securely.
+5. Start normal API + SignalR flow with same token.
+
 ## 13. Production Checklist
 - Backend `AllowedOrigins` contains app/web origins.
 - CORS exposes headers: `Authorization`, `X-Access-Token`, `X-CSRF-Token`.
@@ -189,6 +251,8 @@ Never store WABA/platform secrets in app.
 - Tenant switch is always done before tenant-bound screens.
 - SignalR reconnect logic re-joins tenant room.
 - Token refresh/re-login path is implemented for 401.
+- QR pairing TTL and device limit are configured in `mobile-app` settings.
+- Connected device revoke flow is tested (web remove -> app relogin required after session expiry/revocation policy).
 
 ## 14. Recommended Next Upgrade (Permanent Hardening)
 To align with long-term mobile security model:

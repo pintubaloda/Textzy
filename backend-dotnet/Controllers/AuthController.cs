@@ -22,7 +22,8 @@ public class AuthController(
     SecretCryptoService crypto,
     TemplateSyncOrchestrator templateSync,
     SensitiveDataRedactor redactor,
-    ILogger<AuthController> logger) : ControllerBase
+    ILogger<AuthController> logger,
+    IHttpClientFactory httpClientFactory) : ControllerBase
 {
     private static readonly string[] DefaultAppApiCatalog =
     [
@@ -33,6 +34,9 @@ public class AuthController(
         "/api/auth/projects",
         "/api/auth/switch-project",
         "/api/auth/app-bootstrap",
+        "/api/auth/devices",
+        "/api/auth/devices/pair-qr",
+        "/api/public/mobile/pair/exchange",
         "/api/inbox/conversations",
         "/api/inbox/conversations/{id}/messages",
         "/api/inbox/conversations/{id}/assign",
@@ -275,6 +279,10 @@ public class AuthController(
         var apiCatalog = ParseApiCatalog(values, DefaultAppApiCatalog);
         var allowedApiPrefixes = ParseAllowedPrefixes(values, apiCatalog);
         var enforceAllowList = ParseBool(GetSetting(values, "enforceApiAllowList", "false"));
+        var maxDevicesPerUser = ParseInt(GetSetting(values, "maxDevicesPerUser", "3"), 3, 1, 20);
+        var pairCodeTtlSeconds = ParseInt(GetSetting(values, "pairCodeTtlSeconds", "180"), 180, 60, 600);
+        var minSupportedAppVersion = GetSetting(values, "minSupportedAppVersion", string.Empty);
+        var pairSchemaVersion = GetSetting(values, "pairSchemaVersion", "1");
 
         return Ok(new
         {
@@ -289,7 +297,11 @@ public class AuthController(
                 privacyUrl,
                 enforceApiAllowList = enforceAllowList,
                 allowedApiPrefixes,
-                apiCatalog
+                apiCatalog,
+                maxDevicesPerUser,
+                pairCodeTtlSeconds,
+                minSupportedAppVersion,
+                pairSchemaVersion
             },
             auth = new
             {
@@ -301,6 +313,148 @@ public class AuthController(
                 permissions = auth.Permissions
             }
         });
+    }
+
+    [HttpGet("devices")]
+    public IActionResult ListConnectedDevices()
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+
+        var devices = db.UserMobileDevices
+            .Where(x => x.UserId == auth.UserId && x.TenantId == auth.TenantId && x.RevokedAtUtc == null)
+            .OrderByDescending(x => x.LastSeenAtUtc)
+            .Select(x => new
+            {
+                x.Id,
+                x.DeviceName,
+                x.Platform,
+                x.AppVersion,
+                x.CreatedAtUtc,
+                x.LastSeenAtUtc
+            })
+            .ToList();
+
+        return Ok(devices);
+    }
+
+    [HttpDelete("devices/{deviceId:guid}")]
+    public async Task<IActionResult> RemoveConnectedDevice([FromRoute] Guid deviceId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+
+        var device = await db.UserMobileDevices
+            .FirstOrDefaultAsync(x => x.Id == deviceId && x.UserId == auth.UserId && x.TenantId == auth.TenantId, ct);
+        if (device is null) return NotFound("Device not found.");
+        if (device.RevokedAtUtc is not null) return NoContent();
+
+        device.RevokedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    [HttpPost("devices/pair-qr")]
+    public async Task<IActionResult> CreatePairQr([FromBody] PairQrRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!IsSecureRequest()) return StatusCode(StatusCodes.Status400BadRequest, "HTTPS is required.");
+
+        var settings = await ReadMobileAppSettingsAsync(ct);
+        var maxDevicesPerUser = ParseInt(GetSetting(settings, "maxDevicesPerUser", "3"), 3, 1, 20);
+        var pairCodeTtlSeconds = ParseInt(GetSetting(settings, "pairCodeTtlSeconds", "180"), 180, 60, 600);
+        var pairSchemaVersion = GetSetting(settings, "pairSchemaVersion", "1");
+        var minSupportedAppVersion = GetSetting(settings, "minSupportedAppVersion", string.Empty);
+        var apiBaseUrl = GetSetting(settings, "apiBaseUrl", $"{Request.Scheme}://{Request.Host.Value}");
+
+        var activeDeviceCount = await db.UserMobileDevices
+            .CountAsync(x => x.UserId == auth.UserId && x.TenantId == auth.TenantId && x.RevokedAtUtc == null, ct);
+        if (activeDeviceCount >= maxDevicesPerUser)
+            return BadRequest($"Device limit reached ({maxDevicesPerUser}). Remove a device first.");
+
+        var token = CreateOpaqueToken(32);
+        var tokenHash = HashToken(token);
+        var now = DateTime.UtcNow;
+        var expiresAt = now.AddSeconds(pairCodeTtlSeconds);
+        var tenantSlug = tenancy.TenantSlug ?? string.Empty;
+
+        var payload = new PairingPayloadDto
+        {
+            V = pairSchemaVersion,
+            Token = token,
+            ApiBaseUrl = apiBaseUrl,
+            TenantSlug = tenantSlug,
+            IssuedAtUtc = now,
+            ExpiresAtUtc = expiresAt,
+            MinSupportedAppVersion = minSupportedAppVersion,
+            BuildHint = (request.BuildHint ?? string.Empty).Trim()
+        };
+        var payloadJson = JsonSerializer.Serialize(payload);
+
+        db.MobilePairingRequests.Add(new MobilePairingRequest
+        {
+            Id = Guid.NewGuid(),
+            UserId = auth.UserId,
+            TenantId = auth.TenantId,
+            PairingTokenHash = tokenHash,
+            PairingPayloadJson = payloadJson,
+            CreatedAtUtc = now,
+            ExpiresAtUtc = expiresAt
+        });
+        await db.SaveChangesAsync(ct);
+
+        return Ok(new
+        {
+            qrPayload = payloadJson,
+            pairingToken = token,
+            expiresAtUtc = expiresAt,
+            maxDevicesPerUser,
+            activeDeviceCount
+        });
+    }
+
+    [HttpGet("devices/pair-qr-image")]
+    public async Task<IActionResult> GetPairQrImage([FromQuery] string pairingToken, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!IsSecureRequest()) return StatusCode(StatusCodes.Status400BadRequest, "HTTPS is required.");
+        var token = (pairingToken ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(token)) return BadRequest("Pairing token is required.");
+
+        var tokenHash = HashToken(token);
+        var now = DateTime.UtcNow;
+        var pair = await db.MobilePairingRequests
+            .Where(x => x.PairingTokenHash == tokenHash)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+
+        if (pair is null || pair.UserId != auth.UserId || pair.TenantId != auth.TenantId)
+            return NotFound("Pair request not found.");
+        if (pair.ConsumedAtUtc is not null || pair.ExpiresAtUtc <= now)
+            return BadRequest("Pairing code expired or already used.");
+
+        try
+        {
+            var encoded = Uri.EscapeDataString(pair.PairingPayloadJson);
+            var qrUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=320x320&ecc=M&data={encoded}";
+            var client = httpClientFactory.CreateClient();
+            var qrBytes = await client.GetByteArrayAsync(qrUrl, ct);
+            var qrBase64 = Convert.ToBase64String(qrBytes);
+            var logoPath = Path.Combine(AppContext.BaseDirectory, "Assets", "textzy-logo.png");
+            if (!System.IO.File.Exists(logoPath))
+                logoPath = Path.Combine(Directory.GetCurrentDirectory(), "Assets", "textzy-logo.png");
+            var logoBase64 = System.IO.File.Exists(logoPath)
+                ? Convert.ToBase64String(await System.IO.File.ReadAllBytesAsync(logoPath, ct))
+                : string.Empty;
+            var logoOverlay = string.IsNullOrWhiteSpace(logoBase64)
+                ? string.Empty
+                : $"<image x=\"39%\" y=\"39%\" width=\"22%\" height=\"22%\" href=\"data:image/png;base64,{logoBase64}\" preserveAspectRatio=\"xMidYMid meet\" />";
+            var svg = $"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"320\" height=\"320\" viewBox=\"0 0 320 320\"><image x=\"0\" y=\"0\" width=\"320\" height=\"320\" href=\"data:image/png;base64,{qrBase64}\"/>{logoOverlay}</svg>";
+            return Content(svg, "image/svg+xml; charset=utf-8");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Failed to render QR image: {Error}", redactor.RedactText(ex.Message));
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, "QR image temporarily unavailable.");
+        }
     }
 
     [HttpPost("projects")]
@@ -464,6 +618,25 @@ public class AuthController(
         return bool.TryParse(raw, out var value) && value;
     }
 
+    private async Task<Dictionary<string, string>> ReadMobileAppSettingsAsync(CancellationToken ct)
+    {
+        var entries = await db.PlatformSettings
+            .Where(x => x.Scope == "mobile-app")
+            .ToListAsync(ct);
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in entries)
+            values[e.Key] = crypto.Decrypt(e.ValueEncrypted);
+        return values;
+    }
+
+    private static int ParseInt(string raw, int fallback, int min, int max)
+    {
+        if (!int.TryParse(raw, out var value)) value = fallback;
+        if (value < min) value = min;
+        if (value > max) value = max;
+        return value;
+    }
+
     private async Task<Guid> EnsureOwnerGroupForUserAsync(Guid userId, string projectName, CancellationToken ct)
     {
         var ownerTenantIds = await db.TenantUsers
@@ -558,10 +731,44 @@ public class AuthController(
         return Convert.ToHexString(bytes);
     }
 
+    private static string CreateOpaqueToken(int byteLength)
+    {
+        var tokenBytes = RandomNumberGenerator.GetBytes(byteLength);
+        return Convert.ToBase64String(tokenBytes)
+            .Replace('+', '-')
+            .Replace('/', '_')
+            .TrimEnd('=');
+    }
+
+    private bool IsSecureRequest()
+    {
+        if (Request.IsHttps) return true;
+        if (string.Equals(Request.Headers["X-Forwarded-Proto"].FirstOrDefault(), "https", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
+    }
+
     public sealed class AcceptInviteRequest
     {
         public string Token { get; set; } = string.Empty;
         public string FullName { get; set; } = string.Empty;
         public string Password { get; set; } = string.Empty;
+    }
+
+    public sealed class PairQrRequest
+    {
+        public string BuildHint { get; set; } = string.Empty;
+    }
+
+    public sealed class PairingPayloadDto
+    {
+        public string V { get; set; } = "1";
+        public string Token { get; set; } = string.Empty;
+        public string ApiBaseUrl { get; set; } = string.Empty;
+        public string TenantSlug { get; set; } = string.Empty;
+        public DateTime IssuedAtUtc { get; set; }
+        public DateTime ExpiresAtUtc { get; set; }
+        public string MinSupportedAppVersion { get; set; } = string.Empty;
+        public string BuildHint { get; set; } = string.Empty;
     }
 }
