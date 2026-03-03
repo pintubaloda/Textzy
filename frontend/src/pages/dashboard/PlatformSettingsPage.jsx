@@ -69,6 +69,18 @@ const PlatformSettingsPage = () => {
   const tab = searchParams.get("tab") || "waba-master";
   const [gateway, setGateway] = useState("razorpay");
   const [waba, setWaba] = useState({ appId: "", appSecret: "", embeddedConfigId: "", verifyToken: "", webhookUrl: "", systemUserAccessToken: "" });
+  const [appConfig, setAppConfig] = useState({
+    appName: "Textzy",
+    baseDomain: "",
+    apiBaseUrl: "",
+    hubPath: "/hubs/inbox",
+    supportUrl: "",
+    termsUrl: "",
+    privacyUrl: "",
+    enforceApiAllowList: false,
+    allowedApiPrefixes: "/api/auth\n/api/inbox\n/api/messages\n/hubs/inbox",
+    apiCatalog: "/api/auth/login\n/api/auth/refresh\n/api/auth/logout\n/api/auth/me\n/api/auth/projects\n/api/auth/switch-project\n/api/auth/app-bootstrap\n/api/inbox/conversations\n/api/inbox/conversations/{id}/messages\n/api/inbox/conversations/{id}/assign\n/api/inbox/conversations/{id}/transfer\n/api/inbox/conversations/{id}/labels\n/api/inbox/conversations/{id}/notes\n/api/inbox/typing\n/api/inbox/sla\n/api/messages/send\n/api/messages/media/{mediaId}\n/hubs/inbox",
+  });
   const [payment, setPayment] = useState({ provider: "razorpay", merchantId: "", keyId: "", keySecret: "", webhookSecret: "" });
   const [webhookItems, setWebhookItems] = useState([]);
   const [webhookEdit, setWebhookEdit] = useState({ provider: "razorpay", endpointUrl: "", webhookId: "", eventsCsv: "" });
@@ -139,6 +151,8 @@ const PlatformSettingsPage = () => {
         ? "Security Operations"
         : tab === "idempotency-diagnostics"
         ? "Idempotency Diagnostics"
+        : tab === "app-settings"
+        ? "Mobile App Base Settings"
         : tab === "waba-policies"
         ? "WABA Error Policies"
         : "Waba Master Config"
@@ -165,6 +179,23 @@ const PlatformSettingsPage = () => {
             webhookUrl: values.webhookUrl || "",
             systemUserAccessToken: values.systemUserAccessToken || values.accessToken || "",
           });
+        } else if (tab === "app-settings") {
+          const res = await getPlatformSettings("mobile-app");
+          const values = res?.values || {};
+          if (!active) return;
+          setAppConfig((prev) => ({
+            ...prev,
+            appName: values.appName || "Textzy",
+            baseDomain: values.baseDomain || "",
+            apiBaseUrl: values.apiBaseUrl || "",
+            hubPath: values.hubPath || "/hubs/inbox",
+            supportUrl: values.supportUrl || "",
+            termsUrl: values.termsUrl || "",
+            privacyUrl: values.privacyUrl || "",
+            enforceApiAllowList: String(values.enforceApiAllowList || "false").toLowerCase() === "true",
+            allowedApiPrefixes: values.allowedApiPrefixes || prev.allowedApiPrefixes,
+            apiCatalog: values.apiCatalog || prev.apiCatalog,
+          }));
         } else if (tab === "payment-gateway") {
           const res = await getPlatformSettings("payment-gateway");
           const values = res?.values || {};
@@ -523,6 +554,103 @@ const PlatformSettingsPage = () => {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "app-settings" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>Native App Runtime Config</CardTitle>
+            <CardDescription>
+              Configure non-secret app runtime settings. Mobile apps read these from <code>/api/auth/app-bootstrap</code> after user login.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>App Name</Label>
+              <Input value={appConfig.appName} onChange={(e) => setAppConfig((p) => ({ ...p, appName: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Base Domain</Label>
+              <Input placeholder="textzy.in" value={appConfig.baseDomain} onChange={(e) => setAppConfig((p) => ({ ...p, baseDomain: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>API Base URL</Label>
+              <Input placeholder="https://textzy-backend-production.up.railway.app" value={appConfig.apiBaseUrl} onChange={(e) => setAppConfig((p) => ({ ...p, apiBaseUrl: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>SignalR Hub Path</Label>
+              <Input placeholder="/hubs/inbox" value={appConfig.hubPath} onChange={(e) => setAppConfig((p) => ({ ...p, hubPath: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Support URL</Label>
+              <Input placeholder="https://textzy.in/support" value={appConfig.supportUrl} onChange={(e) => setAppConfig((p) => ({ ...p, supportUrl: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Terms URL</Label>
+              <Input placeholder="https://textzy.in/terms" value={appConfig.termsUrl} onChange={(e) => setAppConfig((p) => ({ ...p, termsUrl: e.target.value }))} />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Privacy URL</Label>
+              <Input placeholder="https://textzy.in/privacy" value={appConfig.privacyUrl} onChange={(e) => setAppConfig((p) => ({ ...p, privacyUrl: e.target.value }))} />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Allowed API Prefixes (newline or comma separated)</Label>
+              <textarea
+                className="min-h-[110px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                value={appConfig.allowedApiPrefixes}
+                onChange={(e) => setAppConfig((p) => ({ ...p, allowedApiPrefixes: e.target.value }))}
+                placeholder="/api/auth&#10;/api/inbox&#10;/api/messages&#10;/hubs/inbox"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>App API Catalog (newline or comma separated)</Label>
+              <textarea
+                className="min-h-[150px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                value={appConfig.apiCatalog}
+                onChange={(e) => setAppConfig((p) => ({ ...p, apiCatalog: e.target.value }))}
+                placeholder="/api/auth/login&#10;/api/auth/me&#10;/api/inbox/conversations"
+              />
+            </div>
+            <label className="md:col-span-2 inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={!!appConfig.enforceApiAllowList}
+                onChange={(e) => setAppConfig((p) => ({ ...p, enforceApiAllowList: e.target.checked }))}
+              />
+              Enforce API allow-list in app runtime
+            </label>
+            <div className="md:col-span-2 flex gap-2">
+              <Button
+                className="bg-orange-500 hover:bg-orange-600"
+                disabled={loading}
+                onClick={async () => {
+                  try {
+                    setLoading(true);
+                    await savePlatformSettings("mobile-app", {
+                      appName: appConfig.appName || "",
+                      baseDomain: appConfig.baseDomain || "",
+                      apiBaseUrl: appConfig.apiBaseUrl || "",
+                      hubPath: appConfig.hubPath || "/hubs/inbox",
+                      supportUrl: appConfig.supportUrl || "",
+                      termsUrl: appConfig.termsUrl || "",
+                      privacyUrl: appConfig.privacyUrl || "",
+                      enforceApiAllowList: appConfig.enforceApiAllowList ? "true" : "false",
+                      allowedApiPrefixes: appConfig.allowedApiPrefixes || "",
+                      apiCatalog: appConfig.apiCatalog || "",
+                    });
+                    toast.success("App base settings saved");
+                  } catch {
+                    toast.error("Failed to save app settings");
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+              >
+                Save
+              </Button>
             </div>
           </CardContent>
         </Card>

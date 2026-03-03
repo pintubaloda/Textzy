@@ -363,6 +363,10 @@ export async function authProjects() {
   return apiGet('/api/auth/projects')
 }
 
+export async function getAppBootstrap() {
+  return apiGet('/api/auth/app-bootstrap')
+}
+
 export async function createProject(name) {
   const data = await apiPost('/api/auth/projects', { name })
   setSession({

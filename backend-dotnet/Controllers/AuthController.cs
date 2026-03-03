@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Textzy.Api.Data;
 using Textzy.Api.DTOs;
 using Textzy.Api.Models;
@@ -18,10 +19,33 @@ public class AuthController(
     TenancyContext tenancy,
     AuthContext auth,
     AuthCookieService authCookie,
+    SecretCryptoService crypto,
     TemplateSyncOrchestrator templateSync,
     SensitiveDataRedactor redactor,
     ILogger<AuthController> logger) : ControllerBase
 {
+    private static readonly string[] DefaultAppApiCatalog =
+    [
+        "/api/auth/login",
+        "/api/auth/refresh",
+        "/api/auth/logout",
+        "/api/auth/me",
+        "/api/auth/projects",
+        "/api/auth/switch-project",
+        "/api/auth/app-bootstrap",
+        "/api/inbox/conversations",
+        "/api/inbox/conversations/{id}/messages",
+        "/api/inbox/conversations/{id}/assign",
+        "/api/inbox/conversations/{id}/transfer",
+        "/api/inbox/conversations/{id}/labels",
+        "/api/inbox/conversations/{id}/notes",
+        "/api/inbox/typing",
+        "/api/inbox/sla",
+        "/api/messages/send",
+        "/api/messages/media/{mediaId}",
+        "/hubs/inbox"
+    ];
+
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken ct)
     {
@@ -229,6 +253,56 @@ public class AuthController(
         return Ok(team);
     }
 
+    [HttpGet("app-bootstrap")]
+    public async Task<IActionResult> AppBootstrap(CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+
+        var entries = await db.PlatformSettings
+            .Where(x => x.Scope == "mobile-app")
+            .ToListAsync(ct);
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in entries)
+            values[e.Key] = crypto.Decrypt(e.ValueEncrypted);
+
+        var appName = GetSetting(values, "appName", "Textzy");
+        var baseDomain = GetSetting(values, "baseDomain", string.Empty);
+        var apiBaseUrl = GetSetting(values, "apiBaseUrl", $"{Request.Scheme}://{Request.Host.Value}");
+        var hubPath = GetSetting(values, "hubPath", "/hubs/inbox");
+        var supportUrl = GetSetting(values, "supportUrl", string.Empty);
+        var termsUrl = GetSetting(values, "termsUrl", string.Empty);
+        var privacyUrl = GetSetting(values, "privacyUrl", string.Empty);
+        var apiCatalog = ParseApiCatalog(values, DefaultAppApiCatalog);
+        var allowedApiPrefixes = ParseAllowedPrefixes(values, apiCatalog);
+        var enforceAllowList = ParseBool(GetSetting(values, "enforceApiAllowList", "false"));
+
+        return Ok(new
+        {
+            app = new
+            {
+                appName,
+                baseDomain,
+                apiBaseUrl,
+                hubPath,
+                supportUrl,
+                termsUrl,
+                privacyUrl,
+                enforceApiAllowList = enforceAllowList,
+                allowedApiPrefixes,
+                apiCatalog
+            },
+            auth = new
+            {
+                auth.UserId,
+                auth.Email,
+                auth.Role,
+                auth.TenantId,
+                tenantSlug = tenancy.TenantSlug,
+                permissions = auth.Permissions
+            }
+        });
+    }
+
     [HttpPost("projects")]
     public async Task<IActionResult> CreateProject([FromBody] CreateProjectRequest request, CancellationToken ct)
     {
@@ -328,6 +402,66 @@ public class AuthController(
         var slug = new string(chars);
         while (slug.Contains("--", StringComparison.Ordinal)) slug = slug.Replace("--", "-", StringComparison.Ordinal);
         return slug.Trim('-');
+    }
+
+    private static string GetSetting(Dictionary<string, string> values, string key, string fallback)
+    {
+        return values.TryGetValue(key, out var raw) && !string.IsNullOrWhiteSpace(raw)
+            ? raw.Trim()
+            : fallback;
+    }
+
+    private static string[] ParseApiCatalog(Dictionary<string, string> values, string[] fallback)
+    {
+        var raw = GetSetting(values, "apiCatalog", string.Empty);
+        if (string.IsNullOrWhiteSpace(raw)) return fallback;
+
+        var parsed = ParseStringArray(raw);
+        return parsed.Length == 0 ? fallback : parsed;
+    }
+
+    private static string[] ParseAllowedPrefixes(Dictionary<string, string> values, string[] fallback)
+    {
+        var raw = GetSetting(values, "allowedApiPrefixes", string.Empty);
+        if (string.IsNullOrWhiteSpace(raw)) return fallback;
+
+        var parsed = ParseStringArray(raw);
+        return parsed.Length == 0 ? fallback : parsed;
+    }
+
+    private static string[] ParseStringArray(string raw)
+    {
+        try
+        {
+            if (raw.TrimStart().StartsWith("[", StringComparison.Ordinal))
+            {
+                var fromJson = JsonSerializer.Deserialize<string[]>(raw);
+                if (fromJson is not null)
+                {
+                    return fromJson
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => x.Trim())
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                }
+            }
+        }
+        catch
+        {
+            // fallback to csv/newline parsing
+        }
+
+        return raw
+            .Split([',', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool ParseBool(string raw)
+    {
+        return bool.TryParse(raw, out var value) && value;
     }
 
     private async Task<Guid> EnsureOwnerGroupForUserAsync(Guid userId, string projectName, CancellationToken ct)
