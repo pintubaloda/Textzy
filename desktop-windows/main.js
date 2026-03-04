@@ -1,7 +1,7 @@
 const { app, BrowserWindow, session } = require("electron");
 const path = require("path");
 
-const SHELL_URL = "https://textzy-frontend-production.up.railway.app/login?platform=windows";
+const SHELL_URL = "https://textzy-frontend-production.up.railway.app/?desktopShell=1&platform=windows";
 const TRUSTED_HOSTS = new Set([
   "textzy-frontend-production.up.railway.app",
   "textzy-backend-production.up.railway.app"

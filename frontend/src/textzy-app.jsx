@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { getPublicAppUpdateManifest } from "./lib/api";
+import TextzyWindowsDesktop from "./textzy-windows-desktop";
 
 /* ═══════════════════════════════════
    TEXTZY BRAND COLOURS (from logo)
@@ -860,6 +861,17 @@ export default function TextzyApp() {
     setSession({ accessToken: "", csrfToken: "", tenantSlug: "" });
   };
 
+  const handleLogout = () => {
+    clearSession();
+    setUser(null);
+    setProject(null);
+    setProjects([]);
+    setCons([]);
+    setAId(null);
+    setScreen("login");
+    setPO(false);
+  };
+
   const loadProjects = async (token) => {
     const { res } = await apiFetch("/api/auth/projects", { token });
     if (!res.ok) throw new Error(await res.text() || "Failed to load projects");
@@ -1038,6 +1050,26 @@ export default function TextzyApp() {
   }
 
   const uname = (user?.email || "User").split("@")[0];
+
+  if (!isMobileDevice) {
+    return (
+      <TextzyWindowsDesktop
+        userName={uname}
+        projectName={project?.name || ""}
+        contacts={contacts}
+        activeId={activeId}
+        setActiveId={setAId}
+        search={search}
+        setSearch={setSearch}
+        input={input}
+        setInput={setInput}
+        send={send}
+        msgEndRef={msgEnd}
+        onLogout={handleLogout}
+        onOpenChat={openChat}
+      />
+    );
+  }
 
   /* ── Mobile layout: full-screen list OR full-screen chat ── */
   if (isMobileDevice) {
