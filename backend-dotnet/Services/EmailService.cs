@@ -5,6 +5,29 @@ namespace Textzy.Api.Services;
 
 public class EmailService(IConfiguration config)
 {
+    private static int ResolveTimeoutMs(IConfiguration config)
+    {
+        var raw = config["Smtp:TimeoutMs"] ?? config["SMTP_TIMEOUT_MS"] ?? "15000";
+        if (!int.TryParse(raw, out var ms)) ms = 15000;
+        if (ms < 3000) ms = 3000;
+        if (ms > 60000) ms = 60000;
+        return ms;
+    }
+
+    private static async Task SendWithTimeoutAsync(SmtpClient client, MailMessage msg, int timeoutMs, CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(timeoutMs);
+        using var reg = timeoutCts.Token.Register(() => client.SendAsyncCancel());
+
+        var sendTask = client.SendMailAsync(msg);
+        var completed = await Task.WhenAny(sendTask, Task.Delay(timeoutMs, ct));
+        if (completed != sendTask)
+            throw new TimeoutException($"SMTP send timed out after {timeoutMs}ms.");
+
+        await sendTask;
+    }
+
     public async Task SendInviteAsync(string toEmail, string toName, string inviteUrl, CancellationToken ct = default)
     {
         var host = config["Smtp:Host"] ?? config["SMTP_HOST"];
@@ -30,14 +53,14 @@ public class EmailService(IConfiguration config)
         using var client = new SmtpClient(host, int.TryParse(portRaw, out var p) ? p : 587)
         {
             EnableSsl = bool.TryParse(enableSslRaw, out var ssl) ? ssl : true,
-            DeliveryMethod = SmtpDeliveryMethod.Network
+            DeliveryMethod = SmtpDeliveryMethod.Network,
+            Timeout = ResolveTimeoutMs(config)
         };
 
         if (!string.IsNullOrWhiteSpace(username))
             client.Credentials = new NetworkCredential(username, password ?? string.Empty);
 
-        using var ctr = ct.Register(() => client.SendAsyncCancel());
-        await client.SendMailAsync(msg);
+        await SendWithTimeoutAsync(client, msg, ResolveTimeoutMs(config), ct);
     }
 
     public async Task SendVerificationOtpAsync(
@@ -123,14 +146,14 @@ public class EmailService(IConfiguration config)
         using var client = new SmtpClient(host, int.TryParse(portRaw, out var p) ? p : 587)
         {
             EnableSsl = bool.TryParse(enableSslRaw, out var ssl) ? ssl : true,
-            DeliveryMethod = SmtpDeliveryMethod.Network
+            DeliveryMethod = SmtpDeliveryMethod.Network,
+            Timeout = ResolveTimeoutMs(config)
         };
 
         if (!string.IsNullOrWhiteSpace(username))
             client.Credentials = new NetworkCredential(username, password ?? string.Empty);
 
-        using var ctr = ct.Register(() => client.SendAsyncCancel());
-        await client.SendMailAsync(msg);
+        await SendWithTimeoutAsync(client, msg, ResolveTimeoutMs(config), ct);
     }
 
     public async Task SendVerificationActionAsync(
@@ -214,13 +237,13 @@ public class EmailService(IConfiguration config)
         using var client = new SmtpClient(host, int.TryParse(portRaw, out var p) ? p : 587)
         {
             EnableSsl = bool.TryParse(enableSslRaw, out var ssl) ? ssl : true,
-            DeliveryMethod = SmtpDeliveryMethod.Network
+            DeliveryMethod = SmtpDeliveryMethod.Network,
+            Timeout = ResolveTimeoutMs(config)
         };
 
         if (!string.IsNullOrWhiteSpace(username))
             client.Credentials = new NetworkCredential(username, password ?? string.Empty);
 
-        using var ctr = ct.Register(() => client.SendAsyncCancel());
-        await client.SendMailAsync(msg);
+        await SendWithTimeoutAsync(client, msg, ResolveTimeoutMs(config), ct);
     }
 }

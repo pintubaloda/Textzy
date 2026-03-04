@@ -128,6 +128,7 @@ const PlatformSettingsPage = () => {
   const [smtp, setSmtp] = useState({
     host: "smtppro.zoho.in",
     port: "587",
+    timeoutMs: "15000",
     enableSsl: true,
     username: "",
     password: "",
@@ -328,6 +329,7 @@ const PlatformSettingsPage = () => {
             ...prev,
             host: values.host || "smtppro.zoho.in",
             port: values.port || "587",
+            timeoutMs: values.timeoutMs || "15000",
             enableSsl: String(values.enableSsl || "true").toLowerCase() === "true",
             username: values.username || "",
             password: values.password || "",
@@ -1120,6 +1122,10 @@ const PlatformSettingsPage = () => {
               <Input value={smtp.port} onChange={(e) => setSmtp((p) => ({ ...p, port: e.target.value }))} placeholder="587" />
             </div>
             <div className="space-y-2">
+              <Label>Timeout (ms)</Label>
+              <Input value={smtp.timeoutMs} onChange={(e) => setSmtp((p) => ({ ...p, timeoutMs: e.target.value }))} placeholder="15000" />
+            </div>
+            <div className="space-y-2">
               <Label>SMTP Username</Label>
               <Input value={smtp.username} onChange={(e) => setSmtp((p) => ({ ...p, username: e.target.value }))} placeholder="noreply@yourdomain.com" />
             </div>
@@ -1153,6 +1159,7 @@ const PlatformSettingsPage = () => {
                     await savePlatformSettings("smtp", {
                       host: smtp.host || "",
                       port: smtp.port || "587",
+                      timeoutMs: smtp.timeoutMs || "15000",
                       enableSsl: smtp.enableSsl ? "true" : "false",
                       username: smtp.username || "",
                       password: smtp.password || "",

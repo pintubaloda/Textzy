@@ -108,6 +108,7 @@ public class PlatformSettingsController(
 
         var host = Pick(values, "host", config["Smtp:Host"], config["SMTP_HOST"]);
         var portRaw = Pick(values, "port", config["Smtp:Port"], config["SMTP_PORT"], "587");
+        var timeoutRaw = Pick(values, "timeoutMs", config["Smtp:TimeoutMs"], config["SMTP_TIMEOUT_MS"], "15000");
         var username = Pick(values, "username", config["Smtp:Username"], config["SMTP_USERNAME"]);
         var password = Pick(values, "password", config["Smtp:Password"], config["SMTP_PASSWORD"]);
         var fromEmail = Pick(values, "fromEmail", config["Smtp:FromEmail"], config["SMTP_FROM_EMAIL"]);
@@ -148,13 +149,21 @@ public class PlatformSettingsController(
             EnableSsl = bool.TryParse(enableSslRaw, out var ssl) ? ssl : true,
             DeliveryMethod = SmtpDeliveryMethod.Network
         };
+        var timeoutMs = ParseTimeout(timeoutRaw);
+        client.Timeout = timeoutMs;
         if (!string.IsNullOrWhiteSpace(username))
             client.Credentials = new NetworkCredential(username, password ?? string.Empty);
 
         try
         {
-            using var ctr = ct.Register(() => client.SendAsyncCancel());
-            await client.SendMailAsync(msg);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeoutMs);
+            using var reg = timeoutCts.Token.Register(() => client.SendAsyncCancel());
+            var sendTask = client.SendMailAsync(msg);
+            var completed = await Task.WhenAny(sendTask, Task.Delay(timeoutMs, ct));
+            if (completed != sendTask)
+                throw new TimeoutException($"SMTP test timed out after {timeoutMs}ms.");
+            await sendTask;
             await audit.WriteAsync("platform.smtp.test.success", $"to={toEmail}", ct);
             return Ok(new { ok = true, message = "SMTP test email sent." });
         }
@@ -174,6 +183,14 @@ public class PlatformSettingsController(
             if (!string.IsNullOrWhiteSpace(f)) return f.Trim();
         }
         return string.Empty;
+    }
+
+    private static int ParseTimeout(string raw)
+    {
+        if (!int.TryParse(raw, out var ms)) ms = 15000;
+        if (ms < 3000) ms = 3000;
+        if (ms > 60000) ms = 60000;
+        return ms;
     }
 
     public sealed class SmtpTestRequest
