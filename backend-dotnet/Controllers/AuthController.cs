@@ -24,7 +24,8 @@ public class AuthController(
     TemplateSyncOrchestrator templateSync,
     SensitiveDataRedactor redactor,
     ILogger<AuthController> logger,
-    IHttpClientFactory httpClientFactory) : ControllerBase
+    IHttpClientFactory httpClientFactory,
+    IConfiguration config) : ControllerBase
 {
     private const int EmailOtpLength = 6;
     private const int EmailOtpExpiryMinutes = 3;
@@ -1006,13 +1007,27 @@ public class AuthController(
 
     private async Task<string> GetEmailVerificationModeAsync(CancellationToken ct)
     {
+        static string NormalizeMode(string? raw)
+        {
+            var mode = (raw ?? string.Empty).Trim().ToLowerInvariant();
+            return mode switch
+            {
+                "every-login" or "every_login" or "login" or "required" => "every-login",
+                "registration" or "register" => "registration",
+                _ => "none"
+            };
+        }
+
         var row = await db.PlatformSettings
             .Where(x => x.Scope == "auth-security" && x.Key == "emailVerificationMode")
             .FirstOrDefaultAsync(ct);
-        if (row is null) return "none";
+        if (row is null)
+        {
+            var fallback = config["Auth:EmailVerificationMode"] ?? config["EMAIL_VERIFICATION_MODE"] ?? "every-login";
+            return NormalizeMode(fallback);
+        }
 
-        var mode = (crypto.Decrypt(row.ValueEncrypted) ?? string.Empty).Trim().ToLowerInvariant();
-        return mode is "every-login" or "registration" ? mode : "none";
+        return NormalizeMode(crypto.Decrypt(row.ValueEncrypted));
     }
 
     private string BuildEmailVerificationLink(Guid verificationId, string token, string purpose)
