@@ -1249,8 +1249,8 @@ const PlatformSettingsPage = () => {
                     setLoading(true);
                     const res = await diagnosePlatformSmtp({
                       provider: smtp.provider || "smtp",
-                      host: smtp.host || "",
-                      port: smtp.port || "",
+                      host: smtp.provider === "resend" ? "" : (smtp.host || ""),
+                      port: smtp.provider === "resend" ? "443" : (smtp.port || ""),
                       timeoutMs: smtp.timeoutMs || "15000",
                       enableSsl: smtp.enableSsl ? "true" : "false",
                     });

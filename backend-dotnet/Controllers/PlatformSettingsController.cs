@@ -266,7 +266,7 @@ public class PlatformSettingsController(
                 if (string.IsNullOrWhiteSpace(resendApiKey))
                     return BadRequest("Resend apiKey not configured.");
 
-                host = string.IsNullOrWhiteSpace(host) ? "api.resend.com" : host;
+                host = "api.resend.com";
                 result["host"] = host;
                 result["port"] = 443;
                 result["enableSsl"] = true;
