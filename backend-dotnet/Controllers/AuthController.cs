@@ -94,10 +94,12 @@ public class AuthController(
 
             var otpSession = await db.EmailOtpVerifications
                 .FirstOrDefaultAsync(x => x.Id == verificationId && x.Email.ToLower() == email && x.Purpose == "login", ct);
-            if (otpSession is null || !otpSession.IsVerified || otpSession.ConsumedAtUtc is not null || otpSession.ExpiresAtUtc <= DateTime.UtcNow)
+            var otpExpiry = otpSession?.OtpExpiresAtUtc ?? otpSession?.ExpiresAtUtc;
+            if (otpSession is null || !otpSession.IsVerified || otpSession.ConsumedAtUtc is not null || otpExpiry <= DateTime.UtcNow)
                 return Unauthorized("Email verification required.");
 
             otpSession.ConsumedAtUtc = DateTime.UtcNow;
+            otpSession.Status = "verified";
             if (user.EmailVerifiedAtUtc is null) user.EmailVerifiedAtUtc = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
         }
@@ -161,6 +163,7 @@ public class AuthController(
             Id = Guid.NewGuid(),
             Email = email,
             Purpose = purpose,
+            Status = "email_sent",
             OtpHash = string.Empty,
             OtpDisplayEncrypted = string.Empty,
             VerificationCode = string.Empty,
@@ -170,6 +173,7 @@ public class AuthController(
             MaxAttempts = EmailOtpMaxAttempts,
             CreatedAtUtc = now,
             ExpiresAtUtc = now.AddMinutes(EmailActionLinkExpiryMinutes),
+            OtpExpiresAtUtc = null,
             LinkOpenedAtUtc = null,
             OtpIssuedAtUtc = null,
             LastSentAtUtc = now
@@ -195,9 +199,11 @@ public class AuthController(
         {
             verificationId = row.Id,
             purpose,
+            status = row.Status,
             state = "waiting_user_action",
             otpInputAllowed = false,
             expiresAtUtc = row.ExpiresAtUtc,
+            otpExpiresAtUtc = row.OtpExpiresAtUtc,
             resendAfterSeconds = EmailOtpResendCooldownSeconds,
             message = "Verification email sent. Click Verify Now in your email to continue."
         });
@@ -220,16 +226,30 @@ public class AuthController(
 
         var now = DateTime.UtcNow;
         var state = GetVerificationState(row, now);
+        if (state == "expired" && row.Status != "expired")
+        {
+            row.Status = "expired";
+            await db.SaveChangesAsync(ct);
+        }
+        var uiState = state switch
+        {
+            "email_sent" => "waiting_user_action",
+            "link_opened" => "waiting_user_action",
+            "code_issued" => "otp_ready",
+            _ => state
+        };
         return Ok(new
         {
             verificationId = row.Id,
             purpose = row.Purpose,
-            state,
-            otpInputAllowed = state == "otp_ready" || state == "verified",
+            status = state,
+            state = uiState,
+            otpInputAllowed = uiState == "otp_ready" || uiState == "verified",
             isVerified = row.IsVerified,
             linkOpenedAtUtc = row.LinkOpenedAtUtc,
             otpIssuedAtUtc = row.OtpIssuedAtUtc,
             expiresAtUtc = row.ExpiresAtUtc,
+            otpExpiresAtUtc = row.OtpExpiresAtUtc,
             remainingAttempts = Math.Max(0, row.MaxAttempts - row.AttemptCount)
         });
     }
@@ -250,15 +270,19 @@ public class AuthController(
             return Content(BuildVerificationHtml("This verification session is already used.", null, false), "text/html; charset=utf-8");
         if (row.ExpiresAtUtc <= now)
             return Content(BuildVerificationHtml("Verification link expired. Request a new email.", null, false), "text/html; charset=utf-8");
+        if (row.LinkOpenedAtUtc is not null || row.Status is "link_opened" or "code_issued" or "verified")
+            return Content(BuildVerificationHtml("Verification link already used.", null, false), "text/html; charset=utf-8");
         if (!string.Equals(HashToken((token ?? string.Empty).Trim()), row.LinkTokenHash, StringComparison.Ordinal))
             return Content(BuildVerificationHtml("Invalid verification link token.", null, false), "text/html; charset=utf-8");
 
         var otp = GenerateNumericCode(EmailOtpLength);
+        row.Status = "link_opened";
+        row.LinkOpenedAtUtc = now;
         row.OtpHash = HashToken(otp);
         row.OtpDisplayEncrypted = crypto.Encrypt(otp);
         row.OtpIssuedAtUtc = now;
-        row.LinkOpenedAtUtc = now;
-        row.ExpiresAtUtc = now.AddMinutes(EmailOtpExpiryMinutes);
+        row.OtpExpiresAtUtc = now.AddMinutes(EmailOtpExpiryMinutes);
+        row.Status = "code_issued";
         await db.SaveChangesAsync(ct);
 
         return Content(BuildVerificationHtml("Copy this code and paste it in the main screen.", otp, true), "text/html; charset=utf-8");
@@ -287,23 +311,29 @@ public class AuthController(
         else if (auth.IsAuthenticated) rowQuery = rowQuery.Where(x => x.Email.ToLower() == auth.Email.ToLower());
 
         var row = await rowQuery.FirstOrDefaultAsync(ct);
-        if (row is null) return BadRequest("Verification session not found.");
-        if (row.ConsumedAtUtc is not null) return BadRequest("Verification session already used.");
-        if (row.ExpiresAtUtc <= DateTime.UtcNow) return BadRequest("OTP expired.");
-        if (row.AttemptCount >= row.MaxAttempts) return BadRequest("Too many invalid attempts.");
-        if (row.LinkOpenedAtUtc is null) return BadRequest("Click Verify Now in your email first.");
+        if (row is null) return BadRequest("Invalid or expired verification.");
+        var now = DateTime.UtcNow;
+        var otpExpiry = row.OtpExpiresAtUtc ?? row.ExpiresAtUtc;
+        if (row.ConsumedAtUtc is not null || row.AttemptCount >= row.MaxAttempts || row.LinkOpenedAtUtc is null || otpExpiry <= now)
+        {
+            if (otpExpiry <= now) row.Status = "expired";
+            await db.SaveChangesAsync(ct);
+            return BadRequest("Invalid or expired verification.");
+        }
 
         if (!string.Equals(HashToken(otp), row.OtpHash, StringComparison.Ordinal))
         {
             row.AttemptCount += 1;
+            if (row.AttemptCount >= row.MaxAttempts) row.Status = "expired";
             await db.SaveChangesAsync(ct);
-            var remaining = Math.Max(0, row.MaxAttempts - row.AttemptCount);
-            return BadRequest($"Invalid OTP. Remaining attempts: {remaining}.");
+            return BadRequest("Invalid or expired verification.");
         }
 
         row.IsVerified = true;
-        row.VerifiedAtUtc = DateTime.UtcNow;
+        row.Status = "verified";
+        row.VerifiedAtUtc = now;
         row.OtpDisplayEncrypted = string.Empty;
+        row.OtpHash = string.Empty;
         await db.SaveChangesAsync(ct);
 
         return Ok(new
@@ -999,11 +1029,21 @@ public class AuthController(
     private static string GetVerificationState(EmailOtpVerification row, DateTime now)
     {
         if (row.ConsumedAtUtc is not null) return "consumed";
-        if (row.AttemptCount >= row.MaxAttempts) return "blocked";
-        if (row.ExpiresAtUtc <= now) return "expired";
-        if (row.IsVerified) return "verified";
-        if (row.LinkOpenedAtUtc is null) return "waiting_user_action";
-        return "otp_ready";
+        if (row.AttemptCount >= row.MaxAttempts) return "expired";
+        if (row.IsVerified || string.Equals(row.Status, "verified", StringComparison.OrdinalIgnoreCase)) return "verified";
+
+        var raw = (row.Status ?? string.Empty).Trim().ToLowerInvariant();
+        if (raw is "email_sent")
+            return row.ExpiresAtUtc <= now ? "expired" : "email_sent";
+        if (raw is "link_opened")
+            return row.ExpiresAtUtc <= now ? "expired" : "link_opened";
+
+        var otpExpiry = row.OtpExpiresAtUtc ?? row.ExpiresAtUtc;
+        if (raw is "code_issued")
+            return otpExpiry <= now ? "expired" : "code_issued";
+
+        if (row.LinkOpenedAtUtc is null) return row.ExpiresAtUtc <= now ? "expired" : "email_sent";
+        return otpExpiry <= now ? "expired" : "code_issued";
     }
 
     private (bool ok, string email, string error) ResolveEmailForOtpRequest(string? rawEmail)

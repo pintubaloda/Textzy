@@ -13,7 +13,7 @@ const LoginPage = () => {
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [otpBusy, setOtpBusy] = useState(false);
+  const [otpRequestBusy, setOtpRequestBusy] = useState(false);
   const [otpStatusBusy, setOtpStatusBusy] = useState(false);
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [healthChecked, setHealthChecked] = useState(false);
@@ -24,6 +24,7 @@ const LoginPage = () => {
   const [otpVerified, setOtpVerified] = useState(false);
   const [verificationId, setVerificationId] = useState("");
   const [verificationState, setVerificationState] = useState("");
+  const [otpFlowStage, setOtpFlowStage] = useState("credentials"); // credentials | waiting | otp
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -32,18 +33,23 @@ const LoginPage = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!otpVerified) {
-      toast.error("Please complete email verification first.");
+    if (otpFlowStage === "otp" && !otpVerified) {
+      toast.error("Please verify OTP first.");
+      return;
+    }
+    if (otpFlowStage === "waiting") {
+      toast.message("Waiting for email verification action.");
       return;
     }
     setLoading(true);
-    
+
     try {
-      await authLogin({
+      const loginPayload = {
         email: formData.email,
         password: formData.password,
         emailVerificationId: verificationId,
-      });
+      };
+      await authLogin(loginPayload);
       const me = await initializeMe();
       if (!me?.email) {
         throw new Error("Login succeeded but session/profile init failed. Check backend auth response.");
@@ -57,30 +63,33 @@ const LoginPage = () => {
         }
       }, 120);
     } catch (err) {
+      const msg = err?.message || "Login failed. Check email/password.";
+      // Required UX: Sign In first -> waiting -> OTP after link click.
+      if (msg.toLowerCase().includes("email verification required")) {
+        try {
+          setOtpRequestBusy(true);
+          const data = await authRequestEmailOtp({ email: formData.email, purpose: "login" });
+          setVerificationId(data?.verificationId || "");
+          setVerificationState(data?.state || "waiting_user_action");
+          setOtp("");
+          setOtpSent(true);
+          setOtpReady(false);
+          setOtpVerified(false);
+          setOtpFlowStage("waiting");
+          toast.success("Please check your email and click Verify Now.");
+        } catch (otpErr) {
+          toast.error(
+            otpErr?.message ||
+            "Email verification could not start. If SMTP is not configured, ask admin to set emailVerificationMode=none temporarily."
+          );
+        } finally {
+          setOtpRequestBusy(false);
+        }
+        setLoading(false);
+        return;
+      }
       setLoading(false);
-      toast.error(err?.message || "Login failed. Check email/password.");
-    }
-  };
-
-  const requestOtp = async () => {
-    if (!formData.email) {
-      toast.error("Enter email first.");
-      return;
-    }
-    setOtpBusy(true);
-    try {
-      const data = await authRequestEmailOtp({ email: formData.email, purpose: "login" });
-      setVerificationId(data?.verificationId || "");
-      setVerificationState(data?.state || "waiting_user_action");
-      setOtp("");
-      setOtpSent(true);
-      setOtpReady(false);
-      setOtpVerified(false);
-      toast.success("Verification email sent. Click Verify Now in your mail.");
-    } catch (err) {
-      toast.error(err?.message || "Failed to send OTP.");
-    } finally {
-      setOtpBusy(false);
+      toast.error(msg);
     }
   };
 
@@ -93,7 +102,10 @@ const LoginPage = () => {
       setVerificationState(state);
       const ready = state === "otp_ready" || state === "verified";
       setOtpReady(ready);
-      if (state === "verified") setOtpVerified(true);
+      if (ready) setOtpFlowStage("otp");
+      if (state === "verified") {
+        setOtpVerified(true);
+      }
     } catch (err) {
       toast.error(err?.message || "Failed to check verification status.");
     } finally {
@@ -102,12 +114,12 @@ const LoginPage = () => {
   };
 
   useEffect(() => {
-    if (!otpSent || !verificationId || otpReady || otpVerified) return;
+    if (!otpSent || !verificationId || otpFlowStage !== "waiting" || otpReady || otpVerified) return;
     const timer = setInterval(() => {
       checkOtpStatus();
     }, 2500);
     return () => clearInterval(timer);
-  }, [otpSent, verificationId, otpReady, otpVerified]);
+  }, [otpSent, verificationId, otpFlowStage, otpReady, otpVerified]);
 
   const verifyOtp = async () => {
     if (!verificationId || !otp) {
@@ -118,7 +130,8 @@ const LoginPage = () => {
     try {
       await authVerifyEmailOtp({ email: formData.email, verificationId, otp, purpose: "login" });
       setOtpVerified(true);
-      toast.success("Email verified.");
+      setOtpFlowStage("credentials");
+      toast.success("Email verified. Please tap Sign In again.");
     } catch (err) {
       toast.error(err?.message || "Invalid OTP.");
     } finally {
@@ -173,6 +186,7 @@ const LoginPage = () => {
                       setOtpVerified(false);
                       setVerificationId("");
                       setVerificationState("");
+                      setOtpFlowStage("credentials");
                     }}
                     required
                     data-testid="login-email-input"
@@ -223,14 +237,20 @@ const LoginPage = () => {
                   </Link>
                 </div>
 
-                <div className="space-y-2 rounded-md border border-slate-200 p-3">
-                  <Label>Email Verification</Label>
-                  <div className={`grid grid-cols-1 gap-2 ${otpReady ? "sm:grid-cols-[1fr_140px_auto]" : "sm:grid-cols-[1fr_auto]"}`}>
-                    <Button type="button" variant="outline" onClick={requestOtp} disabled={otpBusy}>
-                      {otpBusy ? "Sending..." : "Verify Email"}
-                    </Button>
-                    {otpReady ? (
+                {(otpFlowStage === "waiting" || otpFlowStage === "otp") ? (
+                  <div className="space-y-2 rounded-md border border-slate-200 p-3">
+                    <Label>Email Verification</Label>
+                    {otpFlowStage === "waiting" ? (
                       <>
+                        <p className="text-xs text-slate-700">
+                          Please check your mail. Waiting for other side to confirm.
+                        </p>
+                        <div className="text-xs text-slate-500">
+                          {otpStatusBusy ? "Checking verification status..." : "Auto-checking verification status..."}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
                         <Input
                           type="text"
                           placeholder="Enter OTP"
@@ -240,28 +260,15 @@ const LoginPage = () => {
                         <Button type="button" onClick={verifyOtp} disabled={verifyBusy || !otpSent} className="bg-orange-500 hover:bg-orange-600">
                           {verifyBusy ? "Verifying..." : "Verify"}
                         </Button>
-                      </>
-                    ) : (
-                      <Button type="button" variant="outline" onClick={checkOtpStatus} disabled={otpStatusBusy || !otpSent}>
-                        {otpStatusBusy ? "Checking..." : "I clicked Verify"}
-                      </Button>
+                      </div>
                     )}
                   </div>
-                  {otpSent ? (
-                    <p className={`text-xs ${otpVerified ? "text-green-600" : "text-slate-600"}`}>
-                      {otpVerified
-                        ? "Email verification success. Continue to Sign In."
-                        : otpReady
-                          ? "Verification link confirmed. Enter OTP from mail tab."
-                          : "Waiting for user action. Click Verify Now in email, then tap I clicked Verify."}
-                    </p>
-                  ) : null}
-                </div>
+                ) : null}
 
                 <Button
                   type="submit"
                   className="w-full bg-orange-500 hover:bg-orange-600 text-white h-11"
-                  disabled={loading || !otpVerified}
+                  disabled={loading || otpRequestBusy}
                   data-testid="login-submit-btn"
                 >
                   {loading ? "Signing in..." : "Sign In"}

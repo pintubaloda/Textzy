@@ -524,6 +524,7 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "Id" uuid PRIMARY KEY,
             "Email" text NOT NULL,
             "Purpose" text NOT NULL DEFAULT 'login',
+            "Status" text NOT NULL DEFAULT 'email_sent',
             "OtpHash" text NOT NULL,
             "OtpDisplayEncrypted" text NOT NULL DEFAULT '',
             "VerificationCode" text NOT NULL DEFAULT '',
@@ -533,6 +534,7 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "MaxAttempts" integer NOT NULL DEFAULT 5,
             "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
             "ExpiresAtUtc" timestamp with time zone NOT NULL,
+            "OtpExpiresAtUtc" timestamp with time zone NULL,
             "LinkOpenedAtUtc" timestamp with time zone NULL,
             "OtpIssuedAtUtc" timestamp with time zone NULL,
             "VerifiedAtUtc" timestamp with time zone NULL,
@@ -540,8 +542,10 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "LastSentAtUtc" timestamp with time zone NOT NULL DEFAULT now()
         );
         """);
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "EmailOtpVerifications" ADD COLUMN IF NOT EXISTS "Status" text NOT NULL DEFAULT 'email_sent';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "EmailOtpVerifications" ADD COLUMN IF NOT EXISTS "OtpDisplayEncrypted" text NOT NULL DEFAULT '';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "EmailOtpVerifications" ADD COLUMN IF NOT EXISTS "LinkTokenHash" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "EmailOtpVerifications" ADD COLUMN IF NOT EXISTS "OtpExpiresAtUtc" timestamp with time zone NULL;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "EmailOtpVerifications" ADD COLUMN IF NOT EXISTS "LinkOpenedAtUtc" timestamp with time zone NULL;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "EmailOtpVerifications" ADD COLUMN IF NOT EXISTS "OtpIssuedAtUtc" timestamp with time zone NULL;""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_EmailOtpVerifications_Email_Purpose_CreatedAtUtc" ON "EmailOtpVerifications" ("Email","Purpose","CreatedAtUtc");""");
