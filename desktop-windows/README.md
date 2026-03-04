@@ -10,7 +10,7 @@
 2. Output is generated under `desktop-windows/dist/`
 
 ## Notes
-- This app opens the production mobile inbox shell URL with platform flag:
-  - `https://textzy-frontend-production.up.railway.app/?mobileShell=1&platform=windows`
+- This app opens the full production web login/inbox with platform flag:
+  - `https://textzy-frontend-production.up.railway.app/login?platform=windows`
 - Node integration is disabled.
 - Request host allow-list is enforced in `main.js`.

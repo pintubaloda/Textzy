@@ -11,6 +11,6 @@
 
 ## Notes
 - This app opens:
-  - `https://textzy-frontend-production.up.railway.app/?mobileShell=1&platform=macos`
+  - `https://textzy-frontend-production.up.railway.app/login?platform=macos`
 - Node integration is disabled.
 - Request host allow-list is enforced in `main.js`.
