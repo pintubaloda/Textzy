@@ -537,6 +537,18 @@ const DashboardLayout = () => {
                   <span className="flex-1 text-sm">App Base Settings</span>
                 </Link>
                 <Link
+                  to="/dashboard/platform-settings?tab=smtp-settings"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "smtp-settings"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Settings className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">SMTP Settings</span>
+                </Link>
+                <Link
                   to="/dashboard/platform-settings?tab=payment-gateway"
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
                     location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "payment-gateway"

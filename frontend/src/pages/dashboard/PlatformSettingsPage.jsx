@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import {
   getPlatformSettings,
   savePlatformSettings,
+  testPlatformSmtp,
   getPlatformWebhookLogs,
   getPlatformRequestLogs,
   listPaymentWebhooks,
@@ -124,6 +125,16 @@ const PlatformSettingsPage = () => {
     apiCatalog: "/api/auth/login\n/api/auth/refresh\n/api/auth/logout\n/api/auth/me\n/api/auth/projects\n/api/auth/switch-project\n/api/auth/app-bootstrap\n/api/inbox/conversations\n/api/inbox/conversations/{id}/messages\n/api/inbox/conversations/{id}/assign\n/api/inbox/conversations/{id}/transfer\n/api/inbox/conversations/{id}/labels\n/api/inbox/conversations/{id}/notes\n/api/inbox/typing\n/api/inbox/sla\n/api/messages/send\n/api/messages/media/{mediaId}\n/hubs/inbox",
   });
   const [payment, setPayment] = useState({ provider: "razorpay", merchantId: "", keyId: "", keySecret: "", webhookSecret: "" });
+  const [smtp, setSmtp] = useState({
+    host: "smtppro.zoho.in",
+    port: "587",
+    enableSsl: true,
+    username: "",
+    password: "",
+    fromEmail: "",
+    fromName: "Textzy",
+    testEmail: "",
+  });
   const [webhookItems, setWebhookItems] = useState([]);
   const [webhookEdit, setWebhookEdit] = useState({ provider: "razorpay", endpointUrl: "", webhookId: "", eventsCsv: "" });
   const [logs, setLogs] = useState([]);
@@ -192,6 +203,8 @@ const PlatformSettingsPage = () => {
         ? "Request Logs"
         : tab === "billing-plans"
         ? "Billing Plans"
+        : tab === "smtp-settings"
+        ? "SMTP Settings"
         : tab === "waba-onboarding"
         ? "WABA Onboarding Summary"
         : tab === "waba-lookup"
@@ -307,6 +320,20 @@ const PlatformSettingsPage = () => {
             webhookId: selected?.webhookId || "",
             eventsCsv: selected?.eventsCsv || "payment.captured,payment.failed",
           });
+        } else if (tab === "smtp-settings") {
+          const res = await getPlatformSettings("smtp");
+          const values = res?.values || {};
+          if (!active) return;
+          setSmtp((prev) => ({
+            ...prev,
+            host: values.host || "smtppro.zoho.in",
+            port: values.port || "587",
+            enableSsl: String(values.enableSsl || "true").toLowerCase() === "true",
+            username: values.username || "",
+            password: values.password || "",
+            fromEmail: values.fromEmail || "",
+            fromName: values.fromName || "Textzy",
+          }));
         } else {
           if (tab === "billing-plans") {
             const rows = await listPlatformBillingPlans();
@@ -1069,6 +1096,99 @@ const PlatformSettingsPage = () => {
                 }}
               >
                 Save
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "smtp-settings" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>Email SMTP Configuration</CardTitle>
+            <CardDescription>
+              Configure SMTP for OTP, invite, and notification emails.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>SMTP Host</Label>
+              <Input value={smtp.host} onChange={(e) => setSmtp((p) => ({ ...p, host: e.target.value }))} placeholder="smtppro.zoho.in" />
+            </div>
+            <div className="space-y-2">
+              <Label>SMTP Port</Label>
+              <Input value={smtp.port} onChange={(e) => setSmtp((p) => ({ ...p, port: e.target.value }))} placeholder="587" />
+            </div>
+            <div className="space-y-2">
+              <Label>SMTP Username</Label>
+              <Input value={smtp.username} onChange={(e) => setSmtp((p) => ({ ...p, username: e.target.value }))} placeholder="noreply@yourdomain.com" />
+            </div>
+            <div className="space-y-2">
+              <Label>SMTP Password</Label>
+              <Input type="password" value={smtp.password} onChange={(e) => setSmtp((p) => ({ ...p, password: e.target.value }))} placeholder="app password" />
+            </div>
+            <div className="space-y-2">
+              <Label>From Email</Label>
+              <Input value={smtp.fromEmail} onChange={(e) => setSmtp((p) => ({ ...p, fromEmail: e.target.value }))} placeholder="noreply@yourdomain.com" />
+            </div>
+            <div className="space-y-2">
+              <Label>From Name</Label>
+              <Input value={smtp.fromName} onChange={(e) => setSmtp((p) => ({ ...p, fromName: e.target.value }))} placeholder="Textzy" />
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm text-slate-700 md:col-span-2">
+              <input type="checkbox" checked={!!smtp.enableSsl} onChange={(e) => setSmtp((p) => ({ ...p, enableSsl: e.target.checked }))} />
+              Use TLS/SSL (recommended for port 587 STARTTLS)
+            </label>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Test Recipient Email</Label>
+              <Input value={smtp.testEmail} onChange={(e) => setSmtp((p) => ({ ...p, testEmail: e.target.value }))} placeholder="owner@yourdomain.com" />
+            </div>
+            <div className="md:col-span-2 flex gap-2">
+              <Button
+                className="bg-orange-500 hover:bg-orange-600"
+                disabled={loading}
+                onClick={async () => {
+                  try {
+                    setLoading(true);
+                    await savePlatformSettings("smtp", {
+                      host: smtp.host || "",
+                      port: smtp.port || "587",
+                      enableSsl: smtp.enableSsl ? "true" : "false",
+                      username: smtp.username || "",
+                      password: smtp.password || "",
+                      fromEmail: smtp.fromEmail || "",
+                      fromName: smtp.fromName || "Textzy",
+                    });
+                    toast.success("SMTP settings saved");
+                  } catch (e) {
+                    toast.error(e?.message || "Failed to save SMTP settings");
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+              >
+                Save
+              </Button>
+              <Button
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  if (!smtp.testEmail) {
+                    toast.error("Enter test recipient email");
+                    return;
+                  }
+                  try {
+                    setLoading(true);
+                    await testPlatformSmtp(smtp.testEmail);
+                    toast.success("SMTP test email sent");
+                  } catch (e) {
+                    toast.error(e?.message || "SMTP test failed");
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+              >
+                Test SMTP
               </Button>
             </div>
           </CardContent>
