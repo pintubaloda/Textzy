@@ -10,6 +10,7 @@ import {
   getPlatformSettings,
   savePlatformSettings,
   testPlatformSmtp,
+  diagnosePlatformSmtp,
   getPlatformWebhookLogs,
   getPlatformRequestLogs,
   listPaymentWebhooks,
@@ -136,6 +137,7 @@ const PlatformSettingsPage = () => {
     fromName: "Textzy",
     testEmail: "",
   });
+  const [smtpDiag, setSmtpDiag] = useState(null);
   const [webhookItems, setWebhookItems] = useState([]);
   const [webhookEdit, setWebhookEdit] = useState({ provider: "razorpay", endpointUrl: "", webhookId: "", eventsCsv: "" });
   const [logs, setLogs] = useState([]);
@@ -1197,6 +1199,39 @@ const PlatformSettingsPage = () => {
               >
                 Test SMTP
               </Button>
+              <Button
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  try {
+                    setLoading(true);
+                    const res = await diagnosePlatformSmtp({
+                      host: smtp.host || "",
+                      port: smtp.port || "",
+                      timeoutMs: smtp.timeoutMs || "15000",
+                      enableSsl: smtp.enableSsl ? "true" : "false",
+                    });
+                    setSmtpDiag(res?.result || res || null);
+                    toast.success("SMTP diagnostics completed");
+                  } catch (e) {
+                    const payload = e?.response || e?.data || null;
+                    if (payload?.result) setSmtpDiag(payload.result);
+                    toast.error(e?.message || "SMTP diagnostics failed");
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+              >
+                Diagnose SMTP
+              </Button>
+            </div>
+            <div className="md:col-span-2 rounded-lg border border-slate-200 p-3 text-xs">
+              <p className="font-medium text-slate-900 mb-2">Diagnostics Result</p>
+              {smtpDiag ? (
+                <pre className="whitespace-pre-wrap break-all text-slate-700">{JSON.stringify(smtpDiag, null, 2)}</pre>
+              ) : (
+                <p className="text-slate-500">Run Diagnose SMTP to see DNS/TCP/TLS stage output.</p>
+              )}
             </div>
           </CardContent>
         </Card>

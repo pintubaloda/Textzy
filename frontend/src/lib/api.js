@@ -562,6 +562,10 @@ export async function testPlatformSmtp(email) {
   return apiPost('/api/platform/settings/smtp/test', { email })
 }
 
+export async function diagnosePlatformSmtp(payload = {}) {
+  return apiPost('/api/platform/settings/smtp/diagnose', payload || {})
+}
+
 export async function exportPlatformSqlBackup() {
   const res = await apiRequest('/api/platform/backup/sql')
   if (!res.ok) {
