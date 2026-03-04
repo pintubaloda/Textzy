@@ -31,6 +31,26 @@ const LoginPage = () => {
     rememberMe: false,
   });
 
+  const completeLogin = async (emailVerificationId = "") => {
+    const loginPayload = {
+      email: formData.email,
+      password: formData.password,
+      emailVerificationId,
+    };
+    await authLogin(loginPayload);
+    const me = await initializeMe();
+    if (!me?.email) {
+      throw new Error("Login succeeded but session/profile init failed. Check backend auth response.");
+    }
+    toast.success("Welcome back! Select your project...");
+    navigate("/projects", { replace: true });
+    setTimeout(() => {
+      if (window.location.pathname !== "/projects") {
+        window.location.assign("/projects");
+      }
+    }, 120);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (otpFlowStage === "otp" && !otpVerified) {
@@ -44,24 +64,8 @@ const LoginPage = () => {
     setLoading(true);
 
     try {
-      const loginPayload = {
-        email: formData.email,
-        password: formData.password,
-        emailVerificationId: verificationId,
-      };
-      await authLogin(loginPayload);
-      const me = await initializeMe();
-      if (!me?.email) {
-        throw new Error("Login succeeded but session/profile init failed. Check backend auth response.");
-      }
+      await completeLogin(verificationId);
       setLoading(false);
-      toast.success("Welcome back! Select your project...");
-      navigate("/projects", { replace: true });
-      setTimeout(() => {
-        if (window.location.pathname !== "/projects") {
-          window.location.assign("/projects");
-        }
-      }, 120);
     } catch (err) {
       const msg = err?.message || "Login failed. Check email/password.";
       // Required UX: Sign In first -> waiting -> OTP after link click.
@@ -130,8 +134,8 @@ const LoginPage = () => {
     try {
       await authVerifyEmailOtp({ email: formData.email, verificationId, otp, purpose: "login" });
       setOtpVerified(true);
-      setOtpFlowStage("credentials");
-      toast.success("Email verified. Please tap Sign In again.");
+      setOtpFlowStage("otp");
+      await completeLogin(verificationId);
     } catch (err) {
       toast.error(err?.message || "Invalid OTP.");
     } finally {

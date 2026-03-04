@@ -28,7 +28,7 @@ public class AuthController(
     IConfiguration config) : ControllerBase
 {
     private const int EmailOtpLength = 6;
-    private const int EmailOtpExpiryMinutes = 3;
+    private const int EmailOtpExpiryMinutes = 10;
     private const int EmailActionLinkExpiryMinutes = 15;
     private const int EmailOtpMaxAttempts = 5;
     private const int EmailOtpResendCooldownSeconds = 30;
@@ -286,7 +286,15 @@ public class AuthController(
         row.Status = "code_issued";
         await db.SaveChangesAsync(ct);
 
-        return Content(BuildVerificationHtml("Copy this code and paste it in the main screen.", otp, true), "text/html; charset=utf-8");
+        return Content(
+            BuildVerificationHtml(
+                "Copy this code and paste it in the main screen.",
+                otp,
+                true,
+                row.Id,
+                row.Purpose,
+                row.OtpExpiresAtUtc),
+            "text/html; charset=utf-8");
     }
 
     [HttpPost("email-verification/verify")]
@@ -1105,13 +1113,41 @@ public class AuthController(
         };
     }
 
-    private static string BuildVerificationHtml(string message, string? code, bool success)
+    private static string BuildVerificationHtml(
+        string message,
+        string? code,
+        bool success,
+        Guid? verificationId = null,
+        string? purpose = null,
+        DateTime? otpExpiresAtUtc = null)
     {
         var safeMessage = System.Net.WebUtility.HtmlEncode(message);
         var safeCode = string.IsNullOrWhiteSpace(code) ? string.Empty : System.Net.WebUtility.HtmlEncode(code);
         var codeBlock = string.IsNullOrWhiteSpace(safeCode)
             ? string.Empty
             : $"""<div style="margin:16px 0;padding:14px;border-radius:10px;background:#fff7ed;border:1px dashed #f97316;text-align:center;font-size:32px;letter-spacing:8px;font-weight:800;color:#111827;">{safeCode}</div>""";
+        var expiresUnixMs = otpExpiresAtUtc.HasValue
+            ? new DateTimeOffset(DateTime.SpecifyKind(otpExpiresAtUtc.Value, DateTimeKind.Utc)).ToUnixTimeMilliseconds()
+            : 0;
+        var verificationIdJs = verificationId?.ToString() ?? string.Empty;
+        var purposeJs = purpose ?? "login";
+        var scriptBlock = string.Empty;
+        if (!string.IsNullOrWhiteSpace(safeCode) && verificationId is not null)
+        {
+            var escapedPurpose = purposeJs.Replace("\\", "\\\\").Replace("\"", "\\\"");
+            scriptBlock =
+                "<script>(function(){" +
+                $"const vid=\"{verificationIdJs}\";" +
+                $"const purpose=\"{escapedPurpose}\";" +
+                $"const expiresAtMs={expiresUnixMs};" +
+                "const timerEl=document.getElementById(\"otp-timer\");" +
+                "const statusEl=document.getElementById(\"otp-status\");" +
+                "function fmt(sec){const m=Math.floor(sec/60);const s=sec%60;return m+\":\"+String(s).padStart(2,\"0\");}" +
+                "function tick(){if(!timerEl||!expiresAtMs)return;const left=Math.max(0,Math.floor((expiresAtMs-Date.now())/1000));timerEl.textContent=left>0?(\"Code expires in \"+fmt(left)):\"Code expired. Please request a new verification email.\";}" +
+                "async function poll(){try{const url=\"/api/auth/email-verification/status?verificationId=\"+encodeURIComponent(vid)+\"&purpose=\"+encodeURIComponent(purpose);const r=await fetch(url,{credentials:\"include\",cache:\"no-store\"});if(!r.ok)return;const d=await r.json();const state=(d?.state||\"\").toLowerCase();const status=(d?.status||\"\").toLowerCase();if(state===\"verified\"||status===\"verified\"||state===\"consumed\"||status===\"consumed\"){if(statusEl)statusEl.textContent=\"Verification success. You can close this tab now.\";}}catch{}}" +
+                "tick();setInterval(tick,1000);setInterval(poll,2000);" +
+                "})();</script>";
+        }
         var icon = success ? "Verified" : "Error";
         return $"""
         <!doctype html>
@@ -1129,10 +1165,12 @@ public class AuthController(
                 <div style="font-size:14px;color:#6b7280;margin-bottom:8px;">{icon}</div>
                 <div style="font-size:16px;line-height:1.5;">{safeMessage}</div>
                 {codeBlock}
-                <div style="margin-top:10px;font-size:13px;color:#6b7280;">Paste the code into your main screen OTP box.</div>
+                <div id="otp-status" style="margin-top:10px;font-size:13px;color:#6b7280;">Paste the code into your main screen OTP box.</div>
+                <div id="otp-timer" style="margin-top:8px;font-size:13px;color:#dc2626;"></div>
               </div>
             </div>
           </div>
+          {scriptBlock}
         </body>
         </html>
         """;
