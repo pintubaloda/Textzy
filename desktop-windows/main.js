@@ -1,8 +1,11 @@
 const { app, BrowserWindow, session } = require("electron");
 const path = require("path");
 
-const SHELL_URL = "https://textzy-frontend-production.up.railway.app/?mobileShell=1&platform=windows";
-const TRUSTED_HOST = "textzy-frontend-production.up.railway.app";
+const SHELL_URL = "https://textzy-frontend-production.up.railway.app/?desktopShell=1&platform=windows";
+const TRUSTED_HOSTS = new Set([
+  "textzy-frontend-production.up.railway.app",
+  "textzy-backend-production.up.railway.app"
+]);
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -28,7 +31,11 @@ app.whenReady().then(() => {
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     try {
       const host = new URL(details.url).host.toLowerCase();
-      if (host !== TRUSTED_HOST && !host.endsWith(".gstatic.com") && !host.endsWith(".googleapis.com")) {
+      if (
+        !TRUSTED_HOSTS.has(host) &&
+        !host.endsWith(".gstatic.com") &&
+        !host.endsWith(".googleapis.com")
+      ) {
         callback({ cancel: true });
         return;
       }
