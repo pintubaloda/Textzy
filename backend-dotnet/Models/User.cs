@@ -9,5 +9,6 @@ public class User
     public string FullName { get; set; } = string.Empty;
     public bool IsActive { get; set; } = true;
     public bool IsSuperAdmin { get; set; }
+    public DateTime? EmailVerifiedAtUtc { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }

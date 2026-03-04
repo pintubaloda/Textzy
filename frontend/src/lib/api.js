@@ -271,14 +271,14 @@ export function buildIdempotencyKey(prefix = "msg") {
   return `${prefix}-${Date.now()}-${rand}`;
 }
 
-export async function authLogin({ email, password, tenantSlug }) {
+export async function authLogin({ email, password, tenantSlug, emailVerificationId }) {
   const headers = { 'Content-Type': 'application/json' }
   if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: 'POST',
     headers,
     credentials: 'include',
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ email, password, emailVerificationId: emailVerificationId || '' })
   })
   persistCsrfFromResponse(res)
   if (!res.ok) {
@@ -314,6 +314,34 @@ export async function authLogin({ email, password, tenantSlug }) {
     throw new Error('Login response is missing accessToken.')
   }
   return data
+}
+
+export async function authRequestEmailOtp({ email }) {
+  const res = await fetch(`${API_BASE}/api/auth/email-verification/request`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email })
+  })
+  if (!res.ok) {
+    const msg = await readErrorMessage(res, 'Failed to send OTP')
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
+export async function authVerifyEmailOtp({ email, verificationId, otp }) {
+  const res = await fetch(`${API_BASE}/api/auth/email-verification/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email, verificationId, otp })
+  })
+  if (!res.ok) {
+    const msg = await readErrorMessage(res, 'OTP verification failed')
+    throw new Error(msg)
+  }
+  return res.json()
 }
 
 export async function checkApiHealth() {

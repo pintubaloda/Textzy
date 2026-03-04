@@ -16,6 +16,7 @@ public class AuthController(
     ControlDbContext db,
     PasswordHasher hasher,
     SessionService sessions,
+    EmailService emailService,
     TenancyContext tenancy,
     AuthContext auth,
     AuthCookieService authCookie,
@@ -25,6 +26,11 @@ public class AuthController(
     ILogger<AuthController> logger,
     IHttpClientFactory httpClientFactory) : ControllerBase
 {
+    private const int EmailOtpLength = 6;
+    private const int EmailOtpExpiryMinutes = 10;
+    private const int EmailOtpMaxAttempts = 5;
+    private const int EmailOtpResendCooldownSeconds = 30;
+
     private static readonly string[] DefaultAppApiCatalog =
     [
         "/api/auth/login",
@@ -72,6 +78,29 @@ public class AuthController(
         var verified = hasher.Verify(password, user.PasswordHash, user.PasswordSalt);
         if (!verified) return Unauthorized("Invalid credentials.");
 
+        var verificationMode = await GetEmailVerificationModeAsync(ct);
+        var requireOtp = verificationMode switch
+        {
+            "every-login" => true,
+            "registration" => user.EmailVerifiedAtUtc is null,
+            _ => false
+        };
+        if (requireOtp)
+        {
+            var verificationIdRaw = (request.EmailVerificationId ?? string.Empty).Trim();
+            if (!Guid.TryParse(verificationIdRaw, out var verificationId))
+                return Unauthorized("Email verification required.");
+
+            var otpSession = await db.EmailOtpVerifications
+                .FirstOrDefaultAsync(x => x.Id == verificationId && x.Email.ToLower() == email && x.Purpose == "login", ct);
+            if (otpSession is null || !otpSession.IsVerified || otpSession.ConsumedAtUtc is not null || otpSession.ExpiresAtUtc <= DateTime.UtcNow)
+                return Unauthorized("Email verification required.");
+
+            otpSession.ConsumedAtUtc = DateTime.UtcNow;
+            if (user.EmailVerifiedAtUtc is null) user.EmailVerifiedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+        }
+
         Guid tenantId;
         if (tenancy.IsSet)
         {
@@ -102,6 +131,120 @@ public class AuthController(
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(token);
         return Ok(new AuthTokenResponse { AccessToken = token });
+    }
+
+    [HttpPost("email-verification/request")]
+    public async Task<IActionResult> RequestEmailVerificationOtp([FromBody] RequestEmailVerificationOtpRequest request, CancellationToken ct)
+    {
+        string email;
+        try
+        {
+            email = InputGuardService.RequireTrimmed(request.Email, "Email", 320).ToLowerInvariant();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
+        var now = DateTime.UtcNow;
+        var requestsInHour = await db.EmailOtpVerifications
+            .CountAsync(x => x.Email.ToLower() == email && x.CreatedAtUtc >= now.AddHours(-1), ct);
+        if (requestsInHour >= 8)
+            return StatusCode(StatusCodes.Status429TooManyRequests, "Too many OTP requests. Try again later.");
+
+        var latest = await db.EmailOtpVerifications
+            .Where(x => x.Email.ToLower() == email && x.Purpose == "login")
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (latest is not null && (now - latest.LastSentAtUtc).TotalSeconds < EmailOtpResendCooldownSeconds)
+            return StatusCode(StatusCodes.Status429TooManyRequests, $"Please wait {EmailOtpResendCooldownSeconds} seconds before requesting another OTP.");
+
+        var otp = GenerateNumericCode(EmailOtpLength);
+        var verificationCode = GenerateAlphaNumericCode(6);
+        var row = new EmailOtpVerification
+        {
+            Id = Guid.NewGuid(),
+            Email = email,
+            Purpose = "login",
+            OtpHash = HashToken(otp),
+            VerificationCode = verificationCode,
+            IsVerified = false,
+            AttemptCount = 0,
+            MaxAttempts = EmailOtpMaxAttempts,
+            CreatedAtUtc = now,
+            ExpiresAtUtc = now.AddMinutes(EmailOtpExpiryMinutes),
+            LastSentAtUtc = now
+        };
+        db.EmailOtpVerifications.Add(row);
+        await db.SaveChangesAsync(ct);
+
+        var userName = await db.Users
+            .Where(x => x.Email.ToLower() == email)
+            .Select(x => x.FullName)
+            .FirstOrDefaultAsync(ct) ?? string.Empty;
+
+        await emailService.SendVerificationOtpAsync(
+            email,
+            userName,
+            otp,
+            verificationCode,
+            EmailOtpExpiryMinutes,
+            "login",
+            ct);
+
+        return Ok(new
+        {
+            verificationId = row.Id,
+            verificationCode = row.VerificationCode,
+            expiresAtUtc = row.ExpiresAtUtc,
+            resendAfterSeconds = EmailOtpResendCooldownSeconds
+        });
+    }
+
+    [HttpPost("email-verification/verify")]
+    public async Task<IActionResult> VerifyEmailOtp([FromBody] VerifyEmailOtpRequest request, CancellationToken ct)
+    {
+        string email;
+        string otp;
+        try
+        {
+            email = InputGuardService.RequireTrimmed(request.Email, "Email", 320).ToLowerInvariant();
+            otp = InputGuardService.RequireTrimmed(request.Otp, "OTP", 12);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
+        if (!Guid.TryParse((request.VerificationId ?? string.Empty).Trim(), out var verificationId))
+            return BadRequest("Invalid verificationId.");
+
+        var row = await db.EmailOtpVerifications
+            .FirstOrDefaultAsync(x => x.Id == verificationId && x.Email.ToLower() == email && x.Purpose == "login", ct);
+        if (row is null) return BadRequest("Verification session not found.");
+        if (row.ConsumedAtUtc is not null) return BadRequest("Verification session already used.");
+        if (row.ExpiresAtUtc <= DateTime.UtcNow) return BadRequest("OTP expired.");
+        if (row.AttemptCount >= row.MaxAttempts) return BadRequest("Too many invalid attempts.");
+
+        if (!string.Equals(HashToken(otp), row.OtpHash, StringComparison.Ordinal))
+        {
+            row.AttemptCount += 1;
+            await db.SaveChangesAsync(ct);
+            var remaining = Math.Max(0, row.MaxAttempts - row.AttemptCount);
+            return BadRequest($"Invalid OTP. Remaining attempts: {remaining}.");
+        }
+
+        row.IsVerified = true;
+        row.VerifiedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        return Ok(new
+        {
+            verified = true,
+            verificationId = row.Id,
+            verifiedAtUtc = row.VerifiedAtUtc,
+            nextStep = "login"
+        });
     }
 
     [HttpPost("refresh")]
@@ -748,6 +891,32 @@ public class AuthController(
             .TrimEnd('=');
     }
 
+    private static string GenerateNumericCode(int len)
+    {
+        var chars = new char[len];
+        for (var i = 0; i < len; i++) chars[i] = (char)('0' + RandomNumberGenerator.GetInt32(0, 10));
+        return new string(chars);
+    }
+
+    private static string GenerateAlphaNumericCode(int len)
+    {
+        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        var chars = new char[len];
+        for (var i = 0; i < len; i++) chars[i] = alphabet[RandomNumberGenerator.GetInt32(0, alphabet.Length)];
+        return new string(chars);
+    }
+
+    private async Task<string> GetEmailVerificationModeAsync(CancellationToken ct)
+    {
+        var row = await db.PlatformSettings
+            .Where(x => x.Scope == "auth-security" && x.Key == "emailVerificationMode")
+            .FirstOrDefaultAsync(ct);
+        if (row is null) return "none";
+
+        var mode = (crypto.Decrypt(row.ValueEncrypted) ?? string.Empty).Trim().ToLowerInvariant();
+        return mode is "every-login" or "registration" ? mode : "none";
+    }
+
     private bool IsSecureRequest()
     {
         if (Request.IsHttps) return true;
@@ -766,6 +935,18 @@ public class AuthController(
     public sealed class PairQrRequest
     {
         public string BuildHint { get; set; } = string.Empty;
+    }
+
+    public sealed class RequestEmailVerificationOtpRequest
+    {
+        public string Email { get; set; } = string.Empty;
+    }
+
+    public sealed class VerifyEmailOtpRequest
+    {
+        public string VerificationId { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string Otp { get; set; } = string.Empty;
     }
 
     public sealed class PairingPayloadDto

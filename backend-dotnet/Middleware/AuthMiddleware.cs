@@ -27,6 +27,7 @@ public class AuthMiddleware(RequestDelegate next)
 
         var path = context.Request.Path.Value ?? string.Empty;
         var isAuthPath = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/auth/email-verification", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/accept-invite", StringComparison.OrdinalIgnoreCase);
         var isAuthRefreshPath = path.StartsWith("/api/auth/refresh", StringComparison.OrdinalIgnoreCase);
         var isProjectPath = path.StartsWith("/api/auth/projects", StringComparison.OrdinalIgnoreCase)

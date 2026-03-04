@@ -324,9 +324,11 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "PasswordSalt" text NOT NULL,
             "IsActive" boolean NOT NULL,
             "IsSuperAdmin" boolean NOT NULL,
+            "EmailVerifiedAtUtc" timestamp with time zone NULL,
             "CreatedAtUtc" timestamp with time zone NOT NULL
         );
         """);
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "EmailVerifiedAtUtc" timestamp with time zone NULL;""");
 
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_Users_Email" ON "Users" ("Email");""");
 
@@ -516,6 +518,26 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_UserNotificationPreferences_UserId" ON "UserNotificationPreferences" ("UserId");""");
+
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "EmailOtpVerifications" (
+            "Id" uuid PRIMARY KEY,
+            "Email" text NOT NULL,
+            "Purpose" text NOT NULL DEFAULT 'login',
+            "OtpHash" text NOT NULL,
+            "VerificationCode" text NOT NULL DEFAULT '',
+            "IsVerified" boolean NOT NULL DEFAULT false,
+            "AttemptCount" integer NOT NULL DEFAULT 0,
+            "MaxAttempts" integer NOT NULL DEFAULT 5,
+            "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+            "ExpiresAtUtc" timestamp with time zone NOT NULL,
+            "VerifiedAtUtc" timestamp with time zone NULL,
+            "ConsumedAtUtc" timestamp with time zone NULL,
+            "LastSentAtUtc" timestamp with time zone NOT NULL DEFAULT now()
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_EmailOtpVerifications_Email_Purpose_CreatedAtUtc" ON "EmailOtpVerifications" ("Email","Purpose","CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_EmailOtpVerifications_ExpiresAtUtc" ON "EmailOtpVerifications" ("ExpiresAtUtc");""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "UserMobileDevices" (

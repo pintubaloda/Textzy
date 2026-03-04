@@ -749,20 +749,60 @@ const LoginScreen = ({ onLogin }) => {
   const [tab,setTab]     = useState("password");
   const [email,setEmail] = useState("admin@textzy.io");
   const [pass,setPass]   = useState("password123");
+  const [otp,setOtp]     = useState("");
+  const [verificationId,setVerificationId] = useState("");
+  const [verificationCode,setVerificationCode] = useState("");
+  const [otpSent,setOtpSent] = useState(false);
+  const [otpVerified,setOtpVerified] = useState(false);
+  const [otpBusy,setOtpBusy] = useState(false);
+  const [verifyBusy,setVerifyBusy] = useState(false);
   const [showPass,setShowPass] = useState(false);
   const [loading,setLoad]= useState(false);
   const [err,setErr]     = useState("");
 
   const submit = async () => {
     if (!email||!pass) { setErr("Please fill all fields."); return; }
+    if (!otpVerified) { setErr("Please verify email OTP first."); return; }
     setLoad(true);
     setErr("");
     try {
-      await onLogin({ mode: "password", email, password: pass });
+      await onLogin({ mode: "password", email, password: pass, emailVerificationId: verificationId });
     } catch (e) {
       setErr(e?.message || "Login failed.");
     } finally {
       setLoad(false);
+    }
+  };
+
+  const requestOtp = async () => {
+    if (!email) { setErr("Enter email first."); return; }
+    setErr("");
+    setOtpBusy(true);
+    try {
+      const data = await onLogin({ mode: "request-otp", email });
+      setVerificationId(data?.verificationId || "");
+      setVerificationCode(data?.verificationCode || "");
+      setOtp("");
+      setOtpSent(true);
+      setOtpVerified(false);
+    } catch (e) {
+      setErr(e?.message || "Failed to send OTP.");
+    } finally {
+      setOtpBusy(false);
+    }
+  };
+
+  const verifyOtp = async () => {
+    if (!verificationId || !otp) { setErr("Enter OTP first."); return; }
+    setErr("");
+    setVerifyBusy(true);
+    try {
+      await onLogin({ mode: "verify-otp", email, verificationId, otp });
+      setOtpVerified(true);
+    } catch (e) {
+      setErr(e?.message || "Invalid OTP.");
+    } finally {
+      setVerifyBusy(false);
     }
   };
 
@@ -827,7 +867,15 @@ const LoginScreen = ({ onLogin }) => {
                 type="email"
                 value={email}
                 placeholder="you@company.com"
-                onChange={e=>{setEmail(e.target.value);setErr("");}}
+                onChange={e=>{
+                  setEmail(e.target.value);
+                  setErr("");
+                  setOtp("");
+                  setOtpSent(false);
+                  setOtpVerified(false);
+                  setVerificationId("");
+                  setVerificationCode("");
+                }}
                 onKeyDown={e=>e.key==="Enter"&&submit()}
                 style={{
                   width:"100%", padding:"13px 15px", borderRadius:12, boxSizing:"border-box",
@@ -870,6 +918,25 @@ const LoginScreen = ({ onLogin }) => {
                 </button>
               </div>
             </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 92px 92px", gap:8, marginBottom:10 }}>
+              <button onClick={requestOtp} disabled={otpBusy} style={{ padding:"10px 12px",borderRadius:10,border:`1px solid ${C.divider}`,background:"#fff",fontWeight:700,color:C.textMain,cursor:otpBusy?"not-allowed":"pointer" }}>
+                {otpBusy ? "Sending..." : "Verify Email"}
+              </button>
+              <input
+                value={otp}
+                onChange={(e)=>setOtp(e.target.value)}
+                placeholder="OTP"
+                style={{ padding:"10px 10px",borderRadius:10,border:`1px solid ${C.divider}`,fontSize:13 }}
+              />
+              <button onClick={verifyOtp} disabled={verifyBusy || !otpSent} style={{ padding:"10px 12px",borderRadius:10,border:"none",background:C.orange,color:"#fff",fontWeight:700,cursor:(verifyBusy || !otpSent)?"not-allowed":"pointer",opacity:(verifyBusy || !otpSent)?0.8:1 }}>
+                {verifyBusy ? "..." : "Verify"}
+              </button>
+            </div>
+            {otpSent && (
+              <p style={{ fontSize:12, color: otpVerified ? C.online : C.textSub, margin:"0 0 8px" }}>
+                {otpVerified ? "Email verified successfully." : `Mail sent. Code: ${verificationCode || "-"}`}
+              </p>
+            )}
             {err&&<p style={{ color:C.danger,fontSize:13,marginBottom:10,textAlign:"center" }}>{err}</p>}
             <button onClick={submit} disabled={loading} style={{
               width:"100%", padding:15, borderRadius:14, border:"none",
@@ -1339,6 +1406,24 @@ export default function TextzyMobile() {
   };
 
   const handleLogin = async (payload) => {
+    if (payload?.mode === "request-otp") {
+      const { res } = await apiFetch("/api/auth/email-verification/request", {
+        method: "POST",
+        body: { email: payload.email },
+      });
+      if (!res.ok) throw new Error(await res.text() || "Failed to send OTP.");
+      return await res.json();
+    }
+
+    if (payload?.mode === "verify-otp") {
+      const { res } = await apiFetch("/api/auth/email-verification/verify", {
+        method: "POST",
+        body: { email: payload.email, verificationId: payload.verificationId, otp: payload.otp },
+      });
+      if (!res.ok) throw new Error(await res.text() || "Invalid OTP.");
+      return await res.json();
+    }
+
     if (payload?.mode === "qr") {
       const deviceCtx = deviceCtxRef.current || resolveDeviceContext(restored);
       const location = await getDeviceLocation();
@@ -1397,7 +1482,7 @@ export default function TextzyMobile() {
 
     const { res, nextTokenHeader, nextCsrfHeader } = await apiFetch("/api/auth/login", {
       method: "POST",
-      body: { email: payload.email, password: payload.password },
+      body: { email: payload.email, password: payload.password, emailVerificationId: payload.emailVerificationId || "" },
     });
     if (!res.ok) throw new Error(await res.text() || "Invalid credentials");
     const json = await res.json().catch(() => ({}));
