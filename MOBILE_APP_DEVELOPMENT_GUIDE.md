@@ -65,6 +65,7 @@ Cookies used by backend:
 - `POST /api/auth/devices/pair-qr` (generate one-time pairing QR payload)
 - `DELETE /api/auth/devices/{id}` (revoke connected mobile device)
 - `POST /api/public/mobile/pair/exchange` (mobile app exchanges pairing token and receives auth session)
+- `GET /api/public/app-updates/manifest?platform=<android|ios|windows|macos|web>&appVersion=<x.y.z>` (common runtime update manifest for all clients)
 
 ## 6A. Platform Owner App Base Settings (New Module)
 Configured in platform owner UI:

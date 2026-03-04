@@ -1,0 +1,30 @@
+{
+  "name": "textzy-macos-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Textzy macOS desktop shell",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac dmg"
+  },
+  "devDependencies": {
+    "electron": "^30.0.9",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.textzy.macos.desktop",
+    "productName": "Textzy macOS",
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**/*"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.business"
+    }
+  }
+}

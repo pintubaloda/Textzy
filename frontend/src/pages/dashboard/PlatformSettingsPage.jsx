@@ -91,7 +91,34 @@ const PlatformSettingsPage = () => {
     androidApkUrl: "",
     androidVersionName: "",
     androidVersionCode: "",
+    androidMinSupportedVersion: "",
+    androidForceUpdate: false,
     androidReleaseNotesUrl: "",
+    iosDownloadUrl: "",
+    iosStoreUrl: "",
+    iosVersionName: "",
+    iosBuildNumber: "",
+    iosMinSupportedVersion: "",
+    iosForceUpdate: false,
+    iosReleaseNotesUrl: "",
+    windowsDownloadUrl: "",
+    windowsVersionName: "",
+    windowsVersionCode: "",
+    windowsMinSupportedVersion: "",
+    windowsForceUpdate: false,
+    windowsReleaseNotesUrl: "",
+    macosDownloadUrl: "",
+    macosVersionName: "",
+    macosVersionCode: "",
+    macosMinSupportedVersion: "",
+    macosForceUpdate: false,
+    macosReleaseNotesUrl: "",
+    webUrl: "",
+    webVersionName: "",
+    webVersionCode: "",
+    webMinSupportedVersion: "",
+    webForceUpdate: false,
+    webReleaseNotesUrl: "",
     webhookAllowedHosts: "",
     allowedApiPrefixes: "/api/auth\n/api/inbox\n/api/messages\n/hubs/inbox",
     apiCatalog: "/api/auth/login\n/api/auth/refresh\n/api/auth/logout\n/api/auth/me\n/api/auth/projects\n/api/auth/switch-project\n/api/auth/app-bootstrap\n/api/inbox/conversations\n/api/inbox/conversations/{id}/messages\n/api/inbox/conversations/{id}/assign\n/api/inbox/conversations/{id}/transfer\n/api/inbox/conversations/{id}/labels\n/api/inbox/conversations/{id}/notes\n/api/inbox/typing\n/api/inbox/sla\n/api/messages/send\n/api/messages/media/{mediaId}\n/hubs/inbox",
@@ -222,7 +249,34 @@ const PlatformSettingsPage = () => {
             androidApkUrl: values.androidApkUrl || "",
             androidVersionName: values.androidVersionName || "",
             androidVersionCode: values.androidVersionCode || "",
+            androidMinSupportedVersion: values.androidMinSupportedVersion || "",
+            androidForceUpdate: String(values.androidForceUpdate || "false").toLowerCase() === "true",
             androidReleaseNotesUrl: values.androidReleaseNotesUrl || "",
+            iosDownloadUrl: values.iosDownloadUrl || "",
+            iosStoreUrl: values.iosStoreUrl || "",
+            iosVersionName: values.iosVersionName || "",
+            iosBuildNumber: values.iosBuildNumber || "",
+            iosMinSupportedVersion: values.iosMinSupportedVersion || "",
+            iosForceUpdate: String(values.iosForceUpdate || "false").toLowerCase() === "true",
+            iosReleaseNotesUrl: values.iosReleaseNotesUrl || "",
+            windowsDownloadUrl: values.windowsDownloadUrl || "",
+            windowsVersionName: values.windowsVersionName || "",
+            windowsVersionCode: values.windowsVersionCode || "",
+            windowsMinSupportedVersion: values.windowsMinSupportedVersion || "",
+            windowsForceUpdate: String(values.windowsForceUpdate || "false").toLowerCase() === "true",
+            windowsReleaseNotesUrl: values.windowsReleaseNotesUrl || "",
+            macosDownloadUrl: values.macosDownloadUrl || "",
+            macosVersionName: values.macosVersionName || "",
+            macosVersionCode: values.macosVersionCode || "",
+            macosMinSupportedVersion: values.macosMinSupportedVersion || "",
+            macosForceUpdate: String(values.macosForceUpdate || "false").toLowerCase() === "true",
+            macosReleaseNotesUrl: values.macosReleaseNotesUrl || "",
+            webUrl: values.webUrl || "",
+            webVersionName: values.webVersionName || "",
+            webVersionCode: values.webVersionCode || "",
+            webMinSupportedVersion: values.webMinSupportedVersion || "",
+            webForceUpdate: String(values.webForceUpdate || "false").toLowerCase() === "true",
+            webReleaseNotesUrl: values.webReleaseNotesUrl || "",
             webhookAllowedHosts: values.webhookAllowedHosts || "",
             allowedApiPrefixes: values.allowedApiPrefixes || prev.allowedApiPrefixes,
             apiCatalog: values.apiCatalog || prev.apiCatalog,
@@ -823,6 +877,134 @@ const PlatformSettingsPage = () => {
                 onChange={(e) => setAppConfig((p) => ({ ...p, androidReleaseNotesUrl: e.target.value }))}
               />
             </div>
+            <div className="space-y-2">
+              <Label>Android Min Supported Version</Label>
+              <Input
+                placeholder="1.0.0"
+                value={appConfig.androidMinSupportedVersion}
+                onChange={(e) => setAppConfig((p) => ({ ...p, androidMinSupportedVersion: e.target.value }))}
+              />
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={!!appConfig.androidForceUpdate}
+                onChange={(e) => setAppConfig((p) => ({ ...p, androidForceUpdate: e.target.checked }))}
+              />
+              Android force update
+            </label>
+            <div className="md:col-span-2 border-t border-slate-200 pt-3">
+              <p className="text-sm font-medium text-slate-900">iOS Update Manifest</p>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>iOS Store/Download URL</Label>
+              <Input
+                placeholder="https://apps.apple.com/... or direct ipa link"
+                value={appConfig.iosStoreUrl || appConfig.iosDownloadUrl}
+                onChange={(e) => setAppConfig((p) => ({ ...p, iosStoreUrl: e.target.value, iosDownloadUrl: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>iOS Version Name</Label>
+              <Input value={appConfig.iosVersionName} onChange={(e) => setAppConfig((p) => ({ ...p, iosVersionName: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>iOS Build Number</Label>
+              <Input value={appConfig.iosBuildNumber} onChange={(e) => setAppConfig((p) => ({ ...p, iosBuildNumber: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>iOS Min Supported Version</Label>
+              <Input value={appConfig.iosMinSupportedVersion} onChange={(e) => setAppConfig((p) => ({ ...p, iosMinSupportedVersion: e.target.value }))} />
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={!!appConfig.iosForceUpdate} onChange={(e) => setAppConfig((p) => ({ ...p, iosForceUpdate: e.target.checked }))} />
+              iOS force update
+            </label>
+            <div className="space-y-2 md:col-span-2">
+              <Label>iOS Release Notes URL</Label>
+              <Input value={appConfig.iosReleaseNotesUrl} onChange={(e) => setAppConfig((p) => ({ ...p, iosReleaseNotesUrl: e.target.value }))} />
+            </div>
+            <div className="md:col-span-2 border-t border-slate-200 pt-3">
+              <p className="text-sm font-medium text-slate-900">Windows Desktop Update Manifest</p>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Windows Download URL</Label>
+              <Input value={appConfig.windowsDownloadUrl} onChange={(e) => setAppConfig((p) => ({ ...p, windowsDownloadUrl: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Windows Version Name</Label>
+              <Input value={appConfig.windowsVersionName} onChange={(e) => setAppConfig((p) => ({ ...p, windowsVersionName: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Windows Version Code</Label>
+              <Input value={appConfig.windowsVersionCode} onChange={(e) => setAppConfig((p) => ({ ...p, windowsVersionCode: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Windows Min Supported Version</Label>
+              <Input value={appConfig.windowsMinSupportedVersion} onChange={(e) => setAppConfig((p) => ({ ...p, windowsMinSupportedVersion: e.target.value }))} />
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={!!appConfig.windowsForceUpdate} onChange={(e) => setAppConfig((p) => ({ ...p, windowsForceUpdate: e.target.checked }))} />
+              Windows force update
+            </label>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Windows Release Notes URL</Label>
+              <Input value={appConfig.windowsReleaseNotesUrl} onChange={(e) => setAppConfig((p) => ({ ...p, windowsReleaseNotesUrl: e.target.value }))} />
+            </div>
+            <div className="md:col-span-2 border-t border-slate-200 pt-3">
+              <p className="text-sm font-medium text-slate-900">macOS Desktop Update Manifest</p>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>macOS Download URL</Label>
+              <Input value={appConfig.macosDownloadUrl} onChange={(e) => setAppConfig((p) => ({ ...p, macosDownloadUrl: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>macOS Version Name</Label>
+              <Input value={appConfig.macosVersionName} onChange={(e) => setAppConfig((p) => ({ ...p, macosVersionName: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>macOS Version Code</Label>
+              <Input value={appConfig.macosVersionCode} onChange={(e) => setAppConfig((p) => ({ ...p, macosVersionCode: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>macOS Min Supported Version</Label>
+              <Input value={appConfig.macosMinSupportedVersion} onChange={(e) => setAppConfig((p) => ({ ...p, macosMinSupportedVersion: e.target.value }))} />
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={!!appConfig.macosForceUpdate} onChange={(e) => setAppConfig((p) => ({ ...p, macosForceUpdate: e.target.checked }))} />
+              macOS force update
+            </label>
+            <div className="space-y-2 md:col-span-2">
+              <Label>macOS Release Notes URL</Label>
+              <Input value={appConfig.macosReleaseNotesUrl} onChange={(e) => setAppConfig((p) => ({ ...p, macosReleaseNotesUrl: e.target.value }))} />
+            </div>
+            <div className="md:col-span-2 border-t border-slate-200 pt-3">
+              <p className="text-sm font-medium text-slate-900">Web App Update Manifest</p>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Web URL</Label>
+              <Input value={appConfig.webUrl} onChange={(e) => setAppConfig((p) => ({ ...p, webUrl: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Web Version Name</Label>
+              <Input value={appConfig.webVersionName} onChange={(e) => setAppConfig((p) => ({ ...p, webVersionName: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Web Version Code</Label>
+              <Input value={appConfig.webVersionCode} onChange={(e) => setAppConfig((p) => ({ ...p, webVersionCode: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Web Min Supported Version</Label>
+              <Input value={appConfig.webMinSupportedVersion} onChange={(e) => setAppConfig((p) => ({ ...p, webMinSupportedVersion: e.target.value }))} />
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={!!appConfig.webForceUpdate} onChange={(e) => setAppConfig((p) => ({ ...p, webForceUpdate: e.target.checked }))} />
+              Web force update
+            </label>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Web Release Notes URL</Label>
+              <Input value={appConfig.webReleaseNotesUrl} onChange={(e) => setAppConfig((p) => ({ ...p, webReleaseNotesUrl: e.target.value }))} />
+            </div>
             <div className="md:col-span-2 flex gap-2">
               <Button
                 className="bg-orange-500 hover:bg-orange-600"
@@ -846,7 +1028,34 @@ const PlatformSettingsPage = () => {
                       androidApkUrl: appConfig.androidApkUrl || "",
                       androidVersionName: appConfig.androidVersionName || "",
                       androidVersionCode: appConfig.androidVersionCode || "",
+                      androidMinSupportedVersion: appConfig.androidMinSupportedVersion || "",
+                      androidForceUpdate: appConfig.androidForceUpdate ? "true" : "false",
                       androidReleaseNotesUrl: appConfig.androidReleaseNotesUrl || "",
+                      iosDownloadUrl: appConfig.iosDownloadUrl || "",
+                      iosStoreUrl: appConfig.iosStoreUrl || "",
+                      iosVersionName: appConfig.iosVersionName || "",
+                      iosBuildNumber: appConfig.iosBuildNumber || "",
+                      iosMinSupportedVersion: appConfig.iosMinSupportedVersion || "",
+                      iosForceUpdate: appConfig.iosForceUpdate ? "true" : "false",
+                      iosReleaseNotesUrl: appConfig.iosReleaseNotesUrl || "",
+                      windowsDownloadUrl: appConfig.windowsDownloadUrl || "",
+                      windowsVersionName: appConfig.windowsVersionName || "",
+                      windowsVersionCode: appConfig.windowsVersionCode || "",
+                      windowsMinSupportedVersion: appConfig.windowsMinSupportedVersion || "",
+                      windowsForceUpdate: appConfig.windowsForceUpdate ? "true" : "false",
+                      windowsReleaseNotesUrl: appConfig.windowsReleaseNotesUrl || "",
+                      macosDownloadUrl: appConfig.macosDownloadUrl || "",
+                      macosVersionName: appConfig.macosVersionName || "",
+                      macosVersionCode: appConfig.macosVersionCode || "",
+                      macosMinSupportedVersion: appConfig.macosMinSupportedVersion || "",
+                      macosForceUpdate: appConfig.macosForceUpdate ? "true" : "false",
+                      macosReleaseNotesUrl: appConfig.macosReleaseNotesUrl || "",
+                      webUrl: appConfig.webUrl || "",
+                      webVersionName: appConfig.webVersionName || "",
+                      webVersionCode: appConfig.webVersionCode || "",
+                      webMinSupportedVersion: appConfig.webMinSupportedVersion || "",
+                      webForceUpdate: appConfig.webForceUpdate ? "true" : "false",
+                      webReleaseNotesUrl: appConfig.webReleaseNotesUrl || "",
                       webhookAllowedHosts: appConfig.webhookAllowedHosts || "",
                       allowedApiPrefixes: appConfig.allowedApiPrefixes || "",
                       apiCatalog: appConfig.apiCatalog || "",

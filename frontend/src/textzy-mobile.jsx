@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import * as signalR from "@microsoft/signalr";
+import { subscribeFcm, subscribePush } from "./lib/browserNotifications";
+import { getPublicAppUpdateManifest } from "./lib/api";
 
 /* ═══════════════════════════════════════════════
    TEXTZY MOBILE — NO BLACK PALETTE
@@ -52,6 +54,7 @@ const API_BASE =
   "https://textzy-backend-production.up.railway.app";
 
 const SESSION_KEY = "textzy.mobile.session";
+const DEVICE_KEY = "textzy.mobile.device";
 
 const idempotencyKey = () =>
   `mobile-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -121,8 +124,93 @@ const parsePairingToken = (raw) => {
   return "";
 };
 
+const parseJsonSafe = (raw, fallback = {}) => {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+};
+
+const getNativeDeviceInfo = () => {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.TextzyNative?.getDeviceInfo?.();
+    if (!raw) return {};
+    const parsed = parseJsonSafe(String(raw), {});
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const resolveDeviceContext = (restored = {}) => {
+  const stored =
+    typeof localStorage !== "undefined"
+      ? parseJsonSafe(localStorage.getItem(DEVICE_KEY) || "{}", {})
+      : {};
+  const native = getNativeDeviceInfo();
+  const fallbackInstallId =
+    restored.installId ||
+    stored.installId ||
+    `web-mobile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const ctx = {
+    installId: native.installId || fallbackInstallId,
+    deviceName: native.deviceName || stored.deviceName || "Textzy Mobile",
+    devicePlatform: native.devicePlatform || stored.devicePlatform || "android",
+    deviceModel: native.deviceModel || stored.deviceModel || "webview",
+    osVersion: native.osVersion || stored.osVersion || "android",
+    appVersion: native.appVersion || stored.appVersion || "1.0.0",
+  };
+  if (typeof window !== "undefined") window.__TEXTZY_MOBILE_DEVICE__ = ctx;
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(DEVICE_KEY, JSON.stringify(ctx));
+  }
+  return ctx;
+};
+
+const getDeviceLocation = async () => {
+  if (typeof navigator === "undefined" || !navigator.geolocation?.getCurrentPosition) return null;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), 5000);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        clearTimeout(timer);
+        finish({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracyMeters: pos.coords.accuracy,
+          capturedAtUtc: new Date().toISOString(),
+        });
+      },
+      () => {
+        clearTimeout(timer);
+        finish(null);
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 4500,
+        maximumAge: 5 * 60 * 1000,
+      }
+    );
+  });
+};
+
 async function apiFetch(path, { method = "GET", token = "", tenantSlug = "", csrfToken = "", body, extraHeaders = {} } = {}) {
   const headers = { ...extraHeaders };
+  if (typeof window !== "undefined" && window.__TEXTZY_MOBILE_DEVICE__) {
+    const device = window.__TEXTZY_MOBILE_DEVICE__;
+    if (device.installId) headers["X-Install-Id"] = String(device.installId);
+    if (device.devicePlatform) headers["X-Device-Platform"] = String(device.devicePlatform);
+    if (device.deviceModel) headers["X-Device-Model"] = String(device.deviceModel);
+    if (device.appVersion) headers["X-App-Version"] = String(device.appVersion);
+  }
   if (token) headers.Authorization = `Bearer ${token}`;
   if (tenantSlug && !path.startsWith("/api/auth/") && !path.startsWith("/api/public/")) headers["X-Tenant-Slug"] = tenantSlug;
   if (path === "/api/messages/send" && !headers["Idempotency-Key"]) {
@@ -155,6 +243,9 @@ const mapConversation = (x) => {
   const status = x.status ?? x.Status ?? "";
   const lastMessageAtUtc = x.lastMessageAtUtc ?? x.LastMessageAtUtc ?? null;
   const createdAtUtc = x.createdAtUtc ?? x.CreatedAtUtc ?? null;
+  const labelsCsv = x.labelsCsv ?? x.LabelsCsv ?? "";
+  const assignedUserId = x.assignedUserId ?? x.AssignedUserId ?? "";
+  const assignedUserName = x.assignedUserName ?? x.AssignedUserName ?? "";
   return {
     id,
     customerPhone,
@@ -169,6 +260,9 @@ const mapConversation = (x) => {
     lastMsg: status || "Conversation",
     typing: false,
     messages: [],
+    labels: String(labelsCsv).split(",").map((z) => z.trim()).filter(Boolean),
+    assignedUserId,
+    assignedUserName,
   };
 };
 
@@ -177,6 +271,17 @@ const mapMessage = (x) => {
   const sender = rawStatus === "received" ? "customer" : "agent";
   const messageType = String(x.messageType ?? x.MessageType ?? "session");
   let text = String(x.body ?? x.Body ?? "");
+  let media = null;
+  if (messageType.startsWith("media:")) {
+    try {
+      media = JSON.parse(String(x.body ?? x.Body ?? "{}"));
+    } catch {
+      media = null;
+    }
+    const kind = messageType.split(":")[1] || "media";
+    const caption = media?.caption ? ` - ${media.caption}` : "";
+    text = `${kind.toUpperCase()}${caption}`;
+  }
   if (messageType === "template") {
     const name = String(x.body ?? x.Body ?? "").split("|")[0] || "template";
     text = `Template: ${name}`;
@@ -195,6 +300,7 @@ const mapMessage = (x) => {
     status: rawStatus || "sent",
     messageType,
     interactiveButtons,
+    media,
   };
 };
 
@@ -321,6 +427,19 @@ const parseInteractiveButtonsFromType = (messageType) => {
     .map((x) => x.trim())
     .filter(Boolean)
     .slice(0, 3);
+};
+
+const extractTemplateParamIndexes = (body = "") => {
+  const seen = new Set();
+  const out = [];
+  const matches = String(body).match(/\{\{(\d+)\}\}/g) || [];
+  matches.forEach((m) => {
+    const idx = Number(String(m).replace(/[{}]/g, ""));
+    if (!Number.isFinite(idx) || idx < 1 || seen.has(idx)) return;
+    seen.add(idx);
+    out.push(idx);
+  });
+  return out.sort((a, b) => a - b);
 };
 
 /* ════════════════════════════
@@ -868,6 +987,7 @@ export default function TextzyMobile() {
       return {};
     }
   })();
+  const deviceCtxRef = useRef(resolveDeviceContext(restored));
   const [screen, setScreen]   = useState("login");
   const [user, setUser]       = useState(restored.user || null);
   const [project, setProject] = useState(restored.project || null);
@@ -885,17 +1005,25 @@ export default function TextzyMobile() {
   const [view, setView]       = useState("list"); // "list" | "chat" | "profile"
   const [showMainMenu, setShowMainMenu] = useState(false);
   const [showChatMenu, setShowChatMenu] = useState(false);
-  const [starred, setStarred] = useState({});
   const [notice, setNotice] = useState("");
   const [showNewChat, setShowNewChat] = useState(false);
   const [newChatRecipient, setNewChatRecipient] = useState("");
   const [newChatBody, setNewChatBody] = useState("Hello");
   const [showTransfer, setShowTransfer] = useState(false);
+  const [transferMode, setTransferMode] = useState("transfer");
   const [teamMembers, setTeamMembers] = useState([]);
   const [transferAssignee, setTransferAssignee] = useState("");
   const [showLabelsModal, setShowLabelsModal] = useState(false);
   const [labelsInput, setLabelsInput] = useState("");
+  const [showNotesModal, setShowNotesModal] = useState(false);
+  const [notesInput, setNotesInput] = useState("");
+  const [notes, setNotes] = useState([]);
   const [showQaModal, setShowQaModal] = useState(false);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [updatePrompt, setUpdatePrompt] = useState(null);
+  const [templates, setTemplates] = useState([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [templateVars, setTemplateVars] = useState({});
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showDevicesModal, setShowDevicesModal] = useState(false);
   const [devices, setDevices] = useState([]);
@@ -911,6 +1039,8 @@ export default function TextzyMobile() {
     transfer: false,
     labels: false,
     devices: false,
+    notes: false,
+    template: false,
   });
   const msgEnd  = useRef(null);
   const unreadTotalRef = useRef(0);
@@ -918,10 +1048,15 @@ export default function TextzyMobile() {
   const audioCtxRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const typingTimerRef = useRef(null);
+  const typingActiveRef = useRef(false);
+  const notifyRegisteredRef = useRef(false);
 
   const active       = contacts.find(c=>c.id===activeId);
   const unreadCount  = contacts.filter(c=>c.unread>0).length;
   const authCtx = { token: session.accessToken, csrfToken: session.csrfToken, tenantSlug: session.tenantSlug };
+  const selectedTemplate = templates.find((t) => String(t.id) === String(selectedTemplateId)) || templates[0] || null;
+  const templateParamIndexes = extractTemplateParamIndexes(selectedTemplate?.body || "");
   const activeRecipient = (() => {
     const raw = String(active?.customerPhone || active?.phone || "").trim();
     if (raw) return raw;
@@ -1001,11 +1136,43 @@ export default function TextzyMobile() {
     localStorage.setItem("textzy.mobile.settings.sound", settingsSound ? "1" : "0");
   }, [settingsSound]);
 
+  useEffect(() => {
+    setTemplateVars({});
+  }, [selectedTemplateId]);
+
+  useEffect(() => {
+    if (!showTemplateModal) return;
+    if (templates.length > 0) return;
+    loadApprovedTemplates().catch(() => {});
+  }, [showTemplateModal]);
+
+  useEffect(() => {
+    const deviceCtx = deviceCtxRef.current || resolveDeviceContext(restored);
+    const platform = String(deviceCtx.devicePlatform || "android").toLowerCase();
+    const appVersion = String(deviceCtx.appVersion || "1.0.0");
+    getPublicAppUpdateManifest({ platform, appVersion })
+      .then((manifest) => {
+        const current = manifest?.current || null;
+        const platformNode = manifest?.platforms?.[platform] || {};
+        const downloadUrl = platformNode?.downloadUrl || "";
+        if (!current?.updateAvailable) return;
+        setUpdatePrompt({
+          forceUpdate: !!current.forceUpdate,
+          appVersion,
+          latestVersion: platformNode?.latestVersion || "",
+          downloadUrl,
+        });
+      })
+      .catch(() => {});
+  }, []);
+
   const persistSession = (nextSession, nextUser = user, nextProject = project) => {
+    const deviceCtx = deviceCtxRef.current || resolveDeviceContext(restored);
     localStorage.setItem(SESSION_KEY, JSON.stringify({
       accessToken: nextSession.accessToken,
       csrfToken: nextSession.csrfToken,
       tenantSlug: nextSession.tenantSlug || "",
+      installId: deviceCtx.installId || "",
       user: nextUser || null,
       project: nextProject || null,
     }));
@@ -1081,6 +1248,86 @@ export default function TextzyMobile() {
     setDevices(Array.isArray(rows) ? rows : []);
   };
 
+  const loadNotes = async (conversationId, ctx = authCtx) => {
+    if (!conversationId) return [];
+    const { res } = await apiFetch(`/api/inbox/conversations/${conversationId}/notes?take=50`, {
+      token: ctx.token,
+      tenantSlug: ctx.tenantSlug,
+    });
+    if (!res.ok) throw new Error(await res.text() || "Failed to load notes");
+    const rows = await res.json().catch(() => []);
+    const mapped = Array.isArray(rows) ? rows : [];
+    setNotes(mapped);
+    return mapped;
+  };
+
+  const loadApprovedTemplates = async (ctx = authCtx) => {
+    const { res } = await apiFetch("/api/templates", {
+      token: ctx.token,
+      tenantSlug: ctx.tenantSlug,
+    });
+    if (!res.ok) throw new Error(await res.text() || "Failed to load templates");
+    const rows = await res.json().catch(() => []);
+    const approved = (Array.isArray(rows) ? rows : []).filter((x) =>
+      String(x.status || x.Status || "").toLowerCase() === "approved" &&
+      Number(x.channel || x.Channel || 0) === 2
+    );
+    setTemplates(approved);
+    if (approved.length > 0 && !selectedTemplateId) {
+      setSelectedTemplateId(String(approved[0].id || approved[0].Id));
+    }
+    return approved;
+  };
+
+  const ensureNotificationSubscription = async (ctx = authCtx) => {
+    if (notifyRegisteredRef.current || !notifEnabled) return;
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    const vapid = process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY || process.env.VITE_WEB_PUSH_PUBLIC_KEY || "";
+    if (!vapid) return;
+    try {
+      const fcmToken = await subscribeFcm(vapid);
+      if (fcmToken) {
+        const fcmRes = await apiFetch("/api/notifications/subscriptions", {
+          method: "POST",
+          token: ctx.token,
+          tenantSlug: ctx.tenantSlug,
+          csrfToken: ctx.csrfToken,
+          body: {
+            provider: "fcm",
+            endpoint: fcmToken,
+            p256dh: "",
+            auth: "",
+            userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+          },
+        });
+        if (fcmRes.res.ok) {
+          notifyRegisteredRef.current = true;
+          return;
+        }
+      }
+
+      const webPush = await subscribePush(vapid);
+      if (!webPush?.endpoint) return;
+      const keys = webPush.keys || {};
+      const webPushRes = await apiFetch("/api/notifications/subscriptions", {
+        method: "POST",
+        token: ctx.token,
+        tenantSlug: ctx.tenantSlug,
+        csrfToken: ctx.csrfToken,
+        body: {
+          provider: "webpush",
+          endpoint: webPush.endpoint,
+          p256dh: keys.p256dh || "",
+          auth: keys.auth || "",
+          userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+        },
+      });
+      if (webPushRes.res.ok) notifyRegisteredRef.current = true;
+    } catch {
+      // best-effort registration
+    }
+  };
+
   const isWithin24HourWindow = (conversation) => {
     if (!conversation) return true;
     const inbound = (conversation.messages || [])
@@ -1093,16 +1340,22 @@ export default function TextzyMobile() {
 
   const handleLogin = async (payload) => {
     if (payload?.mode === "qr") {
+      const deviceCtx = deviceCtxRef.current || resolveDeviceContext(restored);
+      const location = await getDeviceLocation();
       const { res, nextTokenHeader, nextCsrfHeader } = await apiFetch("/api/public/mobile/pair/exchange", {
         method: "POST",
         body: {
           pairingToken: payload.pairingToken,
-          installId: restored.installId || `web-mobile-${Date.now()}`,
-          deviceName: "Textzy Mobile WebView",
-          devicePlatform: "android",
-          deviceModel: "webview",
-          osVersion: "android",
-          appVersion: "1.0.0",
+          installId: deviceCtx.installId,
+          deviceName: deviceCtx.deviceName,
+          devicePlatform: deviceCtx.devicePlatform,
+          deviceModel: deviceCtx.deviceModel,
+          osVersion: deviceCtx.osVersion,
+          appVersion: deviceCtx.appVersion,
+          locationLat: location?.latitude ?? null,
+          locationLng: location?.longitude ?? null,
+          locationAccuracyMeters: location?.accuracyMeters ?? null,
+          locationCapturedAtUtc: location?.capturedAtUtc ?? null,
         },
       });
       if (!res.ok) throw new Error(await res.text() || "Pairing code expired or invalid.");
@@ -1230,7 +1483,7 @@ export default function TextzyMobile() {
     setShowEmojiPicker(false);
     setCons(p=>p.map(c=>c.id===id?{...c,unread:0}:c));
     try {
-      await loadMessages(id);
+      await Promise.all([loadMessages(id), loadNotes(id).catch(() => [])]);
     } catch {
       // keep old local state
     }
@@ -1303,6 +1556,61 @@ export default function TextzyMobile() {
     await loadConversations();
   };
 
+  const openMessageMedia = async (msg) => {
+    const mediaId = msg?.media?.mediaId;
+    if (!mediaId) {
+      setNotice("Media file is not available.");
+      return;
+    }
+    const headers = {};
+    if (authCtx.token) headers.Authorization = `Bearer ${authCtx.token}`;
+    if (authCtx.tenantSlug) headers["X-Tenant-Slug"] = authCtx.tenantSlug;
+    const res = await fetch(`${API_BASE}/api/messages/media/${encodeURIComponent(mediaId)}`, {
+      headers,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      setNotice("Unable to open media.");
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  };
+
+  const sendTyping = (isTyping) => {
+    if (!activeId || !authCtx.token || !authCtx.tenantSlug) return;
+    apiFetch("/api/inbox/typing", {
+      method: "POST",
+      token: authCtx.token,
+      tenantSlug: authCtx.tenantSlug,
+      csrfToken: authCtx.csrfToken,
+      body: { conversationId: activeId, isTyping },
+    }).catch(() => {});
+  };
+
+  const onInputTyping = (nextValue) => {
+    setInput(nextValue);
+    if (!activeId) return;
+    if (!typingActiveRef.current) {
+      typingActiveRef.current = true;
+      sendTyping(true);
+    }
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = setTimeout(() => {
+      typingActiveRef.current = false;
+      sendTyping(false);
+    }, 1200);
+  };
+
+  const stopTypingNow = () => {
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    if (!typingActiveRef.current) return;
+    typingActiveRef.current = false;
+    sendTyping(false);
+  };
+
   const send = async () => {
     await withBusy("send", async () => {
       const txt = input.trim();
@@ -1312,13 +1620,15 @@ export default function TextzyMobile() {
         return;
       }
       if (!isWithin24HourWindow(active)) {
-        setNotice("24-hour WhatsApp session window is closed. Please use an approved template.");
+        setShowTemplateModal(true);
+        await loadApprovedTemplates().catch(() => {});
         return;
       }
       const m = {id:Date.now(),text:txt,sent:true,time:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),status:"sent"};
       setCons(p=>p.map(c=>c.id===activeId?{...c,messages:[...c.messages,m],lastMsg:txt,time:m.time,unread:0}:c));
       setInput("");
       setShowEmojiPicker(false);
+      stopTypingNow();
       try {
         const { res } = await apiFetch("/api/messages/send", {
           method: "POST",
@@ -1352,6 +1662,17 @@ export default function TextzyMobile() {
     if (!activeId) return;
     const members = await loadTeamMembers();
     setTeamMembers(members);
+    setTransferMode("transfer");
+    setTransferAssignee("");
+    setShowTransfer(true);
+    setShowChatMenu(false);
+  };
+
+  const handleAssignConversation = async () => {
+    if (!activeId) return;
+    const members = await loadTeamMembers();
+    setTeamMembers(members);
+    setTransferMode("assign");
     setTransferAssignee("");
     setShowTransfer(true);
     setShowChatMenu(false);
@@ -1367,7 +1688,10 @@ export default function TextzyMobile() {
       }
       const userName = picked?.fullName || picked?.name || fallback || "Agent";
       const userId = picked?.id || picked?.userId || null;
-      const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/transfer`, {
+      const endpoint = transferMode === "assign"
+        ? `/api/inbox/conversations/${activeId}/assign`
+        : `/api/inbox/conversations/${activeId}/transfer`;
+      const { res } = await apiFetch(endpoint, {
         method: "POST",
         token: authCtx.token,
         tenantSlug: authCtx.tenantSlug,
@@ -1375,7 +1699,7 @@ export default function TextzyMobile() {
         body: { userId, userName },
       });
       if (!res.ok) {
-        setNotice(parseErrorText(await res.text()) || "Transfer failed");
+        setNotice(parseErrorText(await res.text()) || (transferMode === "assign" ? "Assign failed" : "Transfer failed"));
         return;
       }
       await loadConversations();
@@ -1408,6 +1732,93 @@ export default function TextzyMobile() {
       await loadConversations();
       await loadMessages(activeId);
       setShowLabelsModal(false);
+    });
+  };
+
+  const handleNotes = async () => {
+    if (!activeId) return;
+    setShowChatMenu(false);
+    setShowNotesModal(true);
+    await loadNotes(activeId).catch(() => {});
+  };
+
+  const submitNote = async () => {
+    await withBusy("notes", async () => {
+      const body = notesInput.trim();
+      if (!body || !activeId) return;
+      const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/notes`, {
+        method: "POST",
+        token: authCtx.token,
+        tenantSlug: authCtx.tenantSlug,
+        csrfToken: authCtx.csrfToken,
+        body: { body },
+      });
+      if (!res.ok) {
+        setNotice(parseErrorText(await res.text()) || "Note save failed");
+        return;
+      }
+      setNotesInput("");
+      await loadNotes(activeId).catch(() => {});
+      await loadConversations().catch(() => {});
+    });
+  };
+
+  const handleToggleStar = async () => {
+    if (!activeId) return;
+    const current = active?.labels || [];
+    const has = current.some((x) => String(x).toLowerCase() === "starred");
+    const labels = has ? current.filter((x) => String(x).toLowerCase() !== "starred") : [...current, "starred"];
+    const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/labels`, {
+      method: "POST",
+      token: authCtx.token,
+      tenantSlug: authCtx.tenantSlug,
+      csrfToken: authCtx.csrfToken,
+      body: { labels },
+    });
+    if (!res.ok) {
+      setNotice(parseErrorText(await res.text()) || "Failed to update star");
+      return;
+    }
+    setShowChatMenu(false);
+    await loadConversations();
+    await loadMessages(activeId);
+  };
+
+  const sendTemplateFallback = async () => {
+    await withBusy("template", async () => {
+      const tpl = selectedTemplate;
+      if (!tpl || !activeRecipient) {
+        setNotice("No approved WhatsApp template available.");
+        return;
+      }
+      const params = templateParamIndexes.map((idx) => String(templateVars[idx] || "").trim());
+      if (params.some((x) => !x)) {
+        setNotice("Fill all template variables.");
+        return;
+      }
+      const { res } = await apiFetch("/api/messages/send", {
+        method: "POST",
+        token: authCtx.token,
+        tenantSlug: authCtx.tenantSlug,
+        csrfToken: authCtx.csrfToken,
+        body: {
+          recipient: activeRecipient,
+          body: String(tpl.body || "Template message"),
+          channel: 2,
+          useTemplate: true,
+          templateName: tpl.name || tpl.Name,
+          templateLanguageCode: tpl.language || tpl.Language || "en",
+          templateParameters: params,
+          idempotencyKey: idempotencyKey(),
+        },
+      });
+      if (!res.ok) {
+        setNotice(parseErrorText(await res.text()) || "Template send failed");
+        return;
+      }
+      setShowTemplateModal(false);
+      setTemplateVars({});
+      await Promise.all([loadMessages(activeId), loadConversations()]);
     });
   };
 
@@ -1489,7 +1900,8 @@ export default function TextzyMobile() {
     const q=search.toLowerCase();
     const m=c.name.toLowerCase().includes(q)||c.lastMsg.toLowerCase().includes(q);
     if(tab==="Unread")   return m&&c.unread>0;
-    if(tab==="Assigned") return m&&[1,3].includes(c.id);
+    if(tab==="Assigned") return m&&!!c.assignedUserId;
+    if(tab==="Starred")  return m&&(c.labels || []).some((l)=>String(l).toLowerCase()==="starred");
     return m;
   });
 
@@ -1523,11 +1935,30 @@ export default function TextzyMobile() {
     if (!authCtx.token || !authCtx.tenantSlug) return;
     const tick = () => {
       loadConversations().catch(() => {});
-      if (view === "chat" && activeId) loadMessages(activeId).catch(() => {});
+      if (view === "chat" && activeId) {
+        loadMessages(activeId).catch(() => {});
+        loadNotes(activeId).catch(() => {});
+      }
     };
     const timer = setInterval(tick, 3000);
     return () => clearInterval(timer);
   }, [screen, authCtx.token, authCtx.tenantSlug, view, activeId]);
+
+  useEffect(() => {
+    if (screen !== "app") return;
+    if (!authCtx.token || !authCtx.tenantSlug) return;
+    ensureNotificationSubscription().catch(() => {});
+  }, [screen, authCtx.token, authCtx.tenantSlug, notifEnabled]);
+
+  useEffect(() => {
+    return () => {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (view !== "chat") stopTypingNow();
+  }, [view, activeId]);
 
   useEffect(() => {
     if (screen !== "app") return;
@@ -1550,7 +1981,10 @@ export default function TextzyMobile() {
 
     const refresh = () => {
       loadConversations().catch(() => {});
-      if (view === "chat" && activeId) loadMessages(activeId).catch(() => {});
+      if (view === "chat" && activeId) {
+        loadMessages(activeId).catch(() => {});
+        loadNotes(activeId).catch(() => {});
+      }
     };
 
     connection.on("message.queued", () => refresh());
@@ -1562,6 +1996,16 @@ export default function TextzyMobile() {
     connection.on("conversation.assigned", () => refresh());
     connection.on("conversation.transferred", () => refresh());
     connection.on("conversation.labels", () => refresh());
+    connection.on("conversation.note", () => refresh());
+    connection.on("conversation.typing", (e) => {
+      const conversationId = e?.conversationId ?? e?.ConversationId;
+      const isTyping = Boolean(e?.isTyping ?? e?.IsTyping);
+      setCons((prev) => prev.map((c) => (
+        String(c.id) === String(conversationId)
+          ? { ...c, typing: isTyping }
+          : c
+      )));
+    });
     connection.onreconnected(() => {
       connection.invoke("JoinTenantRoom", authCtx.tenantSlug).catch(() => {});
       refresh();
@@ -1630,6 +2074,38 @@ export default function TextzyMobile() {
         </Overlay>
       ) : null}
 
+      {updatePrompt ? (
+        <Overlay>
+          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Update Available</h3>
+          <p style={{ margin:"0 0 8px", color:C.textSub, lineHeight:1.45 }}>
+            Current version: {updatePrompt.appVersion}{"\n"}
+            Latest version: {updatePrompt.latestVersion || "latest"}
+          </p>
+          <p style={{ margin:"0 0 16px", color:C.textSub, lineHeight:1.45 }}>
+            {updatePrompt.forceUpdate ? "This update is required to continue." : "A newer app version is available."}
+          </p>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
+            {!updatePrompt.forceUpdate ? (
+              <button
+                onClick={() => setUpdatePrompt(null)}
+                style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"10px 14px", background:"#fff", cursor:"pointer" }}
+              >
+                Later
+              </button>
+            ) : null}
+            <button
+              onClick={() => {
+                if (updatePrompt.downloadUrl) window.location.assign(updatePrompt.downloadUrl);
+                else setNotice("Download URL is not configured in platform settings.");
+              }}
+              style={{ border:"none", borderRadius:10, padding:"10px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:"pointer" }}
+            >
+              Update Now
+            </button>
+          </div>
+        </Overlay>
+      ) : null}
+
       {showNewChat ? (
         <Overlay>
           <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Start New Chat</h3>
@@ -1646,7 +2122,7 @@ export default function TextzyMobile() {
 
       {showTransfer ? (
         <Overlay>
-          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Transfer Chat</h3>
+          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>{transferMode === "assign" ? "Assign Chat" : "Transfer Chat"}</h3>
           <label style={{ display:"block", fontSize:12, color:C.textSub, marginBottom:6 }}>Assignee Name or Email</label>
           <input value={transferAssignee} onChange={(e)=>setTransferAssignee(e.target.value)} placeholder="Enter assignee" style={{ width:"100%", border:`1.5px solid ${C.divider}`, borderRadius:10, padding:"10px 12px", marginBottom:8 }} />
           {teamMembers.length > 0 ? (
@@ -1659,7 +2135,7 @@ export default function TextzyMobile() {
           ) : null}
           <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
             <button onClick={()=>setShowTransfer(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Cancel</button>
-            <button disabled={busy.transfer} onClick={submitTransferConversation} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.transfer?"not-allowed":"pointer", opacity:busy.transfer?0.8:1 }}>{busy.transfer ? "Transferring..." : "Transfer"}</button>
+            <button disabled={busy.transfer} onClick={submitTransferConversation} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.transfer?"not-allowed":"pointer", opacity:busy.transfer?0.8:1 }}>{busy.transfer ? (transferMode === "assign" ? "Assigning..." : "Transferring...") : (transferMode === "assign" ? "Assign" : "Transfer")}</button>
           </div>
         </Overlay>
       ) : null}
@@ -1672,6 +2148,66 @@ export default function TextzyMobile() {
           <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
             <button onClick={()=>setShowLabelsModal(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Cancel</button>
             <button disabled={busy.labels} onClick={submitLabels} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.labels?"not-allowed":"pointer", opacity:busy.labels?0.8:1 }}>{busy.labels ? "Saving..." : "Save"}</button>
+          </div>
+        </Overlay>
+      ) : null}
+
+      {showNotesModal ? (
+        <Overlay>
+          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Conversation Notes</h3>
+          <textarea
+            value={notesInput}
+            onChange={(e)=>setNotesInput(e.target.value)}
+            rows={3}
+            placeholder="Add internal note..."
+            style={{ width:"100%", border:`1.5px solid ${C.divider}`, borderRadius:10, padding:"10px 12px", marginBottom:10, resize:"vertical" }}
+          />
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginBottom:10 }}>
+            <button onClick={()=>setShowNotesModal(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Close</button>
+            <button disabled={busy.notes} onClick={submitNote} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.notes?"not-allowed":"pointer", opacity:busy.notes?0.8:1 }}>{busy.notes ? "Saving..." : "Save Note"}</button>
+          </div>
+          <div style={{ maxHeight:180, overflowY:"auto", border:`1px solid ${C.divider}`, borderRadius:10 }}>
+            {notes.length === 0 ? (
+              <div style={{ padding:"12px", color:C.textSub, fontSize:13 }}>No notes yet.</div>
+            ) : notes.map((n, idx) => (
+              <div key={`${n.id || n.Id || idx}`} style={{ padding:"10px 12px", borderBottom: idx < notes.length - 1 ? `1px solid ${C.divider}` : "none" }}>
+                <div style={{ color:C.textMain, fontSize:13, lineHeight:1.4 }}>{n.body || n.Body || ""}</div>
+                <div style={{ color:C.textMuted, fontSize:11, marginTop:4 }}>{new Date(n.createdAtUtc || n.CreatedAtUtc || Date.now()).toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
+        </Overlay>
+      ) : null}
+
+      {showTemplateModal ? (
+        <Overlay>
+          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Send Template</h3>
+          {templates.length === 0 ? (
+            <p style={{ margin:"0 0 12px", color:C.textSub, fontSize:13 }}>No approved WhatsApp templates available.</p>
+          ) : (
+            <>
+              <label style={{ display:"block", fontSize:12, color:C.textSub, marginBottom:6 }}>Template</label>
+              <select value={selectedTemplateId} onChange={(e)=>{ setSelectedTemplateId(e.target.value); setTemplateVars({}); }} style={{ width:"100%", border:`1.5px solid ${C.divider}`, borderRadius:10, padding:"10px 12px", marginBottom:10 }}>
+                {templates.map((t) => (
+                  <option key={String(t.id || t.Id)} value={String(t.id || t.Id)}>{t.name || t.Name}</option>
+                ))}
+              </select>
+              {templateParamIndexes.map((idx) => (
+                <div key={`tpl-${idx}`} style={{ marginBottom:8 }}>
+                  <label style={{ display:"block", fontSize:12, color:C.textSub, marginBottom:4 }}>Variable {idx}</label>
+                  <input
+                    value={templateVars[idx] || ""}
+                    onChange={(e)=>setTemplateVars((p)=>({ ...p, [idx]: e.target.value }))}
+                    placeholder={`Value for {{${idx}}}`}
+                    style={{ width:"100%", border:`1.5px solid ${C.divider}`, borderRadius:10, padding:"9px 12px" }}
+                  />
+                </div>
+              ))}
+            </>
+          )}
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:12 }}>
+            <button onClick={()=>setShowTemplateModal(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Cancel</button>
+            <button disabled={busy.template || templates.length === 0} onClick={sendTemplateFallback} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.template?"not-allowed":"pointer", opacity:(busy.template || templates.length === 0)?0.8:1 }}>{busy.template ? "Sending..." : "Send Template"}</button>
           </div>
         </Overlay>
       ) : null}
@@ -1800,8 +2336,10 @@ export default function TextzyMobile() {
             onClick: ()=>{
               setView("list");
               setTab("All");
-              const firstStarredId = Object.keys(starred).find((k)=>starred[k]);
-              if (firstStarredId) setAId(Number(firstStarredId));
+              const firstStarred = contacts.find((c) =>
+                (c.labels || []).some((l) => String(l).toLowerCase() === "starred")
+              );
+              if (firstStarred) setAId(firstStarred.id);
             },
           },
           { ic:<I.Tag/>, label:"Labels", onClick: handleSetLabels },
@@ -1887,9 +2425,12 @@ export default function TextzyMobile() {
       {showChatMenu && (
         <div style={{ position:"absolute", top:"calc(10px + env(safe-area-inset-top,0px) + 58px)", right:12, zIndex:5, background:"#fff", borderRadius:12, boxShadow:"0 8px 24px rgba(0,0,0,0.2)", overflow:"hidden" }}>
           {[
+            { label: "Assign", onClick: handleAssignConversation },
             { label: "Transfer", onClick: handleTransferConversation },
             { label: "Labels", onClick: handleSetLabels },
-            { label: starred[activeId] ? "Unstar Chat" : "Star Chat", onClick: () => { setStarred((p)=>({ ...p, [activeId]: !p[activeId] })); setShowChatMenu(false);} },
+            { label: (active.labels || []).some((l) => String(l).toLowerCase() === "starred") ? "Unstar Chat" : "Star Chat", onClick: handleToggleStar },
+            { label: "Notes", onClick: handleNotes },
+            { label: "Send Template", onClick: async () => { setShowChatMenu(false); setShowTemplateModal(true); await loadApprovedTemplates().catch(() => {}); } },
             { label: "Insert QA", onClick: () => { setShowChatMenu(false); setShowQaModal(true); } },
           ].map((item)=> (
             <button key={item.label} onClick={item.onClick} style={{ display:"block", width:"100%", textAlign:"left", background:"#fff", border:"none", padding:"11px 14px", fontSize:14, cursor:"pointer" }}>{item.label}</button>
@@ -1916,6 +2457,19 @@ export default function TextzyMobile() {
               boxShadow:msg.sent?`0 2px 8px ${C.orange}22`:"0 1px 4px rgba(0,0,0,0.08)",
             }}>
               <p style={{ margin:0,fontSize:15,color:C.textMain,lineHeight:1.45,wordBreak:"break-word" }}>{msg.text}</p>
+              {msg.messageType?.startsWith("media:") ? (
+                <div style={{ marginTop:8, border:`1px solid ${C.divider}`, borderRadius:10, padding:"8px 10px", background:"#fff" }}>
+                  <div style={{ fontSize:12, color:C.textSub, marginBottom:6 }}>
+                    {String(msg.messageType).split(":")[1] || "media"} {msg.media?.fileName ? `- ${msg.media.fileName}` : ""}
+                  </div>
+                  {msg.media?.caption ? (
+                    <div style={{ fontSize:13, color:C.textMain, marginBottom:6 }}>{msg.media.caption}</div>
+                  ) : null}
+                  <button onClick={()=>openMessageMedia(msg)} style={{ border:`1px solid ${C.orange}55`, background:"#fff", color:C.orangeDark, borderRadius:8, padding:"6px 10px", fontSize:12, fontWeight:600, cursor:"pointer" }}>
+                    Open Media
+                  </button>
+                </div>
+              ) : null}
               {Array.isArray(msg.interactiveButtons) && msg.interactiveButtons.length > 0 ? (
                 <div style={{ marginTop:8, display:"grid", gap:6 }}>
                   {msg.interactiveButtons.map((btn, idx) => (
@@ -2005,7 +2559,7 @@ export default function TextzyMobile() {
           onBlurCapture={e=>e.currentTarget.style.borderColor=C.divider}
         >
           <input ref={inputRef} value={input}
-            onChange={e=>setInput(e.target.value)}
+            onChange={e=>onInputTyping(e.target.value)}
             onFocus={() => setShowEmojiPicker(false)}
             onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()}
             placeholder="Type a message..."
@@ -2096,7 +2650,7 @@ export default function TextzyMobile() {
 
       {/* tabs */}
       <div style={{ display:"flex",background:"#fff",borderBottom:`2px solid ${C.divider}`,flexShrink:0 }}>
-        {["All","Unread","Assigned"].map(t=>(
+        {["All","Unread","Assigned","Starred"].map(t=>(
           <button key={t} onClick={()=>setTab(t)} style={{
             flex:1,padding:"11px 4px",border:"none",background:"none",
             fontWeight:tab===t?700:500, color:tab===t?C.orange:C.textSub,

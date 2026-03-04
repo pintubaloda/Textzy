@@ -341,6 +341,24 @@ export async function getPublicMobileDownloadInfo() {
   return res.json()
 }
 
+export async function getPublicAppUpdateManifest({ platform = '', appVersion = '' } = {}) {
+  const query = new URLSearchParams()
+  if (platform) query.set('platform', platform)
+  if (appVersion) query.set('appVersion', appVersion)
+  const qs = query.toString()
+  const url = `${API_BASE}/api/public/app-updates/manifest${qs ? `?${qs}` : ''}`
+  const res = await fetch(url, {
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store'
+  })
+  if (!res.ok) {
+    const msg = await readErrorMessage(res, 'Failed to load app update manifest')
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
 export async function authAcceptInvite({ token, fullName, password }) {
   const res = await fetch(`${API_BASE}/api/auth/accept-invite`, {
     method: 'POST',

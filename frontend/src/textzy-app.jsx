@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
+import { getPublicAppUpdateManifest } from "./lib/api";
 
 /* ═══════════════════════════════════
    TEXTZY BRAND COLOURS (from logo)
@@ -779,6 +780,7 @@ export default function TextzyApp() {
   const [mobileView, setMV]   = useState("list");
   const [deviceType, setDT]   = useState("desktop");
   const [session, setSession] = useState({ accessToken: "", csrfToken: "", tenantSlug: "" });
+  const [updatePrompt, setUpdatePrompt] = useState(null);
   const [qrState, setQrState] = useState({ pairingToken: "", expiresAtUtc: "", qrImageDataUrl: "" });
   const msgEnd  = useRef(null);
   const inputRef = useRef(null);
@@ -789,6 +791,24 @@ export default function TextzyApp() {
     const onResize = () => setDT(getDeviceType());
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    const platform = /mac/i.test(navigator.userAgent || "") ? "macos" : "windows";
+    const appVersion = "1.0.0";
+    getPublicAppUpdateManifest({ platform, appVersion })
+      .then((manifest) => {
+        const current = manifest?.current || null;
+        const node = manifest?.platforms?.[platform] || {};
+        if (!current?.updateAvailable) return;
+        setUpdatePrompt({
+          forceUpdate: !!current.forceUpdate,
+          appVersion,
+          latestVersion: node?.latestVersion || "",
+          downloadUrl: node?.downloadUrl || "",
+        });
+      })
+      .catch(() => {});
   }, []);
 
   const isMobileDevice = deviceType === "mobile" || deviceType === "tablet";
@@ -1183,6 +1203,55 @@ export default function TextzyApp() {
   return (
     <div style={{ display:"flex",height:"100vh",overflow:"hidden",fontFamily:"'Segoe UI',system-ui,sans-serif" }}
       onClick={()=>profileOpen&&setPO(false)}>
+      {updatePrompt ? (
+        <div style={{
+          position:"fixed",
+          inset:0,
+          zIndex:500,
+          background:"rgba(15,23,42,0.45)",
+          display:"flex",
+          alignItems:"center",
+          justifyContent:"center",
+          padding:20,
+        }}>
+          <div style={{
+            width:"100%",
+            maxWidth:430,
+            background:"#fff",
+            borderRadius:16,
+            boxShadow:"0 16px 40px rgba(0,0,0,0.25)",
+            padding:18,
+          }}>
+            <h3 style={{ margin:"0 0 10px", fontSize:20, color:C.textMain }}>Update Available</h3>
+            <p style={{ margin:"0 0 8px", color:C.textSub, lineHeight:1.45 }}>
+              Current version: {updatePrompt.appVersion}
+              <br />
+              Latest version: {updatePrompt.latestVersion || "latest"}
+            </p>
+            <p style={{ margin:"0 0 16px", color:C.textSub, lineHeight:1.45 }}>
+              {updatePrompt.forceUpdate ? "This update is required to continue." : "A newer desktop app version is available."}
+            </p>
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
+              {!updatePrompt.forceUpdate ? (
+                <button
+                  onClick={() => setUpdatePrompt(null)}
+                  style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"10px 14px", background:"#fff", cursor:"pointer" }}
+                >
+                  Later
+                </button>
+              ) : null}
+              <button
+                onClick={() => {
+                  if (updatePrompt.downloadUrl) window.location.assign(updatePrompt.downloadUrl);
+                }}
+                style={{ border:"none", borderRadius:10, padding:"10px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:"pointer" }}
+              >
+                Update Now
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* ── SIDEBAR ── */}
       <div style={{ width:360,minWidth:360,height:"100vh",display:"flex",flexDirection:"column",background:"#fff",borderRight:`1px solid ${C.divider}`,position:"relative" }}>

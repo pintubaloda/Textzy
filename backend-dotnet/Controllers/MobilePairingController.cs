@@ -66,7 +66,18 @@ public class MobilePairingController(
             request.DeviceName,
             request.DeviceModel,
             request.AppVersion,
-            request.OsVersion
+            request.OsVersion,
+            ip = GetClientIp(),
+            forwardedFor = Request.Headers["X-Forwarded-For"].FirstOrDefault() ?? string.Empty,
+            location = (request.LocationLat.HasValue && request.LocationLng.HasValue)
+                ? new
+                {
+                    lat = request.LocationLat.Value,
+                    lng = request.LocationLng.Value,
+                    accuracyMeters = request.LocationAccuracyMeters,
+                    capturedAtUtc = request.LocationCapturedAtUtc
+                }
+                : null
         });
 
         if (device is null)
@@ -173,6 +184,16 @@ public class MobilePairingController(
         return Convert.ToHexString(bytes);
     }
 
+    private string GetClientIp()
+    {
+        var forwarded = Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwarded))
+        {
+            return forwarded.Split(',')[0].Trim();
+        }
+        return HttpContext.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
+    }
+
     private bool IsSecureRequest()
     {
         if (Request.IsHttps) return true;
@@ -190,5 +211,9 @@ public class MobilePairingController(
         public string DeviceModel { get; set; } = string.Empty;
         public string OsVersion { get; set; } = string.Empty;
         public string AppVersion { get; set; } = string.Empty;
+        public double? LocationLat { get; set; }
+        public double? LocationLng { get; set; }
+        public double? LocationAccuracyMeters { get; set; }
+        public DateTime? LocationCapturedAtUtc { get; set; }
     }
 }
