@@ -751,10 +751,12 @@ const LoginScreen = ({ onLogin }) => {
   const [pass,setPass]   = useState("password123");
   const [otp,setOtp]     = useState("");
   const [verificationId,setVerificationId] = useState("");
-  const [verificationCode,setVerificationCode] = useState("");
+  const [verificationState,setVerificationState] = useState("");
   const [otpSent,setOtpSent] = useState(false);
+  const [otpReady,setOtpReady] = useState(false);
   const [otpVerified,setOtpVerified] = useState(false);
   const [otpBusy,setOtpBusy] = useState(false);
+  const [otpStatusBusy,setOtpStatusBusy] = useState(false);
   const [verifyBusy,setVerifyBusy] = useState(false);
   const [showPass,setShowPass] = useState(false);
   const [loading,setLoad]= useState(false);
@@ -781,9 +783,10 @@ const LoginScreen = ({ onLogin }) => {
     try {
       const data = await onLogin({ mode: "request-otp", email });
       setVerificationId(data?.verificationId || "");
-      setVerificationCode(data?.verificationCode || "");
+      setVerificationState(data?.state || "waiting_user_action");
       setOtp("");
       setOtpSent(true);
+      setOtpReady(false);
       setOtpVerified(false);
     } catch (e) {
       setErr(e?.message || "Failed to send OTP.");
@@ -791,6 +794,31 @@ const LoginScreen = ({ onLogin }) => {
       setOtpBusy(false);
     }
   };
+
+  const refreshOtpStatus = async () => {
+    if (!verificationId) return;
+    setOtpStatusBusy(true);
+    try {
+      const status = await onLogin({ mode: "otp-status", verificationId, email });
+      const state = status?.state || "";
+      setVerificationState(state);
+      const ready = state === "otp_ready" || state === "verified";
+      setOtpReady(ready);
+      if (state === "verified") setOtpVerified(true);
+    } catch (e) {
+      setErr(e?.message || "Failed to check verification status.");
+    } finally {
+      setOtpStatusBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!otpSent || !verificationId || otpReady || otpVerified) return;
+    const timer = setInterval(() => {
+      refreshOtpStatus();
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [otpSent, verificationId, otpReady, otpVerified]);
 
   const verifyOtp = async () => {
     if (!verificationId || !otp) { setErr("Enter OTP first."); return; }
@@ -872,9 +900,10 @@ const LoginScreen = ({ onLogin }) => {
                   setErr("");
                   setOtp("");
                   setOtpSent(false);
+                  setOtpReady(false);
                   setOtpVerified(false);
                   setVerificationId("");
-                  setVerificationCode("");
+                  setVerificationState("");
                 }}
                 onKeyDown={e=>e.key==="Enter"&&submit()}
                 style={{
@@ -918,23 +947,35 @@ const LoginScreen = ({ onLogin }) => {
                 </button>
               </div>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 92px 92px", gap:8, marginBottom:10 }}>
+            <div style={{ display:"grid", gridTemplateColumns: otpReady ? "1fr 92px 92px" : "1fr 160px", gap:8, marginBottom:10 }}>
               <button onClick={requestOtp} disabled={otpBusy} style={{ padding:"10px 12px",borderRadius:10,border:`1px solid ${C.divider}`,background:"#fff",fontWeight:700,color:C.textMain,cursor:otpBusy?"not-allowed":"pointer" }}>
                 {otpBusy ? "Sending..." : "Verify Email"}
               </button>
-              <input
-                value={otp}
-                onChange={(e)=>setOtp(e.target.value)}
-                placeholder="OTP"
-                style={{ padding:"10px 10px",borderRadius:10,border:`1px solid ${C.divider}`,fontSize:13 }}
-              />
-              <button onClick={verifyOtp} disabled={verifyBusy || !otpSent} style={{ padding:"10px 12px",borderRadius:10,border:"none",background:C.orange,color:"#fff",fontWeight:700,cursor:(verifyBusy || !otpSent)?"not-allowed":"pointer",opacity:(verifyBusy || !otpSent)?0.8:1 }}>
-                {verifyBusy ? "..." : "Verify"}
-              </button>
+              {otpReady ? (
+                <>
+                  <input
+                    value={otp}
+                    onChange={(e)=>setOtp(e.target.value)}
+                    placeholder="OTP"
+                    style={{ padding:"10px 10px",borderRadius:10,border:`1px solid ${C.divider}`,fontSize:13 }}
+                  />
+                  <button onClick={verifyOtp} disabled={verifyBusy || !otpSent} style={{ padding:"10px 12px",borderRadius:10,border:"none",background:C.orange,color:"#fff",fontWeight:700,cursor:(verifyBusy || !otpSent)?"not-allowed":"pointer",opacity:(verifyBusy || !otpSent)?0.8:1 }}>
+                    {verifyBusy ? "..." : "Verify"}
+                  </button>
+                </>
+              ) : (
+                <button onClick={refreshOtpStatus} disabled={!otpSent || otpStatusBusy} style={{ padding:"10px 12px",borderRadius:10,border:`1px solid ${C.divider}`,background:"#fff",fontWeight:700,color:C.textMain,cursor:(!otpSent || otpStatusBusy)?"not-allowed":"pointer",opacity:(!otpSent || otpStatusBusy)?0.75:1 }}>
+                  {otpStatusBusy ? "Checking..." : "I clicked Verify"}
+                </button>
+              )}
             </div>
             {otpSent && (
               <p style={{ fontSize:12, color: otpVerified ? C.online : C.textSub, margin:"0 0 8px" }}>
-                {otpVerified ? "Email verified successfully." : `Mail sent. Code: ${verificationCode || "-"}`}
+                {otpVerified
+                  ? "Email verified successfully."
+                  : otpReady
+                    ? "Verification link confirmed. Enter OTP from email tab."
+                    : "Mail sent. Click Verify Now in your email, then tap I clicked Verify."}
               </p>
             )}
             {err&&<p style={{ color:C.danger,fontSize:13,marginBottom:10,textAlign:"center" }}>{err}</p>}
@@ -1409,16 +1450,28 @@ export default function TextzyMobile() {
     if (payload?.mode === "request-otp") {
       const { res } = await apiFetch("/api/auth/email-verification/request", {
         method: "POST",
-        body: { email: payload.email },
+        body: { email: payload.email, purpose: "login" },
       });
       if (!res.ok) throw new Error(await res.text() || "Failed to send OTP.");
+      return await res.json();
+    }
+
+    if (payload?.mode === "otp-status") {
+      const id = encodeURIComponent(payload.verificationId || "");
+      const purpose = encodeURIComponent("login");
+      const email = encodeURIComponent(payload.email || "");
+      const query = email
+        ? `/api/auth/email-verification/status?verificationId=${id}&purpose=${purpose}&email=${email}`
+        : `/api/auth/email-verification/status?verificationId=${id}&purpose=${purpose}`;
+      const { res } = await apiFetch(query, { method: "GET" });
+      if (!res.ok) throw new Error(await res.text() || "Failed to read verification status.");
       return await res.json();
     }
 
     if (payload?.mode === "verify-otp") {
       const { res } = await apiFetch("/api/auth/email-verification/verify", {
         method: "POST",
-        body: { email: payload.email, verificationId: payload.verificationId, otp: payload.otp },
+        body: { email: payload.email, purpose: "login", verificationId: payload.verificationId, otp: payload.otp },
       });
       if (!res.ok) throw new Error(await res.text() || "Invalid OTP.");
       return await res.json();

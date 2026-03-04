@@ -7,21 +7,23 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { MessageSquare, Eye, EyeOff, ArrowRight, Download } from "lucide-react";
 import { toast } from "sonner";
-import { authLogin, authRequestEmailOtp, authVerifyEmailOtp, checkApiHealth, getPublicMobileDownloadInfo, initializeMe } from "@/lib/api";
+import { authLogin, authRequestEmailOtp, authEmailOtpStatus, authVerifyEmailOtp, checkApiHealth, getPublicMobileDownloadInfo, initializeMe } from "@/lib/api";
 
 const LoginPage = () => {
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [otpBusy, setOtpBusy] = useState(false);
+  const [otpStatusBusy, setOtpStatusBusy] = useState(false);
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [healthChecked, setHealthChecked] = useState(false);
   const [apkInfo, setApkInfo] = useState(null);
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
+  const [otpReady, setOtpReady] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
   const [verificationId, setVerificationId] = useState("");
-  const [verificationCode, setVerificationCode] = useState("");
+  const [verificationState, setVerificationState] = useState("");
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -67,19 +69,45 @@ const LoginPage = () => {
     }
     setOtpBusy(true);
     try {
-      const data = await authRequestEmailOtp({ email: formData.email });
+      const data = await authRequestEmailOtp({ email: formData.email, purpose: "login" });
       setVerificationId(data?.verificationId || "");
-      setVerificationCode(data?.verificationCode || "");
+      setVerificationState(data?.state || "waiting_user_action");
       setOtp("");
       setOtpSent(true);
+      setOtpReady(false);
       setOtpVerified(false);
-      toast.success("Verification OTP sent to your email.");
+      toast.success("Verification email sent. Click Verify Now in your mail.");
     } catch (err) {
       toast.error(err?.message || "Failed to send OTP.");
     } finally {
       setOtpBusy(false);
     }
   };
+
+  const checkOtpStatus = async () => {
+    if (!verificationId) return;
+    setOtpStatusBusy(true);
+    try {
+      const data = await authEmailOtpStatus({ email: formData.email, verificationId, purpose: "login" });
+      const state = data?.state || "";
+      setVerificationState(state);
+      const ready = state === "otp_ready" || state === "verified";
+      setOtpReady(ready);
+      if (state === "verified") setOtpVerified(true);
+    } catch (err) {
+      toast.error(err?.message || "Failed to check verification status.");
+    } finally {
+      setOtpStatusBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!otpSent || !verificationId || otpReady || otpVerified) return;
+    const timer = setInterval(() => {
+      checkOtpStatus();
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [otpSent, verificationId, otpReady, otpVerified]);
 
   const verifyOtp = async () => {
     if (!verificationId || !otp) {
@@ -88,7 +116,7 @@ const LoginPage = () => {
     }
     setVerifyBusy(true);
     try {
-      await authVerifyEmailOtp({ email: formData.email, verificationId, otp });
+      await authVerifyEmailOtp({ email: formData.email, verificationId, otp, purpose: "login" });
       setOtpVerified(true);
       toast.success("Email verified.");
     } catch (err) {
@@ -141,9 +169,10 @@ const LoginPage = () => {
                       setFormData({ ...formData, email: e.target.value });
                       setOtp("");
                       setOtpSent(false);
+                      setOtpReady(false);
                       setOtpVerified(false);
                       setVerificationId("");
-                      setVerificationCode("");
+                      setVerificationState("");
                     }}
                     required
                     data-testid="login-email-input"
@@ -196,23 +225,35 @@ const LoginPage = () => {
 
                 <div className="space-y-2 rounded-md border border-slate-200 p-3">
                   <Label>Email Verification</Label>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_140px_auto]">
+                  <div className={`grid grid-cols-1 gap-2 ${otpReady ? "sm:grid-cols-[1fr_140px_auto]" : "sm:grid-cols-[1fr_auto]"}`}>
                     <Button type="button" variant="outline" onClick={requestOtp} disabled={otpBusy}>
                       {otpBusy ? "Sending..." : "Verify Email"}
                     </Button>
-                    <Input
-                      type="text"
-                      placeholder="Enter OTP"
-                      value={otp}
-                      onChange={(e) => setOtp(e.target.value)}
-                    />
-                    <Button type="button" onClick={verifyOtp} disabled={verifyBusy || !otpSent} className="bg-orange-500 hover:bg-orange-600">
-                      {verifyBusy ? "Verifying..." : "Verify"}
-                    </Button>
+                    {otpReady ? (
+                      <>
+                        <Input
+                          type="text"
+                          placeholder="Enter OTP"
+                          value={otp}
+                          onChange={(e) => setOtp(e.target.value)}
+                        />
+                        <Button type="button" onClick={verifyOtp} disabled={verifyBusy || !otpSent} className="bg-orange-500 hover:bg-orange-600">
+                          {verifyBusy ? "Verifying..." : "Verify"}
+                        </Button>
+                      </>
+                    ) : (
+                      <Button type="button" variant="outline" onClick={checkOtpStatus} disabled={otpStatusBusy || !otpSent}>
+                        {otpStatusBusy ? "Checking..." : "I clicked Verify"}
+                      </Button>
+                    )}
                   </div>
                   {otpSent ? (
                     <p className={`text-xs ${otpVerified ? "text-green-600" : "text-slate-600"}`}>
-                      {otpVerified ? "Email verification success. Continue to Sign In." : `OTP sent. Verification code: ${verificationCode || "-"}`}
+                      {otpVerified
+                        ? "Email verification success. Continue to Sign In."
+                        : otpReady
+                          ? "Verification link confirmed. Enter OTP from mail tab."
+                          : "Waiting for user action. Click Verify Now in email, then tap I clicked Verify."}
                     </p>
                   ) : null}
                 </div>

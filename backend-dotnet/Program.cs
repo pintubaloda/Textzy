@@ -525,19 +525,28 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "Email" text NOT NULL,
             "Purpose" text NOT NULL DEFAULT 'login',
             "OtpHash" text NOT NULL,
+            "OtpDisplayEncrypted" text NOT NULL DEFAULT '',
             "VerificationCode" text NOT NULL DEFAULT '',
+            "LinkTokenHash" text NOT NULL DEFAULT '',
             "IsVerified" boolean NOT NULL DEFAULT false,
             "AttemptCount" integer NOT NULL DEFAULT 0,
             "MaxAttempts" integer NOT NULL DEFAULT 5,
             "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
             "ExpiresAtUtc" timestamp with time zone NOT NULL,
+            "LinkOpenedAtUtc" timestamp with time zone NULL,
+            "OtpIssuedAtUtc" timestamp with time zone NULL,
             "VerifiedAtUtc" timestamp with time zone NULL,
             "ConsumedAtUtc" timestamp with time zone NULL,
             "LastSentAtUtc" timestamp with time zone NOT NULL DEFAULT now()
         );
         """);
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "EmailOtpVerifications" ADD COLUMN IF NOT EXISTS "OtpDisplayEncrypted" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "EmailOtpVerifications" ADD COLUMN IF NOT EXISTS "LinkTokenHash" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "EmailOtpVerifications" ADD COLUMN IF NOT EXISTS "LinkOpenedAtUtc" timestamp with time zone NULL;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "EmailOtpVerifications" ADD COLUMN IF NOT EXISTS "OtpIssuedAtUtc" timestamp with time zone NULL;""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_EmailOtpVerifications_Email_Purpose_CreatedAtUtc" ON "EmailOtpVerifications" ("Email","Purpose","CreatedAtUtc");""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_EmailOtpVerifications_ExpiresAtUtc" ON "EmailOtpVerifications" ("ExpiresAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_EmailOtpVerifications_LinkTokenHash" ON "EmailOtpVerifications" ("LinkTokenHash");""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "UserMobileDevices" (

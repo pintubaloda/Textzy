@@ -27,7 +27,8 @@ public class AuthController(
     IHttpClientFactory httpClientFactory) : ControllerBase
 {
     private const int EmailOtpLength = 6;
-    private const int EmailOtpExpiryMinutes = 10;
+    private const int EmailOtpExpiryMinutes = 3;
+    private const int EmailActionLinkExpiryMinutes = 15;
     private const int EmailOtpMaxAttempts = 5;
     private const int EmailOtpResendCooldownSeconds = 30;
 
@@ -136,43 +137,41 @@ public class AuthController(
     [HttpPost("email-verification/request")]
     public async Task<IActionResult> RequestEmailVerificationOtp([FromBody] RequestEmailVerificationOtpRequest request, CancellationToken ct)
     {
-        string email;
-        try
-        {
-            email = InputGuardService.RequireTrimmed(request.Email, "Email", 320).ToLowerInvariant();
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(ex.Message);
-        }
+        var purpose = NormalizeOtpPurpose(request.Purpose);
+        var emailResult = ResolveEmailForOtpRequest(request.Email);
+        if (!emailResult.ok) return BadRequest(emailResult.error);
+        var email = emailResult.email;
 
         var now = DateTime.UtcNow;
         var requestsInHour = await db.EmailOtpVerifications
-            .CountAsync(x => x.Email.ToLower() == email && x.CreatedAtUtc >= now.AddHours(-1), ct);
+            .CountAsync(x => x.Email.ToLower() == email && x.Purpose == purpose && x.CreatedAtUtc >= now.AddHours(-1), ct);
         if (requestsInHour >= 8)
             return StatusCode(StatusCodes.Status429TooManyRequests, "Too many OTP requests. Try again later.");
 
         var latest = await db.EmailOtpVerifications
-            .Where(x => x.Email.ToLower() == email && x.Purpose == "login")
+            .Where(x => x.Email.ToLower() == email && x.Purpose == purpose)
             .OrderByDescending(x => x.CreatedAtUtc)
             .FirstOrDefaultAsync(ct);
         if (latest is not null && (now - latest.LastSentAtUtc).TotalSeconds < EmailOtpResendCooldownSeconds)
             return StatusCode(StatusCodes.Status429TooManyRequests, $"Please wait {EmailOtpResendCooldownSeconds} seconds before requesting another OTP.");
 
-        var otp = GenerateNumericCode(EmailOtpLength);
-        var verificationCode = GenerateAlphaNumericCode(6);
+        var linkToken = CreateOpaqueToken(32);
         var row = new EmailOtpVerification
         {
             Id = Guid.NewGuid(),
             Email = email,
-            Purpose = "login",
-            OtpHash = HashToken(otp),
-            VerificationCode = verificationCode,
+            Purpose = purpose,
+            OtpHash = string.Empty,
+            OtpDisplayEncrypted = string.Empty,
+            VerificationCode = string.Empty,
+            LinkTokenHash = HashToken(linkToken),
             IsVerified = false,
             AttemptCount = 0,
             MaxAttempts = EmailOtpMaxAttempts,
             CreatedAtUtc = now,
-            ExpiresAtUtc = now.AddMinutes(EmailOtpExpiryMinutes),
+            ExpiresAtUtc = now.AddMinutes(EmailActionLinkExpiryMinutes),
+            LinkOpenedAtUtc = null,
+            OtpIssuedAtUtc = null,
             LastSentAtUtc = now
         };
         db.EmailOtpVerifications.Add(row);
@@ -183,32 +182,96 @@ public class AuthController(
             .Select(x => x.FullName)
             .FirstOrDefaultAsync(ct) ?? string.Empty;
 
-        await emailService.SendVerificationOtpAsync(
+        var verifyNowLink = BuildEmailVerificationLink(row.Id, linkToken, purpose);
+        await emailService.SendVerificationActionAsync(
             email,
             userName,
-            otp,
-            verificationCode,
-            EmailOtpExpiryMinutes,
-            "login",
+            purpose,
+            verifyNowLink,
+            EmailActionLinkExpiryMinutes,
             ct);
 
         return Ok(new
         {
             verificationId = row.Id,
-            verificationCode = row.VerificationCode,
+            purpose,
+            state = "waiting_user_action",
+            otpInputAllowed = false,
             expiresAtUtc = row.ExpiresAtUtc,
-            resendAfterSeconds = EmailOtpResendCooldownSeconds
+            resendAfterSeconds = EmailOtpResendCooldownSeconds,
+            message = "Verification email sent. Click Verify Now in your email to continue."
         });
+    }
+
+    [HttpGet("email-verification/status")]
+    public async Task<IActionResult> EmailVerificationStatus([FromQuery] string verificationId, [FromQuery] string? purpose, [FromQuery] string? email, CancellationToken ct)
+    {
+        if (!Guid.TryParse((verificationId ?? string.Empty).Trim(), out var id))
+            return BadRequest("Invalid verificationId.");
+
+        var normalizedPurpose = NormalizeOtpPurpose(purpose);
+        var resolved = ResolveEmailForOtpStatus(email);
+        var rowQuery = db.EmailOtpVerifications.Where(x => x.Id == id && x.Purpose == normalizedPurpose);
+        if (resolved.hasEmail)
+            rowQuery = rowQuery.Where(x => x.Email.ToLower() == resolved.email);
+
+        var row = await rowQuery.FirstOrDefaultAsync(ct);
+        if (row is null) return NotFound("Verification session not found.");
+
+        var now = DateTime.UtcNow;
+        var state = GetVerificationState(row, now);
+        return Ok(new
+        {
+            verificationId = row.Id,
+            purpose = row.Purpose,
+            state,
+            otpInputAllowed = state == "otp_ready" || state == "verified",
+            isVerified = row.IsVerified,
+            linkOpenedAtUtc = row.LinkOpenedAtUtc,
+            otpIssuedAtUtc = row.OtpIssuedAtUtc,
+            expiresAtUtc = row.ExpiresAtUtc,
+            remainingAttempts = Math.Max(0, row.MaxAttempts - row.AttemptCount)
+        });
+    }
+
+    [HttpGet("email-verification/link")]
+    public async Task<IActionResult> OpenEmailVerificationLink([FromQuery] string verificationId, [FromQuery] string token, [FromQuery] string? purpose, CancellationToken ct)
+    {
+        if (!Guid.TryParse((verificationId ?? string.Empty).Trim(), out var id))
+            return Content(BuildVerificationHtml("Invalid verification link.", null, false), "text/html; charset=utf-8");
+
+        var normalizedPurpose = NormalizeOtpPurpose(purpose);
+        var row = await db.EmailOtpVerifications.FirstOrDefaultAsync(x => x.Id == id && x.Purpose == normalizedPurpose, ct);
+        if (row is null)
+            return Content(BuildVerificationHtml("Verification session not found.", null, false), "text/html; charset=utf-8");
+
+        var now = DateTime.UtcNow;
+        if (row.ConsumedAtUtc is not null)
+            return Content(BuildVerificationHtml("This verification session is already used.", null, false), "text/html; charset=utf-8");
+        if (row.ExpiresAtUtc <= now)
+            return Content(BuildVerificationHtml("Verification link expired. Request a new email.", null, false), "text/html; charset=utf-8");
+        if (!string.Equals(HashToken((token ?? string.Empty).Trim()), row.LinkTokenHash, StringComparison.Ordinal))
+            return Content(BuildVerificationHtml("Invalid verification link token.", null, false), "text/html; charset=utf-8");
+
+        var otp = GenerateNumericCode(EmailOtpLength);
+        row.OtpHash = HashToken(otp);
+        row.OtpDisplayEncrypted = crypto.Encrypt(otp);
+        row.OtpIssuedAtUtc = now;
+        row.LinkOpenedAtUtc = now;
+        row.ExpiresAtUtc = now.AddMinutes(EmailOtpExpiryMinutes);
+        await db.SaveChangesAsync(ct);
+
+        return Content(BuildVerificationHtml("Copy this code and paste it in the main screen.", otp, true), "text/html; charset=utf-8");
     }
 
     [HttpPost("email-verification/verify")]
     public async Task<IActionResult> VerifyEmailOtp([FromBody] VerifyEmailOtpRequest request, CancellationToken ct)
     {
-        string email;
+        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        var purpose = NormalizeOtpPurpose(request.Purpose);
         string otp;
         try
         {
-            email = InputGuardService.RequireTrimmed(request.Email, "Email", 320).ToLowerInvariant();
             otp = InputGuardService.RequireTrimmed(request.Otp, "OTP", 12);
         }
         catch (InvalidOperationException ex)
@@ -219,12 +282,16 @@ public class AuthController(
         if (!Guid.TryParse((request.VerificationId ?? string.Empty).Trim(), out var verificationId))
             return BadRequest("Invalid verificationId.");
 
-        var row = await db.EmailOtpVerifications
-            .FirstOrDefaultAsync(x => x.Id == verificationId && x.Email.ToLower() == email && x.Purpose == "login", ct);
+        var rowQuery = db.EmailOtpVerifications.Where(x => x.Id == verificationId && x.Purpose == purpose);
+        if (!string.IsNullOrWhiteSpace(email)) rowQuery = rowQuery.Where(x => x.Email.ToLower() == email);
+        else if (auth.IsAuthenticated) rowQuery = rowQuery.Where(x => x.Email.ToLower() == auth.Email.ToLower());
+
+        var row = await rowQuery.FirstOrDefaultAsync(ct);
         if (row is null) return BadRequest("Verification session not found.");
         if (row.ConsumedAtUtc is not null) return BadRequest("Verification session already used.");
         if (row.ExpiresAtUtc <= DateTime.UtcNow) return BadRequest("OTP expired.");
         if (row.AttemptCount >= row.MaxAttempts) return BadRequest("Too many invalid attempts.");
+        if (row.LinkOpenedAtUtc is null) return BadRequest("Click Verify Now in your email first.");
 
         if (!string.Equals(HashToken(otp), row.OtpHash, StringComparison.Ordinal))
         {
@@ -236,6 +303,7 @@ public class AuthController(
 
         row.IsVerified = true;
         row.VerifiedAtUtc = DateTime.UtcNow;
+        row.OtpDisplayEncrypted = string.Empty;
         await db.SaveChangesAsync(ct);
 
         return Ok(new
@@ -243,7 +311,7 @@ public class AuthController(
             verified = true,
             verificationId = row.Id,
             verifiedAtUtc = row.VerifiedAtUtc,
-            nextStep = "login"
+            nextStep = row.Purpose
         });
     }
 
@@ -917,6 +985,104 @@ public class AuthController(
         return mode is "every-login" or "registration" ? mode : "none";
     }
 
+    private string BuildEmailVerificationLink(Guid verificationId, string token, string purpose)
+    {
+        var scheme = Request.IsHttps
+            ? Request.Scheme
+            : (string.Equals(Request.Headers["X-Forwarded-Proto"].FirstOrDefault(), "https", StringComparison.OrdinalIgnoreCase)
+                ? "https"
+                : Request.Scheme);
+        var host = Request.Host.Value;
+        return $"{scheme}://{host}/api/auth/email-verification/link?verificationId={verificationId}&purpose={Uri.EscapeDataString(purpose)}&token={Uri.EscapeDataString(token)}";
+    }
+
+    private static string GetVerificationState(EmailOtpVerification row, DateTime now)
+    {
+        if (row.ConsumedAtUtc is not null) return "consumed";
+        if (row.AttemptCount >= row.MaxAttempts) return "blocked";
+        if (row.ExpiresAtUtc <= now) return "expired";
+        if (row.IsVerified) return "verified";
+        if (row.LinkOpenedAtUtc is null) return "waiting_user_action";
+        return "otp_ready";
+    }
+
+    private (bool ok, string email, string error) ResolveEmailForOtpRequest(string? rawEmail)
+    {
+        if (!string.IsNullOrWhiteSpace(rawEmail))
+        {
+            try
+            {
+                var email = InputGuardService.RequireTrimmed(rawEmail, "Email", 320).ToLowerInvariant();
+                return (true, email, string.Empty);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return (false, string.Empty, ex.Message);
+            }
+        }
+
+        if (auth.IsAuthenticated && !string.IsNullOrWhiteSpace(auth.Email))
+            return (true, auth.Email.Trim().ToLowerInvariant(), string.Empty);
+        return (false, string.Empty, "Email is required.");
+    }
+
+    private (bool hasEmail, string email) ResolveEmailForOtpStatus(string? rawEmail)
+    {
+        if (!string.IsNullOrWhiteSpace(rawEmail))
+            return (true, rawEmail.Trim().ToLowerInvariant());
+        if (auth.IsAuthenticated && !string.IsNullOrWhiteSpace(auth.Email))
+            return (true, auth.Email.Trim().ToLowerInvariant());
+        return (false, string.Empty);
+    }
+
+    private static string NormalizeOtpPurpose(string? rawPurpose)
+    {
+        var v = (rawPurpose ?? string.Empty).Trim().ToLowerInvariant();
+        return v switch
+        {
+            "login" => "login",
+            "every-login" => "every-login",
+            "registration" => "registration",
+            "forgot-password" => "forgot-password",
+            "first-login" => "first-login",
+            "device-binding" => "device-binding",
+            _ => "login"
+        };
+    }
+
+    private static string BuildVerificationHtml(string message, string? code, bool success)
+    {
+        var safeMessage = System.Net.WebUtility.HtmlEncode(message);
+        var safeCode = string.IsNullOrWhiteSpace(code) ? string.Empty : System.Net.WebUtility.HtmlEncode(code);
+        var codeBlock = string.IsNullOrWhiteSpace(safeCode)
+            ? string.Empty
+            : $"""<div style="margin:16px 0;padding:14px;border-radius:10px;background:#fff7ed;border:1px dashed #f97316;text-align:center;font-size:32px;letter-spacing:8px;font-weight:800;color:#111827;">{safeCode}</div>""";
+        var icon = success ? "Verified" : "Error";
+        return $"""
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <title>Textzy Verification</title>
+        </head>
+        <body style="margin:0;background:#fff7ed;font-family:Segoe UI,Arial,sans-serif;color:#1f2937;">
+          <div style="max-width:560px;margin:44px auto;padding:0 16px;">
+            <div style="background:#ffffff;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.08);overflow:hidden;">
+              <div style="background:#f97316;color:#fff;padding:16px 20px;font-size:20px;font-weight:700;">Textzy Verification</div>
+              <div style="padding:20px;">
+                <div style="font-size:14px;color:#6b7280;margin-bottom:8px;">{icon}</div>
+                <div style="font-size:16px;line-height:1.5;">{safeMessage}</div>
+                {codeBlock}
+                <div style="margin-top:10px;font-size:13px;color:#6b7280;">Paste the code into your main screen OTP box.</div>
+              </div>
+            </div>
+          </div>
+        </body>
+        </html>
+        """;
+    }
+
     private bool IsSecureRequest()
     {
         if (Request.IsHttps) return true;
@@ -940,12 +1106,14 @@ public class AuthController(
     public sealed class RequestEmailVerificationOtpRequest
     {
         public string Email { get; set; } = string.Empty;
+        public string Purpose { get; set; } = "login";
     }
 
     public sealed class VerifyEmailOtpRequest
     {
         public string VerificationId { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
+        public string Purpose { get; set; } = "login";
         public string Otp { get; set; } = string.Empty;
     }
 

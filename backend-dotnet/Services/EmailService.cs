@@ -132,4 +132,95 @@ public class EmailService(IConfiguration config)
         using var ctr = ct.Register(() => client.SendAsyncCancel());
         await client.SendMailAsync(msg);
     }
+
+    public async Task SendVerificationActionAsync(
+        string toEmail,
+        string displayName,
+        string purpose,
+        string verifyLink,
+        int linkExpiryMinutes,
+        CancellationToken ct = default)
+    {
+        var host = config["Smtp:Host"] ?? config["SMTP_HOST"];
+        var portRaw = config["Smtp:Port"] ?? config["SMTP_PORT"];
+        var username = config["Smtp:Username"] ?? config["SMTP_USERNAME"];
+        var password = config["Smtp:Password"] ?? config["SMTP_PASSWORD"];
+        var fromEmail = config["Smtp:FromEmail"] ?? config["SMTP_FROM_EMAIL"];
+        var fromName = config["Smtp:FromName"] ?? config["SMTP_FROM_NAME"] ?? "Textzy";
+        var enableSslRaw = config["Smtp:EnableSsl"] ?? config["SMTP_ENABLE_SSL"] ?? "true";
+
+        if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(fromEmail))
+            throw new InvalidOperationException("SMTP is not configured. Set SMTP_HOST and SMTP_FROM_EMAIL.");
+
+        var safeName = string.IsNullOrWhiteSpace(displayName) ? "there" : WebUtility.HtmlEncode(displayName);
+        var safePurpose = WebUtility.HtmlEncode(purpose);
+        var safeVerifyLink = WebUtility.HtmlEncode(verifyLink);
+        var html = $"""
+            <!doctype html>
+            <html lang="en">
+            <body style="margin:0;padding:0;background:#f7f7fb;font-family:Segoe UI,Arial,sans-serif;color:#111827;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;">
+                <tr>
+                  <td align="center">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 30px rgba(17,24,39,.08);">
+                      <tr>
+                        <td style="background:#f97316;padding:18px 24px;color:#fff;font-weight:700;font-size:20px;">Textzy Verification</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:24px;">
+                          <p style="margin:0 0 12px;">Hi {safeName},</p>
+                          <p style="margin:0 0 16px;line-height:1.6;">
+                            Click <strong>Verify Now</strong> to continue <strong>{safePurpose}</strong>. After clicking, a code will be shown in your browser tab.
+                          </p>
+                          <div style="text-align:center;margin:18px 0 22px;">
+                            <a href="{safeVerifyLink}" style="display:inline-block;background:#f97316;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:700;">Verify Now</a>
+                          </div>
+                          <p style="margin:0 0 8px;color:#4b5563;">Link expires in <strong>{linkExpiryMinutes} minutes</strong>.</p>
+                          <p style="margin:0;color:#dc2626;font-size:13px;">Do not share this email link with anyone.</p>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style="padding:14px 24px;background:#f9fafb;color:#6b7280;font-size:12px;">
+                          Powered by Moneyart Private Limited
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </body>
+            </html>
+            """;
+
+        var plain = $"""
+            Hi {(string.IsNullOrWhiteSpace(displayName) ? "there" : displayName)},
+
+            Click this Verify Now link to continue {purpose}:
+            {verifyLink}
+
+            This link expires in {linkExpiryMinutes} minutes.
+            """;        
+
+        var msg = new MailMessage
+        {
+            From = new MailAddress(fromEmail, fromName),
+            Subject = $"Textzy verification required ({purpose})",
+            Body = html,
+            IsBodyHtml = true
+        };
+        msg.To.Add(new MailAddress(toEmail));
+        msg.AlternateViews.Add(AlternateView.CreateAlternateViewFromString(plain, null, "text/plain"));
+
+        using var client = new SmtpClient(host, int.TryParse(portRaw, out var p) ? p : 587)
+        {
+            EnableSsl = bool.TryParse(enableSslRaw, out var ssl) ? ssl : true,
+            DeliveryMethod = SmtpDeliveryMethod.Network
+        };
+
+        if (!string.IsNullOrWhiteSpace(username))
+            client.Credentials = new NetworkCredential(username, password ?? string.Empty);
+
+        using var ctr = ct.Register(() => client.SendAsyncCancel());
+        await client.SendMailAsync(msg);
+    }
 }

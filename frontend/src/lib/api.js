@@ -316,12 +316,12 @@ export async function authLogin({ email, password, tenantSlug, emailVerification
   return data
 }
 
-export async function authRequestEmailOtp({ email }) {
+export async function authRequestEmailOtp({ email, purpose = 'login' }) {
   const res = await fetch(`${API_BASE}/api/auth/email-verification/request`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ email })
+    body: JSON.stringify({ email, purpose })
   })
   if (!res.ok) {
     const msg = await readErrorMessage(res, 'Failed to send OTP')
@@ -330,12 +330,28 @@ export async function authRequestEmailOtp({ email }) {
   return res.json()
 }
 
-export async function authVerifyEmailOtp({ email, verificationId, otp }) {
+export async function authEmailOtpStatus({ email, verificationId, purpose = 'login' }) {
+  const q = new URLSearchParams()
+  q.set('verificationId', verificationId || '')
+  q.set('purpose', purpose)
+  if (email) q.set('email', email)
+  const res = await fetch(`${API_BASE}/api/auth/email-verification/status?${q.toString()}`, {
+    method: 'GET',
+    credentials: 'include'
+  })
+  if (!res.ok) {
+    const msg = await readErrorMessage(res, 'Failed to read OTP status')
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
+export async function authVerifyEmailOtp({ email, verificationId, otp, purpose = 'login' }) {
   const res = await fetch(`${API_BASE}/api/auth/email-verification/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ email, verificationId, otp })
+    body: JSON.stringify({ email, verificationId, otp, purpose })
   })
   if (!res.ok) {
     const msg = await readErrorMessage(res, 'OTP verification failed')
