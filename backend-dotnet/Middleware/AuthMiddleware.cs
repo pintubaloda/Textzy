@@ -38,9 +38,10 @@ public class AuthMiddleware(RequestDelegate next)
         var isHubPath = path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase);
         var isWabaWebhookPath = path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase);
         var isPaymentWebhookPath = path.StartsWith("/api/payments/webhook", StringComparison.OrdinalIgnoreCase);
-        var isCsrfExemptPath = isAuthPath || isAuthRefreshPath || isPublicTenantPath || isSwaggerPath || isHubPath || isWabaWebhookPath || isPaymentWebhookPath;
+        var isEmailWebhookPath = path.StartsWith("/api/email/webhook", StringComparison.OrdinalIgnoreCase);
+        var isCsrfExemptPath = isAuthPath || isAuthRefreshPath || isPublicTenantPath || isSwaggerPath || isHubPath || isWabaWebhookPath || isPaymentWebhookPath || isEmailWebhookPath;
 
-        if (isAuthPath || isPublicTenantPath || isSwaggerPath || isWabaWebhookPath || isPaymentWebhookPath)
+        if (isAuthPath || isPublicTenantPath || isSwaggerPath || isWabaWebhookPath || isPaymentWebhookPath || isEmailWebhookPath)
         {
             await _next(context);
             return;

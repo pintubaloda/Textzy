@@ -11,6 +11,7 @@ import {
   savePlatformSettings,
   testPlatformSmtp,
   diagnosePlatformSmtp,
+  getPlatformEmailReport,
   getPlatformWebhookLogs,
   getPlatformRequestLogs,
   listPaymentWebhooks,
@@ -137,11 +138,13 @@ const PlatformSettingsPage = () => {
     fromEmail: "",
     fromName: "Textzy",
     resendApiKey: "",
+    resendWebhookSecret: "",
     resendFromEmail: "",
     resendFromName: "Textzy",
     testEmail: "",
   });
   const [smtpDiag, setSmtpDiag] = useState(null);
+  const [emailReport, setEmailReport] = useState(null);
   const [webhookItems, setWebhookItems] = useState([]);
   const [webhookEdit, setWebhookEdit] = useState({ provider: "razorpay", endpointUrl: "", webhookId: "", eventsCsv: "" });
   const [logs, setLogs] = useState([]);
@@ -343,9 +346,13 @@ const PlatformSettingsPage = () => {
             fromEmail: values.fromEmail || "",
             fromName: values.fromName || "Textzy",
             resendApiKey: values.resendApiKey || "",
+            resendWebhookSecret: values.resendWebhookSecret || "",
             resendFromEmail: values.resendFromEmail || "",
             resendFromName: values.resendFromName || "Textzy",
           }));
+          const report = await getPlatformEmailReport({ days: 7, take: 60 }).catch(() => null);
+          if (!active) return;
+          setEmailReport(report);
         } else {
           if (tab === "billing-plans") {
             const rows = await listPlatformBillingPlans();
@@ -1175,6 +1182,10 @@ const PlatformSettingsPage = () => {
                   <Label>Resend API Key</Label>
                   <Input type="password" value={smtp.resendApiKey} onChange={(e) => setSmtp((p) => ({ ...p, resendApiKey: e.target.value }))} placeholder="re_xxxxxxxxxxxxxxxxx" />
                 </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Resend Webhook Secret</Label>
+                  <Input type="password" value={smtp.resendWebhookSecret} onChange={(e) => setSmtp((p) => ({ ...p, resendWebhookSecret: e.target.value }))} placeholder="whsec_xxxxxxxxxxxxxxxxx" />
+                </div>
                 <div className="space-y-2">
                   <Label>Resend From Email</Label>
                   <Input value={smtp.resendFromEmail} onChange={(e) => setSmtp((p) => ({ ...p, resendFromEmail: e.target.value }))} placeholder="noreply@yourdomain.com" />
@@ -1207,6 +1218,7 @@ const PlatformSettingsPage = () => {
                       fromEmail: smtp.fromEmail || "",
                       fromName: smtp.fromName || "Textzy",
                       resendApiKey: smtp.resendApiKey || "",
+                      resendWebhookSecret: smtp.resendWebhookSecret || "",
                       resendFromEmail: smtp.resendFromEmail || "",
                       resendFromName: smtp.resendFromName || "Textzy",
                     });
@@ -1274,6 +1286,67 @@ const PlatformSettingsPage = () => {
                 <pre className="whitespace-pre-wrap break-all text-slate-700">{JSON.stringify(smtpDiag, null, 2)}</pre>
               ) : (
                 <p className="text-slate-500">Run Diagnose SMTP to see DNS/TCP/TLS stage output.</p>
+              )}
+            </div>
+            <div className="md:col-span-2 rounded-lg border border-slate-200 p-3 text-xs space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium text-slate-900">Email Report (Resend Webhooks)</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={loading}
+                  onClick={async () => {
+                    try {
+                      setLoading(true);
+                      const report = await getPlatformEmailReport({ days: 7, take: 60 });
+                      setEmailReport(report || null);
+                    } catch (e) {
+                      toast.error(e?.message || "Failed to load email report");
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                >
+                  Refresh Report
+                </Button>
+              </div>
+              {emailReport ? (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+                    <div className="rounded border border-slate-200 p-2"><div className="text-slate-500">Events</div><div className="font-semibold">{emailReport?.totals?.events ?? 0}</div></div>
+                    <div className="rounded border border-slate-200 p-2"><div className="text-slate-500">Delivered</div><div className="font-semibold">{emailReport?.totals?.delivered ?? 0}</div></div>
+                    <div className="rounded border border-slate-200 p-2"><div className="text-slate-500">Bounced</div><div className="font-semibold">{emailReport?.totals?.bounced ?? 0}</div></div>
+                    <div className="rounded border border-slate-200 p-2"><div className="text-slate-500">Complained</div><div className="font-semibold">{emailReport?.totals?.complained ?? 0}</div></div>
+                    <div className="rounded border border-slate-200 p-2"><div className="text-slate-500">Opened</div><div className="font-semibold">{emailReport?.totals?.opened ?? 0}</div></div>
+                    <div className="rounded border border-slate-200 p-2"><div className="text-slate-500">Clicked</div><div className="font-semibold">{emailReport?.totals?.clicked ?? 0}</div></div>
+                  </div>
+                  <div className="max-h-64 overflow-auto border border-slate-200 rounded">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="p-2">Time</th>
+                          <th className="p-2">Type</th>
+                          <th className="p-2">Status</th>
+                          <th className="p-2">To</th>
+                          <th className="p-2">Subject</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(emailReport.recent || []).map((row) => (
+                          <tr key={row.id} className="border-t border-slate-100">
+                            <td className="p-2 whitespace-nowrap">{new Date(row.atUtc).toLocaleString()}</td>
+                            <td className="p-2">{row.eventType || "-"}</td>
+                            <td className="p-2">{row.status || "-"}</td>
+                            <td className="p-2">{row.to || "-"}</td>
+                            <td className="p-2">{row.subject || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <p className="text-slate-500">No email report data yet. Configure Resend webhook and refresh.</p>
               )}
             </div>
           </CardContent>

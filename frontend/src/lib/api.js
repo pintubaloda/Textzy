@@ -566,6 +566,13 @@ export async function diagnosePlatformSmtp(payload = {}) {
   return apiPost('/api/platform/settings/smtp/diagnose', payload || {})
 }
 
+export async function getPlatformEmailReport({ days = 7, take = 100 } = {}) {
+  const q = new URLSearchParams()
+  q.set('days', String(days))
+  q.set('take', String(take))
+  return apiGet(`/api/platform/email-report?${q.toString()}`)
+}
+
 export async function exportPlatformSqlBackup() {
   const res = await apiRequest('/api/platform/backup/sql')
   if (!res.ok) {
