@@ -127,6 +127,7 @@ const PlatformSettingsPage = () => {
   });
   const [payment, setPayment] = useState({ provider: "razorpay", merchantId: "", keyId: "", keySecret: "", webhookSecret: "" });
   const [smtp, setSmtp] = useState({
+    provider: "smtp",
     host: "smtppro.zoho.in",
     port: "587",
     timeoutMs: "15000",
@@ -135,6 +136,9 @@ const PlatformSettingsPage = () => {
     password: "",
     fromEmail: "",
     fromName: "Textzy",
+    resendApiKey: "",
+    resendFromEmail: "",
+    resendFromName: "Textzy",
     testEmail: "",
   });
   const [smtpDiag, setSmtpDiag] = useState(null);
@@ -329,6 +333,7 @@ const PlatformSettingsPage = () => {
           if (!active) return;
           setSmtp((prev) => ({
             ...prev,
+            provider: (values.provider || "smtp").toLowerCase() === "resend" ? "resend" : "smtp",
             host: values.host || "smtppro.zoho.in",
             port: values.port || "587",
             timeoutMs: values.timeoutMs || "15000",
@@ -337,6 +342,9 @@ const PlatformSettingsPage = () => {
             password: values.password || "",
             fromEmail: values.fromEmail || "",
             fromName: values.fromName || "Textzy",
+            resendApiKey: values.resendApiKey || "",
+            resendFromEmail: values.resendFromEmail || "",
+            resendFromName: values.resendFromName || "Textzy",
           }));
         } else {
           if (tab === "billing-plans") {
@@ -1109,12 +1117,24 @@ const PlatformSettingsPage = () => {
       {tab === "smtp-settings" && (
         <Card className="border-slate-200">
           <CardHeader>
-            <CardTitle>Email SMTP Configuration</CardTitle>
+            <CardTitle>Email Delivery Configuration</CardTitle>
             <CardDescription>
-              Configure SMTP for OTP, invite, and notification emails.
+              Configure SMTP or Resend for OTP, invite, and notification emails.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2 md:col-span-2">
+              <Label>Provider</Label>
+              <Select value={smtp.provider} onValueChange={(value) => setSmtp((p) => ({ ...p, provider: value }))}>
+                <SelectTrigger><SelectValue placeholder="Select provider" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="smtp">SMTP</SelectItem>
+                  <SelectItem value="resend">Resend API</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {smtp.provider === "smtp" && (
+              <>
             <div className="space-y-2">
               <Label>SMTP Host</Label>
               <Input value={smtp.host} onChange={(e) => setSmtp((p) => ({ ...p, host: e.target.value }))} placeholder="smtppro.zoho.in" />
@@ -1147,6 +1167,24 @@ const PlatformSettingsPage = () => {
               <input type="checkbox" checked={!!smtp.enableSsl} onChange={(e) => setSmtp((p) => ({ ...p, enableSsl: e.target.checked }))} />
               Use TLS/SSL (recommended for port 587 STARTTLS)
             </label>
+              </>
+            )}
+            {smtp.provider === "resend" && (
+              <>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Resend API Key</Label>
+                  <Input type="password" value={smtp.resendApiKey} onChange={(e) => setSmtp((p) => ({ ...p, resendApiKey: e.target.value }))} placeholder="re_xxxxxxxxxxxxxxxxx" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Resend From Email</Label>
+                  <Input value={smtp.resendFromEmail} onChange={(e) => setSmtp((p) => ({ ...p, resendFromEmail: e.target.value }))} placeholder="noreply@yourdomain.com" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Resend From Name</Label>
+                  <Input value={smtp.resendFromName} onChange={(e) => setSmtp((p) => ({ ...p, resendFromName: e.target.value }))} placeholder="Textzy" />
+                </div>
+              </>
+            )}
             <div className="space-y-2 md:col-span-2">
               <Label>Test Recipient Email</Label>
               <Input value={smtp.testEmail} onChange={(e) => setSmtp((p) => ({ ...p, testEmail: e.target.value }))} placeholder="owner@yourdomain.com" />
@@ -1159,6 +1197,7 @@ const PlatformSettingsPage = () => {
                   try {
                     setLoading(true);
                     await savePlatformSettings("smtp", {
+                      provider: smtp.provider || "smtp",
                       host: smtp.host || "",
                       port: smtp.port || "587",
                       timeoutMs: smtp.timeoutMs || "15000",
@@ -1167,10 +1206,13 @@ const PlatformSettingsPage = () => {
                       password: smtp.password || "",
                       fromEmail: smtp.fromEmail || "",
                       fromName: smtp.fromName || "Textzy",
+                      resendApiKey: smtp.resendApiKey || "",
+                      resendFromEmail: smtp.resendFromEmail || "",
+                      resendFromName: smtp.resendFromName || "Textzy",
                     });
-                    toast.success("SMTP settings saved");
+                    toast.success("Email provider settings saved");
                   } catch (e) {
-                    toast.error(e?.message || "Failed to save SMTP settings");
+                    toast.error(e?.message || "Failed to save email settings");
                   } finally {
                     setLoading(false);
                   }
@@ -1206,6 +1248,7 @@ const PlatformSettingsPage = () => {
                   try {
                     setLoading(true);
                     const res = await diagnosePlatformSmtp({
+                      provider: smtp.provider || "smtp",
                       host: smtp.host || "",
                       port: smtp.port || "",
                       timeoutMs: smtp.timeoutMs || "15000",

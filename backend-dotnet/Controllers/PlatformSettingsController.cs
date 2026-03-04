@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Mail;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using Textzy.Api.Data;
 using Textzy.Api.Models;
 using Textzy.Api.Services;
@@ -20,7 +22,8 @@ public class PlatformSettingsController(
     AuditLogService audit,
     AuthContext auth,
     RbacService rbac,
-    IConfiguration config) : ControllerBase
+    IConfiguration config,
+    IHttpClientFactory httpClientFactory) : ControllerBase
 {
     [HttpGet("{scope}")]
     public async Task<IActionResult> GetScope(string scope, CancellationToken ct)
@@ -109,6 +112,7 @@ public class PlatformSettingsController(
             .Where(x => x.Scope == "smtp")
             .ToDictionaryAsync(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase, ct);
 
+        var provider = Pick(values, "provider", config["Email:Provider"], config["EMAIL_PROVIDER"], config["Smtp:Provider"], config["SMTP_PROVIDER"], "smtp").ToLowerInvariant();
         var host = Pick(values, "host", config["Smtp:Host"], config["SMTP_HOST"]);
         var portRaw = Pick(values, "port", config["Smtp:Port"], config["SMTP_PORT"], "587");
         var timeoutRaw = Pick(values, "timeoutMs", config["Smtp:TimeoutMs"], config["SMTP_TIMEOUT_MS"], "15000");
@@ -117,9 +121,9 @@ public class PlatformSettingsController(
         var fromEmail = Pick(values, "fromEmail", config["Smtp:FromEmail"], config["SMTP_FROM_EMAIL"]);
         var fromName = Pick(values, "fromName", config["Smtp:FromName"], config["SMTP_FROM_NAME"], "Textzy");
         var enableSslRaw = Pick(values, "enableSsl", config["Smtp:EnableSsl"], config["SMTP_ENABLE_SSL"], "true");
-
-        if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(fromEmail))
-            return BadRequest("SMTP host/fromEmail not configured.");
+        var resendApiKey = Pick(values, "resendApiKey", config["Resend:ApiKey"], config["RESEND_API_KEY"]);
+        var resendFromEmail = Pick(values, "resendFromEmail", fromEmail);
+        var resendFromName = Pick(values, "resendFromName", fromName, "Textzy");
 
         var toEmail = (request.Email ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(toEmail))
@@ -133,46 +137,82 @@ public class PlatformSettingsController(
             return BadRequest(ex.Message);
         }
 
-        var msg = new MailMessage
-        {
-            From = new MailAddress(fromEmail, fromName),
-            Subject = "Textzy SMTP Test",
-            Body = $"""
-                This is a test email from Textzy platform settings.
-
-                Sent at: {DateTime.UtcNow:O} UTC
-                Host: {host}
-                """,
-            IsBodyHtml = false
-        };
-        msg.To.Add(new MailAddress(toEmail));
-
-        using var client = new SmtpClient(host, int.TryParse(portRaw, out var p) ? p : 587)
-        {
-            EnableSsl = bool.TryParse(enableSslRaw, out var ssl) ? ssl : true,
-            DeliveryMethod = SmtpDeliveryMethod.Network
-        };
         var timeoutMs = ParseTimeout(timeoutRaw);
-        client.Timeout = timeoutMs;
-        if (!string.IsNullOrWhiteSpace(username))
-            client.Credentials = new NetworkCredential(username, password ?? string.Empty);
 
         try
         {
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(timeoutMs);
-            using var reg = timeoutCts.Token.Register(() => client.SendAsyncCancel());
+            if (provider == "resend")
+            {
+                if (string.IsNullOrWhiteSpace(resendApiKey) || string.IsNullOrWhiteSpace(resendFromEmail))
+                    return BadRequest("Resend apiKey/fromEmail not configured.");
+
+                var payload = new
+                {
+                    from = string.IsNullOrWhiteSpace(resendFromName) ? resendFromEmail : $"{resendFromName} <{resendFromEmail}>",
+                    to = new[] { toEmail },
+                    subject = "Textzy Resend Test",
+                    html = $"<p>This is a test email from Textzy platform settings.</p><p>Sent at: {DateTime.UtcNow:O} UTC</p><p>Provider: Resend API</p>",
+                    text = $"This is a test email from Textzy platform settings.\nSent at: {DateTime.UtcNow:O} UTC\nProvider: Resend API"
+                };
+
+                using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.resend.com/emails");
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", resendApiKey);
+                req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(timeoutMs);
+
+                var http = httpClientFactory.CreateClient();
+                var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
+                var body = await res.Content.ReadAsStringAsync(timeoutCts.Token);
+                if (!res.IsSuccessStatusCode)
+                    throw new InvalidOperationException($"Resend API failed ({(int)res.StatusCode}): {body}");
+
+                await audit.WriteAsync("platform.email.test.success", $"provider=resend; to={toEmail}", ct);
+                return Ok(new { ok = true, provider = "resend", message = "Resend test email sent." });
+            }
+
+            if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(fromEmail))
+                return BadRequest("SMTP host/fromEmail not configured.");
+
+            var msg = new MailMessage
+            {
+                From = new MailAddress(fromEmail, fromName),
+                Subject = "Textzy SMTP Test",
+                Body = $"""
+                    This is a test email from Textzy platform settings.
+
+                    Sent at: {DateTime.UtcNow:O} UTC
+                    Host: {host}
+                    """,
+                IsBodyHtml = false
+            };
+            msg.To.Add(new MailAddress(toEmail));
+
+            using var client = new SmtpClient(host, int.TryParse(portRaw, out var p) ? p : 587)
+            {
+                EnableSsl = bool.TryParse(enableSslRaw, out var ssl) ? ssl : true,
+                DeliveryMethod = SmtpDeliveryMethod.Network
+            };
+            client.Timeout = timeoutMs;
+            if (!string.IsNullOrWhiteSpace(username))
+                client.Credentials = new NetworkCredential(username, password ?? string.Empty);
+
+            using var smtpTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            smtpTimeoutCts.CancelAfter(timeoutMs);
+            using var reg = smtpTimeoutCts.Token.Register(() => client.SendAsyncCancel());
             var sendTask = client.SendMailAsync(msg);
             var completed = await Task.WhenAny(sendTask, Task.Delay(timeoutMs, ct));
             if (completed != sendTask)
                 throw new TimeoutException($"SMTP test timed out after {timeoutMs}ms.");
             await sendTask;
-            await audit.WriteAsync("platform.smtp.test.success", $"to={toEmail}", ct);
-            return Ok(new { ok = true, message = "SMTP test email sent." });
+
+            await audit.WriteAsync("platform.email.test.success", $"provider=smtp; to={toEmail}", ct);
+            return Ok(new { ok = true, provider = "smtp", message = "SMTP test email sent." });
         }
         catch (Exception ex)
         {
-            await audit.WriteAsync("platform.smtp.test.failed", $"to={toEmail}; err={ex.Message}", ct);
+            await audit.WriteAsync("platform.email.test.failed", $"provider={provider}; to={toEmail}; err={ex.Message}", ct);
             return StatusCode(StatusCodes.Status502BadGateway, ex.Message);
         }
     }
@@ -187,24 +227,25 @@ public class PlatformSettingsController(
             .Where(x => x.Scope == "smtp")
             .ToDictionaryAsync(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase, ct);
 
+        var provider = Pick(values, "provider", config["Email:Provider"], config["EMAIL_PROVIDER"], config["Smtp:Provider"], config["SMTP_PROVIDER"], "smtp").ToLowerInvariant();
         var host = Pick(values, "host", config["Smtp:Host"], config["SMTP_HOST"]);
         var portRaw = Pick(values, "port", config["Smtp:Port"], config["SMTP_PORT"], "587");
         var timeoutRaw = Pick(values, "timeoutMs", config["Smtp:TimeoutMs"], config["SMTP_TIMEOUT_MS"], "15000");
         var enableSslRaw = Pick(values, "enableSsl", config["Smtp:EnableSsl"], config["SMTP_ENABLE_SSL"], "true");
+        var resendApiKey = Pick(values, "resendApiKey", config["Resend:ApiKey"], config["RESEND_API_KEY"]);
 
+        if (!string.IsNullOrWhiteSpace(request.Provider)) provider = request.Provider.Trim().ToLowerInvariant();
         if (!string.IsNullOrWhiteSpace(request.Host)) host = request.Host.Trim();
         if (!string.IsNullOrWhiteSpace(request.Port)) portRaw = request.Port.Trim();
         if (!string.IsNullOrWhiteSpace(request.TimeoutMs)) timeoutRaw = request.TimeoutMs.Trim();
         if (!string.IsNullOrWhiteSpace(request.EnableSsl)) enableSslRaw = request.EnableSsl.Trim();
-
-        if (string.IsNullOrWhiteSpace(host))
-            return BadRequest("SMTP host not configured.");
 
         var port = int.TryParse(portRaw, out var p) ? p : 587;
         var timeoutMs = ParseTimeout(timeoutRaw);
         var useSsl = bool.TryParse(enableSslRaw, out var ssl) ? ssl : true;
         var result = new Dictionary<string, object?>
         {
+            ["provider"] = provider,
             ["host"] = host,
             ["port"] = port,
             ["timeoutMs"] = timeoutMs,
@@ -220,6 +261,56 @@ public class PlatformSettingsController(
 
         try
         {
+            if (provider == "resend")
+            {
+                if (string.IsNullOrWhiteSpace(resendApiKey))
+                    return BadRequest("Resend apiKey not configured.");
+
+                host = string.IsNullOrWhiteSpace(host) ? "api.resend.com" : host;
+                result["host"] = host;
+                result["port"] = 443;
+                result["enableSsl"] = true;
+
+                var dnsTaskResend = Dns.GetHostAddressesAsync(host);
+                var dnsCompletedResend = await Task.WhenAny(dnsTaskResend, Task.Delay(timeoutMs, ct));
+                if (dnsCompletedResend != dnsTaskResend) throw new TimeoutException("DNS lookup timed out.");
+                var resendAddrs = dnsTaskResend.Result;
+                if (resendAddrs is null || resendAddrs.Length == 0) throw new InvalidOperationException("No IP address resolved for Resend host.");
+                result["dnsResolved"] = true;
+                result["resolvedAddresses"] = resendAddrs.Select(a => a.ToString()).Take(4).ToArray();
+                result["stage"] = "dns_ok";
+
+                using var tcpResend = new TcpClient();
+                var connTaskResend = tcpResend.ConnectAsync(host, 443);
+                var connCompletedResend = await Task.WhenAny(connTaskResend, Task.Delay(timeoutMs, ct));
+                if (connCompletedResend != connTaskResend) throw new TimeoutException("TCP connect timed out.");
+                await connTaskResend;
+                result["tcpConnected"] = true;
+                result["stage"] = "tcp_ok";
+
+                using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.resend.com/domains");
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", resendApiKey);
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(timeoutMs);
+
+                var http = httpClientFactory.CreateClient();
+                var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
+                var body = await res.Content.ReadAsStringAsync(timeoutCts.Token);
+                result["httpsStatus"] = (int)res.StatusCode;
+                result["tlsHandshake"] = true;
+                result["stage"] = "https_ok";
+
+                if (!res.IsSuccessStatusCode)
+                    throw new InvalidOperationException($"Resend API auth/connectivity failed: {(int)res.StatusCode} {body}");
+
+                result["stage"] = "auth_ok";
+                await audit.WriteAsync("platform.smtp.diagnose.success", $"provider=resend; host={host};port=443", ct);
+                return Ok(new { ok = true, result });
+            }
+
+            if (string.IsNullOrWhiteSpace(host))
+                return BadRequest("SMTP host not configured.");
+
             var dnsTask = Dns.GetHostAddressesAsync(host);
             var dnsCompleted = await Task.WhenAny(dnsTask, Task.Delay(timeoutMs, ct));
             if (dnsCompleted != dnsTask) throw new TimeoutException("DNS lookup timed out.");
@@ -345,6 +436,7 @@ public class PlatformSettingsController(
 
     public sealed class SmtpDiagnoseRequest
     {
+        public string Provider { get; set; } = string.Empty;
         public string Host { get; set; } = string.Empty;
         public string Port { get; set; } = string.Empty;
         public string TimeoutMs { get; set; } = string.Empty;
