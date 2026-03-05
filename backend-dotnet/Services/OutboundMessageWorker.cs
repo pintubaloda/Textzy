@@ -272,7 +272,7 @@ public class OutboundMessageWorker(
             }
         }
 
-        if (msg.Contains("invalid oauth") || msg.Contains("(401)") || msg.Contains("(403)") || msg.Contains("permission") || msg.Contains("policy") || msg.Contains("session closed") || msg.Contains("recipient not valid") || msg.Contains("template") && msg.Contains("not approved"))
+        if (msg.Contains("invalid oauth") || msg.Contains("(401)") || msg.Contains("(403)") || msg.Contains("permission") || msg.Contains("policy") || msg.Contains("session closed") || msg.Contains("recipient not valid") || msg.Contains("template") && msg.Contains("not approved") || msg.Contains("dlt") && (msg.Contains("reject") || msg.Contains("invalid") || msg.Contains("mismatch")))
         {
             reason = "non_retryable_auth_or_policy";
             return false;

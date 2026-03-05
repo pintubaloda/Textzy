@@ -70,6 +70,12 @@ public class TataSmsMessageProvider(
                     var tpl = await tenantDb.Templates
                         .AsNoTracking()
                         .Where(x => x.TenantId == context.TenantId && x.Channel == ChannelType.Sms && x.Name == parsedTemplate.TemplateName)
+                        .Where(x =>
+                            string.Equals(x.LifecycleStatus, "approved", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(x.Status, "Approved", StringComparison.OrdinalIgnoreCase))
+                        .Where(x =>
+                            (!x.EffectiveFromUtc.HasValue || x.EffectiveFromUtc <= DateTime.UtcNow) &&
+                            (!x.EffectiveToUtc.HasValue || x.EffectiveToUtc >= DateTime.UtcNow))
                         .OrderByDescending(x => x.CreatedAtUtc)
                         .FirstOrDefaultAsync(ct);
 

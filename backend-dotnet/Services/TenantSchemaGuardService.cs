@@ -80,7 +80,23 @@ public class TenantSchemaGuardService(IMemoryCache cache, ILogger<TenantSchemaGu
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "FooterText" text NOT NULL DEFAULT '';""", ct);
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "ButtonsJson" text NOT NULL DEFAULT '';""", ct);
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "RejectionReason" text NOT NULL DEFAULT '';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "SmsOperator" text NOT NULL DEFAULT 'all';""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "EffectiveFromUtc" timestamp with time zone NULL;""", ct);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "EffectiveToUtc" timestamp with time zone NULL;""", ct);
         await db.Database.ExecuteSqlRawAsync("""CREATE INDEX IF NOT EXISTS "IX_Templates_Tenant_Channel" ON "Templates" ("TenantId","Channel");""", ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "SmsOptOuts" (
+                "Id" uuid PRIMARY KEY,
+                "TenantId" uuid NOT NULL,
+                "Phone" text NOT NULL DEFAULT '',
+                "Reason" text NOT NULL DEFAULT '',
+                "Source" text NOT NULL DEFAULT 'manual',
+                "OptedOutAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now()
+            );
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""CREATE INDEX IF NOT EXISTS "IX_SmsOptOuts_Tenant_Phone" ON "SmsOptOuts" ("TenantId","Phone");""", ct);
 
         cache.Set(CacheKey(tenantId), true, TimeSpan.FromMinutes(30));
         logger.LogInformation("Tenant schema guard applied for tenantId={TenantId}", tenantId);

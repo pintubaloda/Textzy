@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -6,249 +6,255 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { archiveSmsSender, createSmsSender, getSmsSenderStats, listSmsSenders, updateSmsSender } from "@/lib/api";
+import {
+  addSmsOptOut,
+  archiveSmsSender,
+  createSmsSender,
+  createSmsTemplate,
+  getSmsComplianceKpis,
+  getSmsSenderStats,
+  listSmsComplianceEvents,
+  listSmsOptOuts,
+  listSmsSenders,
+  listSmsTemplates,
+  removeSmsOptOut,
+  setSmsTemplateStatus,
+  updateSmsSender,
+  updateSmsTemplate,
+} from "@/lib/api";
 import { toast } from "sonner";
-import { CheckCircle2, FileCheck2, ShieldCheck, Trash2 } from "lucide-react";
+import { CheckCircle2, FileCheck2, ShieldCheck, Trash2, MessageSquareText, Ban, Activity } from "lucide-react";
+
+const defaultSenderForm = {
+  senderId: "",
+  entityId: "",
+  routeType: "service_explicit",
+  purpose: "",
+  description: "",
+  isVerified: false,
+};
+
+const defaultTemplateForm = {
+  name: "",
+  category: "service",
+  language: "en",
+  body: "",
+  smsSenderId: "",
+  dltEntityId: "",
+  dltTemplateId: "",
+  smsOperator: "all",
+  effectiveFromUtc: "",
+  effectiveToUtc: "",
+};
 
 const SmsSetupPage = () => {
-  const [rows, setRows] = useState([]);
-  const [stats, setStats] = useState({ total: 0, verified: 0, compliant: 0, byRoute: {} });
-  const [form, setForm] = useState({
-    senderId: "",
-    entityId: "",
-    routeType: "service_explicit",
-    purpose: "",
-    description: "",
-    isVerified: false,
-  });
-  const [editingId, setEditingId] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [panel, setPanel] = useState("senders");
 
-  const load = async () => {
+  const [senders, setSenders] = useState([]);
+  const [senderStats, setSenderStats] = useState({ total: 0, verified: 0, compliant: 0, byRoute: {} });
+  const [senderForm, setSenderForm] = useState(defaultSenderForm);
+  const [editingSenderId, setEditingSenderId] = useState("");
+
+  const [templateRows, setTemplateRows] = useState([]);
+  const [templateForm, setTemplateForm] = useState(defaultTemplateForm);
+  const [editingTemplateId, setEditingTemplateId] = useState("");
+
+  const [optOutRows, setOptOutRows] = useState([]);
+  const [optOutPhone, setOptOutPhone] = useState("");
+  const [optOutReason, setOptOutReason] = useState("");
+
+  const [events, setEvents] = useState([]);
+  const [kpis, setKpis] = useState({ templatesTotal: 0, templatesApproved: 0, templatesPending: 0, templatesRejected: 0, optOuts: 0, sentToday: 0 });
+
+  const [busy, setBusy] = useState(false);
+
+  const loadAll = async () => {
     try {
-      const [res, s] = await Promise.all([listSmsSenders(), getSmsSenderStats().catch(() => null)]);
-      setRows(res || []);
-      if (s) setStats(s);
+      const [senderRes, senderStatRes, tplRes, optRes, eventRes, kpiRes] = await Promise.all([
+        listSmsSenders().catch(() => []),
+        getSmsSenderStats().catch(() => null),
+        listSmsTemplates().catch(() => []),
+        listSmsOptOuts(400).catch(() => []),
+        listSmsComplianceEvents(200).catch(() => []),
+        getSmsComplianceKpis().catch(() => null),
+      ]);
+      setSenders(senderRes || []);
+      if (senderStatRes) setSenderStats(senderStatRes);
+      setTemplateRows(tplRes || []);
+      setOptOutRows(optRes || []);
+      setEvents(eventRes || []);
+      if (kpiRes) setKpis(kpiRes);
     } catch {
-      setRows([]);
+      toast.error("Failed to load SMS module data.");
     }
   };
 
   useEffect(() => {
-    load();
+    loadAll();
   }, []);
 
-  const save = async () => {
-    if (!form.senderId.trim() || !form.entityId.trim()) {
+  const routeMix = senderStats?.byRoute || {};
+
+  const saveSender = async () => {
+    if (!senderForm.senderId.trim() || !senderForm.entityId.trim()) {
       toast.error("Sender ID and Entity ID are required.");
       return;
     }
     try {
-      setSaving(true);
+      setBusy(true);
       const payload = {
-        senderId: form.senderId.trim().toUpperCase(),
-        entityId: form.entityId.trim(),
-        routeType: form.routeType,
-        purpose: form.purpose.trim(),
-        description: form.description.trim(),
-        isVerified: !!form.isVerified,
+        senderId: senderForm.senderId.trim().toUpperCase(),
+        entityId: senderForm.entityId.trim(),
+        routeType: senderForm.routeType,
+        purpose: senderForm.purpose.trim(),
+        description: senderForm.description.trim(),
+        isVerified: !!senderForm.isVerified,
       };
-      if (editingId) {
-        await updateSmsSender(editingId, payload);
+      if (editingSenderId) {
+        await updateSmsSender(editingSenderId, payload);
         toast.success("SMS sender updated.");
       } else {
         await createSmsSender(payload);
-        toast.success("SMS sender saved.");
+        toast.success("SMS sender created.");
       }
-      setEditingId("");
-      setForm({ senderId: "", entityId: "", routeType: "service_explicit", purpose: "", description: "", isVerified: false });
-      await load();
+      setEditingSenderId("");
+      setSenderForm(defaultSenderForm);
+      await loadAll();
     } catch (e) {
       toast.error(e?.message || "Failed to save sender.");
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   };
 
-  const onEdit = (row) => {
-    setEditingId(row.id);
-    setForm({
-      senderId: row.senderId || "",
-      entityId: row.entityId || "",
-      routeType: row.routeType || "service_explicit",
-      purpose: row.purpose || "",
-      description: row.description || "",
-      isVerified: !!row.isVerified,
-    });
-  };
+  const saveTemplate = async () => {
+    if (!templateForm.name.trim() || !templateForm.body.trim() || !templateForm.smsSenderId.trim() || !templateForm.dltEntityId.trim() || !templateForm.dltTemplateId.trim()) {
+      toast.error("Name, body, sender ID, entity ID and DLT template ID are required.");
+      return;
+    }
 
-  const onArchive = async (id) => {
+    const payload = {
+      ...templateForm,
+      name: templateForm.name.trim(),
+      body: templateForm.body.trim(),
+      smsSenderId: templateForm.smsSenderId.trim().toUpperCase(),
+      dltEntityId: templateForm.dltEntityId.trim(),
+      dltTemplateId: templateForm.dltTemplateId.trim(),
+      effectiveFromUtc: templateForm.effectiveFromUtc ? new Date(templateForm.effectiveFromUtc).toISOString() : null,
+      effectiveToUtc: templateForm.effectiveToUtc ? new Date(templateForm.effectiveToUtc).toISOString() : null,
+    };
+
     try {
-      await archiveSmsSender(id);
-      toast.success("Sender archived.");
-      if (editingId === id) {
-        setEditingId("");
-        setForm({ senderId: "", entityId: "", routeType: "service_explicit", purpose: "", description: "", isVerified: false });
+      setBusy(true);
+      if (editingTemplateId) {
+        await updateSmsTemplate(editingTemplateId, payload);
+        toast.success("Template updated.");
+      } else {
+        await createSmsTemplate(payload);
+        toast.success("Template created.");
       }
-      await load();
+      setEditingTemplateId("");
+      setTemplateForm(defaultTemplateForm);
+      await loadAll();
     } catch (e) {
-      toast.error(e?.message || "Failed to archive sender.");
+      toast.error(e?.message || "Failed to save template.");
+    } finally {
+      setBusy(false);
     }
   };
 
-  const byRoute = stats?.byRoute || {};
+  const addOptOut = async () => {
+    if (!optOutPhone.trim()) {
+      toast.error("Phone is required.");
+      return;
+    }
+    try {
+      setBusy(true);
+      await addSmsOptOut({ phone: optOutPhone.trim(), reason: optOutReason.trim(), source: "manual" });
+      toast.success("Phone added to opt-out list.");
+      setOptOutPhone("");
+      setOptOutReason("");
+      await loadAll();
+    } catch (e) {
+      toast.error(e?.message || "Failed to add opt-out.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const statusBadge = (value) => {
+    const v = String(value || "").toLowerCase();
+    if (v === "approved") return <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Approved</Badge>;
+    if (v === "submitted" || v === "inreview") return <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">Pending</Badge>;
+    if (v === "rejected") return <Badge className="bg-red-100 text-red-700 hover:bg-red-100">Rejected</Badge>;
+    if (v === "expired") return <Badge variant="secondary">Expired</Badge>;
+    return <Badge variant="outline">Draft</Badge>;
+  };
+
+  const statusOptions = useMemo(() => ["draft", "submitted", "approved", "rejected", "expired"], []);
 
   return (
     <div className="space-y-6" data-testid="sms-setup-page">
       <div>
-        <h1 className="text-2xl font-heading font-bold text-slate-900">SMS Setup</h1>
-        <p className="text-slate-600">India DLT-ready sender registry with compliance metadata and route controls.</p>
+        <h1 className="text-2xl font-heading font-bold text-slate-900">SMS Control Center</h1>
+        <p className="text-slate-600">Professional DLT-ready SMS operations: senders, template lifecycle, opt-outs, and delivery observability.</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="border-slate-200 bg-gradient-to-r from-orange-50 to-white">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="w-5 h-5 text-orange-500" />
-              <div>
-                <p className="text-xs text-slate-500">Total Senders</p>
-                <p className="text-2xl font-semibold text-slate-900">{stats?.total || 0}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-slate-200">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <CheckCircle2 className="w-5 h-5 text-green-600" />
-              <div>
-                <p className="text-xs text-slate-500">Verified</p>
-                <p className="text-2xl font-semibold text-slate-900">{stats?.verified || 0}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-slate-200">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <FileCheck2 className="w-5 h-5 text-blue-600" />
-              <div>
-                <p className="text-xs text-slate-500">DLT Compliant</p>
-                <p className="text-2xl font-semibold text-slate-900">{stats?.compliant || 0}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-slate-200">
-          <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 mb-2">Route Mix</p>
-            <div className="flex flex-wrap gap-2">
-              {Object.keys(byRoute).length === 0 ? <Badge variant="secondary">No data</Badge> : null}
-              {Object.entries(byRoute).map(([k, v]) => (
-                <Badge key={k} variant="outline">{k}: {v}</Badge>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+        <Card className="border-slate-200 bg-gradient-to-r from-orange-50 to-white"><CardContent className="pt-6"><div className="flex items-center gap-3"><ShieldCheck className="w-5 h-5 text-orange-500" /><div><p className="text-xs text-slate-500">Senders</p><p className="text-2xl font-semibold text-slate-900">{senderStats?.total || 0}</p></div></div></CardContent></Card>
+        <Card className="border-slate-200"><CardContent className="pt-6"><div className="flex items-center gap-3"><CheckCircle2 className="w-5 h-5 text-green-600" /><div><p className="text-xs text-slate-500">Approved Templates</p><p className="text-2xl font-semibold text-slate-900">{kpis.templatesApproved || 0}</p></div></div></CardContent></Card>
+        <Card className="border-slate-200"><CardContent className="pt-6"><div className="flex items-center gap-3"><FileCheck2 className="w-5 h-5 text-blue-600" /><div><p className="text-xs text-slate-500">Templates Total</p><p className="text-2xl font-semibold text-slate-900">{kpis.templatesTotal || 0}</p></div></div></CardContent></Card>
+        <Card className="border-slate-200"><CardContent className="pt-6"><div className="flex items-center gap-3"><Ban className="w-5 h-5 text-red-600" /><div><p className="text-xs text-slate-500">Opt-Outs</p><p className="text-2xl font-semibold text-slate-900">{kpis.optOuts || 0}</p></div></div></CardContent></Card>
+        <Card className="border-slate-200"><CardContent className="pt-6"><div className="flex items-center gap-3"><MessageSquareText className="w-5 h-5 text-indigo-600" /><div><p className="text-xs text-slate-500">SMS Sent Today</p><p className="text-2xl font-semibold text-slate-900">{kpis.sentToday || 0}</p></div></div></CardContent></Card>
+        <Card className="border-slate-200"><CardContent className="pt-6"><div className="flex items-center gap-3"><Activity className="w-5 h-5 text-amber-600" /><div><p className="text-xs text-slate-500">DLR Events</p><p className="text-2xl font-semibold text-slate-900">{events.length}</p></div></div></CardContent></Card>
       </div>
 
-      <Card className="border-slate-200">
-        <CardHeader><CardTitle className="text-base">{editingId ? "Edit DLT Sender" : "Add DLT Sender"}</CardTitle></CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="space-y-2">
-            <Label>Sender ID</Label>
-            <Input placeholder="e.g. TXTZY" value={form.senderId} onChange={(e) => setForm((p) => ({ ...p, senderId: e.target.value.toUpperCase() }))} />
-          </div>
-          <div className="space-y-2">
-            <Label>DLT Entity ID</Label>
-            <Input placeholder="19-digit PE ID" value={form.entityId} onChange={(e) => setForm((p) => ({ ...p, entityId: e.target.value }))} />
-          </div>
-          <div className="space-y-2">
-            <Label>DLT Route Type</Label>
-            <Select value={form.routeType} onValueChange={(v) => setForm((p) => ({ ...p, routeType: v }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="service_explicit">Service Explicit</SelectItem>
-                <SelectItem value="service_implicit">Service Implicit</SelectItem>
-                <SelectItem value="transactional">Transactional</SelectItem>
-                <SelectItem value="promotional">Promotional</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2 md:col-span-2">
-            <Label>Purpose</Label>
-            <Input placeholder="OTP / alerts / delivery updates" value={form.purpose} onChange={(e) => setForm((p) => ({ ...p, purpose: e.target.value }))} />
-          </div>
-          <div className="space-y-2">
-            <Label>Verification Status</Label>
-            <Select value={form.isVerified ? "yes" : "no"} onValueChange={(v) => setForm((p) => ({ ...p, isVerified: v === "yes" }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="yes">Verified</SelectItem>
-                <SelectItem value="no">Pending</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2 md:col-span-3">
-            <Label>Description</Label>
-            <Input placeholder="Optional compliance/internal note" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} />
-          </div>
-          <div className="flex items-end">
-            <Button className="bg-orange-500 hover:bg-orange-600 w-full" onClick={save} disabled={saving}>
-              {saving ? "Saving..." : editingId ? "Update Sender" : "Save Sender"}
-            </Button>
-          </div>
-          {editingId ? (
-            <div className="flex items-end">
-              <Button variant="outline" className="w-full" onClick={() => { setEditingId(""); setForm({ senderId: "", entityId: "", routeType: "service_explicit", purpose: "", description: "", isVerified: false }); }}>
-                Cancel Edit
-              </Button>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+      <div className="flex flex-wrap gap-2">
+        {[{k:"senders",l:"DLT Senders"},{k:"templates",l:"Template Registry"},{k:"optouts",l:"Opt-Out Control"},{k:"events",l:"Delivery Events"}].map((x)=>(
+          <Button key={x.k} variant={panel===x.k?"default":"outline"} className={panel===x.k?"bg-orange-500 hover:bg-orange-600":""} onClick={()=>setPanel(x.k)}>{x.l}</Button>
+        ))}
+      </div>
 
-      <Card className="border-slate-200">
-        <CardHeader><CardTitle className="text-base">Saved Sender IDs</CardTitle></CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Sender ID</TableHead>
-                <TableHead>Entity ID</TableHead>
-                <TableHead>Route</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-slate-500">No sender IDs configured yet.</TableCell>
-                </TableRow>
-              ) : null}
-              {rows.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-mono">{r.senderId}</TableCell>
-                  <TableCell className="font-mono">{r.entityId}</TableCell>
-                  <TableCell><Badge variant="outline">{r.routeType || "service_explicit"}</Badge></TableCell>
-                  <TableCell>{r.isVerified ? <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Verified</Badge> : <Badge variant="secondary">Pending</Badge>}</TableCell>
-                  <TableCell>{r.createdAtUtc ? new Date(r.createdAtUtc).toLocaleString() : "-"}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="inline-flex gap-2">
-                      <Button size="sm" variant="outline" onClick={() => onEdit(r)}>Edit</Button>
-                      <Button size="sm" variant="ghost" className="text-red-600" onClick={() => onArchive(r.id)}>
-                        <Trash2 className="w-4 h-4 mr-1" /> Archive
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      {panel === "senders" && (
+        <>
+          <Card className="border-slate-200">
+            <CardHeader><CardTitle className="text-base">{editingSenderId ? "Edit DLT Sender" : "Add DLT Sender"}</CardTitle></CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="space-y-2"><Label>Sender ID</Label><Input placeholder="TXTZY" value={senderForm.senderId} onChange={(e)=>setSenderForm((p)=>({ ...p, senderId:e.target.value.toUpperCase() }))} /></div>
+              <div className="space-y-2"><Label>DLT Entity ID</Label><Input placeholder="19-digit PE ID" value={senderForm.entityId} onChange={(e)=>setSenderForm((p)=>({ ...p, entityId:e.target.value }))} /></div>
+              <div className="space-y-2"><Label>Route Type</Label><Select value={senderForm.routeType} onValueChange={(v)=>setSenderForm((p)=>({ ...p, routeType:v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="service_explicit">Service Explicit</SelectItem><SelectItem value="service_implicit">Service Implicit</SelectItem><SelectItem value="transactional">Transactional</SelectItem><SelectItem value="promotional">Promotional</SelectItem></SelectContent></Select></div>
+              <div className="space-y-2 md:col-span-2"><Label>Purpose</Label><Input placeholder="OTP / alerts / reminders" value={senderForm.purpose} onChange={(e)=>setSenderForm((p)=>({ ...p, purpose:e.target.value }))} /></div>
+              <div className="space-y-2"><Label>Verification</Label><Select value={senderForm.isVerified?"yes":"no"} onValueChange={(v)=>setSenderForm((p)=>({ ...p, isVerified:v==="yes" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="yes">Verified</SelectItem><SelectItem value="no">Pending</SelectItem></SelectContent></Select></div>
+              <div className="space-y-2 md:col-span-3"><Label>Description</Label><Input placeholder="Internal note" value={senderForm.description} onChange={(e)=>setSenderForm((p)=>({ ...p, description:e.target.value }))} /></div>
+              <div><Button className="bg-orange-500 hover:bg-orange-600 w-full" disabled={busy} onClick={saveSender}>{editingSenderId?"Update Sender":"Save Sender"}</Button></div>
+              {editingSenderId ? <div><Button variant="outline" className="w-full" onClick={()=>{setEditingSenderId("");setSenderForm(defaultSenderForm);}}>Cancel Edit</Button></div> : null}
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200"><CardHeader><CardTitle className="text-base">Saved Sender IDs</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Sender ID</TableHead><TableHead>Entity ID</TableHead><TableHead>Route</TableHead><TableHead>Status</TableHead><TableHead>Created</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{senders.length===0?<TableRow><TableCell colSpan={6} className="text-slate-500">No sender IDs configured.</TableCell></TableRow>:null}{senders.map((r)=><TableRow key={r.id}><TableCell className="font-mono">{r.senderId}</TableCell><TableCell className="font-mono">{r.entityId}</TableCell><TableCell><Badge variant="outline">{r.routeType || "service_explicit"}</Badge></TableCell><TableCell>{r.isVerified ? <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Verified</Badge> : <Badge variant="secondary">Pending</Badge>}</TableCell><TableCell>{r.createdAtUtc ? new Date(r.createdAtUtc).toLocaleString() : "-"}</TableCell><TableCell className="text-right"><div className="inline-flex gap-2"><Button size="sm" variant="outline" onClick={()=>{setEditingSenderId(r.id);setSenderForm({senderId:r.senderId||"",entityId:r.entityId||"",routeType:r.routeType||"service_explicit",purpose:r.purpose||"",description:r.description||"",isVerified:!!r.isVerified});}}>Edit</Button><Button size="sm" variant="ghost" className="text-red-600" onClick={async()=>{await archiveSmsSender(r.id);toast.success("Sender archived.");await loadAll();}}><Trash2 className="w-4 h-4 mr-1" />Archive</Button></div></TableCell></TableRow>)}</TableBody></Table></CardContent></Card>
+
+          <Card className="border-slate-200"><CardContent className="pt-4"><p className="text-xs text-slate-500 mb-2">Route Mix</p><div className="flex flex-wrap gap-2">{Object.keys(routeMix).length===0?<Badge variant="secondary">No data</Badge>:null}{Object.entries(routeMix).map(([k,v])=><Badge key={k} variant="outline">{k}: {v}</Badge>)}</div></CardContent></Card>
+        </>
+      )}
+
+      {panel === "templates" && (
+        <>
+          <Card className="border-slate-200"><CardHeader><CardTitle className="text-base">{editingTemplateId ? "Edit SMS Template" : "Create SMS Template"}</CardTitle></CardHeader><CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3"><div className="space-y-2"><Label>Template Name</Label><Input value={templateForm.name} onChange={(e)=>setTemplateForm((p)=>({ ...p, name:e.target.value }))} /></div><div className="space-y-2"><Label>Category</Label><Select value={templateForm.category} onValueChange={(v)=>setTemplateForm((p)=>({ ...p, category:v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="service">Service</SelectItem><SelectItem value="otp">OTP</SelectItem><SelectItem value="transactional">Transactional</SelectItem><SelectItem value="promotional">Promotional</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>Language</Label><Input value={templateForm.language} onChange={(e)=>setTemplateForm((p)=>({ ...p, language:e.target.value }))} /></div><div className="space-y-2"><Label>Sender ID</Label><Input value={templateForm.smsSenderId} onChange={(e)=>setTemplateForm((p)=>({ ...p, smsSenderId:e.target.value.toUpperCase() }))} /></div><div className="space-y-2"><Label>DLT Entity ID</Label><Input value={templateForm.dltEntityId} onChange={(e)=>setTemplateForm((p)=>({ ...p, dltEntityId:e.target.value }))} /></div><div className="space-y-2"><Label>DLT Template ID</Label><Input value={templateForm.dltTemplateId} onChange={(e)=>setTemplateForm((p)=>({ ...p, dltTemplateId:e.target.value }))} /></div><div className="space-y-2"><Label>Operator</Label><Select value={templateForm.smsOperator} onValueChange={(v)=>setTemplateForm((p)=>({ ...p, smsOperator:v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="jio">Jio</SelectItem><SelectItem value="vi">Vi</SelectItem><SelectItem value="airtel">Airtel</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>Effective From</Label><Input type="datetime-local" value={templateForm.effectiveFromUtc} onChange={(e)=>setTemplateForm((p)=>({ ...p, effectiveFromUtc:e.target.value }))} /></div><div className="space-y-2"><Label>Effective To</Label><Input type="datetime-local" value={templateForm.effectiveToUtc} onChange={(e)=>setTemplateForm((p)=>({ ...p, effectiveToUtc:e.target.value }))} /></div><div className="space-y-2 md:col-span-3"><Label>Template Body</Label><Input value={templateForm.body} onChange={(e)=>setTemplateForm((p)=>({ ...p, body:e.target.value }))} placeholder="Example: Dear customer, your OTP is {{1}}" /></div><div><Button className="bg-orange-500 hover:bg-orange-600 w-full" disabled={busy} onClick={saveTemplate}>{editingTemplateId?"Update Template":"Create Template"}</Button></div>{editingTemplateId?<div><Button variant="outline" className="w-full" onClick={()=>{setEditingTemplateId("");setTemplateForm(defaultTemplateForm);}}>Cancel Edit</Button></div>:null}</CardContent></Card>
+
+          <Card className="border-slate-200"><CardHeader><CardTitle className="text-base">Template Registry</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Sender</TableHead><TableHead>DLT Template</TableHead><TableHead>Status</TableHead><TableHead>Operator</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{templateRows.length===0?<TableRow><TableCell colSpan={6} className="text-slate-500">No templates created.</TableCell></TableRow>:null}{templateRows.map((r)=><TableRow key={r.id}><TableCell>{r.name}</TableCell><TableCell className="font-mono">{r.smsSenderId}</TableCell><TableCell className="font-mono">{r.dltTemplateId}</TableCell><TableCell>{statusBadge(r.lifecycleStatus || r.status)}</TableCell><TableCell>{r.smsOperator || "all"}</TableCell><TableCell className="text-right"><div className="inline-flex gap-2"><Button size="sm" variant="outline" onClick={()=>{setEditingTemplateId(r.id);setTemplateForm({name:r.name||"",category:r.category||"service",language:r.language||"en",body:r.body||"",smsSenderId:r.smsSenderId||"",dltEntityId:r.dltEntityId||"",dltTemplateId:r.dltTemplateId||"",smsOperator:r.smsOperator||"all",effectiveFromUtc:r.effectiveFromUtc?new Date(r.effectiveFromUtc).toISOString().slice(0,16):"",effectiveToUtc:r.effectiveToUtc?new Date(r.effectiveToUtc).toISOString().slice(0,16):""});}}>Edit</Button><Select onValueChange={async(v)=>{try{await setSmsTemplateStatus(r.id,{status:v,reason:v==="rejected"?"Rejected by operator": ""});toast.success("Status updated");await loadAll();}catch(e){toast.error(e?.message||"Failed to set status");}}}><SelectTrigger className="h-8 w-[120px]"><SelectValue placeholder="Set status" /></SelectTrigger><SelectContent>{statusOptions.map((x)=><SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></div></TableCell></TableRow>)}</TableBody></Table></CardContent></Card>
+        </>
+      )}
+
+      {panel === "optouts" && (
+        <>
+          <Card className="border-slate-200"><CardHeader><CardTitle className="text-base">Opt-Out Management</CardTitle></CardHeader><CardContent className="grid md:grid-cols-3 gap-3"><div className="space-y-2"><Label>Phone</Label><Input placeholder="+919876543210" value={optOutPhone} onChange={(e)=>setOptOutPhone(e.target.value)} /></div><div className="space-y-2 md:col-span-2"><Label>Reason</Label><Input placeholder="Customer requested STOP" value={optOutReason} onChange={(e)=>setOptOutReason(e.target.value)} /></div><div><Button className="bg-orange-500 hover:bg-orange-600 w-full" disabled={busy} onClick={addOptOut}>Add Opt-Out</Button></div></CardContent></Card>
+          <Card className="border-slate-200"><CardHeader><CardTitle className="text-base">Active Opt-Out List</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Phone</TableHead><TableHead>Reason</TableHead><TableHead>Source</TableHead><TableHead>Since</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{optOutRows.length===0?<TableRow><TableCell colSpan={5} className="text-slate-500">No opt-outs yet.</TableCell></TableRow>:null}{optOutRows.map((r)=><TableRow key={r.id}><TableCell className="font-mono">{r.phone}</TableCell><TableCell>{r.reason || "-"}</TableCell><TableCell>{r.source || "manual"}</TableCell><TableCell>{r.optedOutAtUtc ? new Date(r.optedOutAtUtc).toLocaleString() : "-"}</TableCell><TableCell className="text-right"><Button size="sm" variant="outline" onClick={async()=>{await removeSmsOptOut(r.id);toast.success("Opt-out removed");await loadAll();}}>Remove</Button></TableCell></TableRow>)}</TableBody></Table></CardContent></Card>
+        </>
+      )}
+
+      {panel === "events" && (
+        <Card className="border-slate-200"><CardHeader><CardTitle className="text-base">SMS Delivery Events (DLR)</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Time</TableHead><TableHead>State</TableHead><TableHead>Provider Message ID</TableHead><TableHead>Phone</TableHead><TableHead>Event</TableHead></TableRow></TableHeader><TableBody>{events.length===0?<TableRow><TableCell colSpan={5} className="text-slate-500">No delivery events yet.</TableCell></TableRow>:null}{events.map((e)=><TableRow key={e.id}><TableCell>{e.createdAtUtc ? new Date(e.createdAtUtc).toLocaleString() : "-"}</TableCell><TableCell>{statusBadge(e.state)}</TableCell><TableCell className="font-mono text-xs">{e.providerMessageId || "-"}</TableCell><TableCell className="font-mono">{e.customerPhone || "-"}</TableCell><TableCell>{e.eventType || "-"}</TableCell></TableRow>)}</TableBody></Table></CardContent></Card>
+      )}
     </div>
   );
 };

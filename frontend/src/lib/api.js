@@ -570,6 +570,43 @@ export async function testPlatformSms(payload = {}) {
   return apiPost('/api/platform/settings/sms/test', payload || {})
 }
 
+export async function listSmsTemplates(status = '') {
+  const q = status ? `?status=${encodeURIComponent(status)}` : ''
+  return apiGet(`/api/sms/templates${q}`)
+}
+
+export async function createSmsTemplate(payload) {
+  return apiPost('/api/sms/templates', payload)
+}
+
+export async function updateSmsTemplate(id, payload) {
+  return apiPut(`/api/sms/templates/${id}`, payload)
+}
+
+export async function setSmsTemplateStatus(id, payload) {
+  return apiPost(`/api/sms/templates/${id}/status`, payload)
+}
+
+export async function getSmsComplianceKpis() {
+  return apiGet('/api/sms/compliance/kpis')
+}
+
+export async function listSmsOptOuts(take = 300) {
+  return apiGet(`/api/sms/compliance/opt-outs?take=${encodeURIComponent(String(take))}`)
+}
+
+export async function addSmsOptOut(payload) {
+  return apiPost('/api/sms/compliance/opt-outs', payload)
+}
+
+export async function removeSmsOptOut(id) {
+  return apiDelete(`/api/sms/compliance/opt-outs/${id}`)
+}
+
+export async function listSmsComplianceEvents(take = 200) {
+  return apiGet(`/api/sms/compliance/events?take=${encodeURIComponent(String(take))}`)
+}
+
 export async function getPlatformEmailReport({ days = 7, take = 100 } = {}) {
   const q = new URLSearchParams()
   q.set('days', String(days))

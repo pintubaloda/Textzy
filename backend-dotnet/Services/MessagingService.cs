@@ -162,6 +162,11 @@ public class MessagingService(
         }
         else if (request.Channel == ChannelType.Sms)
         {
+            var optedOut = await db.SmsOptOuts.AsNoTracking()
+                .AnyAsync(x => x.TenantId == tenancy.TenantId && x.Phone == request.Recipient && x.IsActive, ct);
+            if (optedOut)
+                throw new InvalidOperationException("Recipient has opted out from SMS.");
+
             var c = await billingGuard.TryConsumeAsync(tenancy.TenantId, "smsCredits", 1, ct);
             if (!c.Allowed) throw new InvalidOperationException(c.Message);
         }

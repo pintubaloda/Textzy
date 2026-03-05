@@ -14,6 +14,7 @@ public class TenantDbContext(DbContextOptions<TenantDbContext> options) : DbCont
     public DbSet<SmsFlow> SmsFlows => Set<SmsFlow>();
     public DbSet<SmsInputField> SmsInputFields => Set<SmsInputField>();
     public DbSet<SmsSender> SmsSenders => Set<SmsSender>();
+    public DbSet<SmsOptOut> SmsOptOuts => Set<SmsOptOut>();
     public DbSet<TenantWabaConfig> TenantWabaConfigs => Set<TenantWabaConfig>();
     public DbSet<ConversationWindow> ConversationWindows => Set<ConversationWindow>();
     public DbSet<Conversation> Conversations => Set<Conversation>();

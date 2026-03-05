@@ -251,6 +251,9 @@ public static class SeedData
         db.Database.ExecuteSqlRaw("""ALTER TABLE "Messages" ADD COLUMN IF NOT EXISTS "NextRetryAtUtc" timestamp with time zone NULL;""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "Messages" ADD COLUMN IF NOT EXISTS "LastError" text NOT NULL DEFAULT '';""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "Messages" ADD COLUMN IF NOT EXISTS "QueueProvider" text NOT NULL DEFAULT 'memory';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "SmsOperator" text NOT NULL DEFAULT 'all';""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "EffectiveFromUtc" timestamp with time zone NULL;""");
+        db.Database.ExecuteSqlRaw("""ALTER TABLE "Templates" ADD COLUMN IF NOT EXISTS "EffectiveToUtc" timestamp with time zone NULL;""");
         db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_Messages_Tenant_IdempotencyKey" ON "Messages" ("TenantId","IdempotencyKey");""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "SegmentId" uuid NULL;""");
         db.Database.ExecuteSqlRaw("""ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "Email" text NOT NULL DEFAULT '';""");
@@ -313,6 +316,19 @@ public static class SeedData
             );
             """);
         db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_OutboundDeadLetters_Tenant_CreatedAtUtc" ON "OutboundDeadLetters" ("TenantId","CreatedAtUtc");""");
+        db.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "SmsOptOuts" (
+                "Id" uuid PRIMARY KEY,
+                "TenantId" uuid NOT NULL,
+                "Phone" text NOT NULL DEFAULT '',
+                "Reason" text NOT NULL DEFAULT '',
+                "Source" text NOT NULL DEFAULT 'manual',
+                "OptedOutAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+                "IsActive" boolean NOT NULL DEFAULT true,
+                "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now()
+            );
+            """);
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SmsOptOuts_Tenant_Phone" ON "SmsOptOuts" ("TenantId","Phone");""");
 
         if (db.Campaigns.Any(c => c.TenantId == tenantId)) return;
 

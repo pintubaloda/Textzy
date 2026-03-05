@@ -23,5 +23,8 @@ public class Template
     public string FooterText { get; set; } = string.Empty;
     public string ButtonsJson { get; set; } = string.Empty;
     public string RejectionReason { get; set; } = string.Empty;
+    public string SmsOperator { get; set; } = "all";
+    public DateTime? EffectiveFromUtc { get; set; }
+    public DateTime? EffectiveToUtc { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
