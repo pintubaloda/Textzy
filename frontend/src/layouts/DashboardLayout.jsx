@@ -95,7 +95,20 @@ const DashboardLayout = () => {
   const canViewIntegrations = isPlatformOwner || hasPermission("api.write", session);
   const canViewSettings = isPlatformOwner || (hasPermission("automation.read", session) && hasPermission("api.read", session));
   const canViewBilling = isPlatformOwner || hasPermission("billing.read", session);
-  const canManageTeam = ["owner", "admin", "super_admin"].includes(role);
+  const canManageTeam = isPlatformOwner || hasPermission("api.write", session);
+  const tenantHomePath = canViewInbox
+    ? "/dashboard/inbox"
+    : canViewContacts
+      ? "/dashboard/contacts"
+      : canViewCampaigns
+        ? "/dashboard/campaigns"
+        : canViewAutomations
+          ? "/dashboard/automations"
+          : canViewBilling
+            ? "/dashboard/billing"
+            : canViewSettings
+              ? "/dashboard/settings"
+              : "/dashboard";
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
   const isBrandingPage = location.pathname.startsWith("/dashboard/platform-branding");
   const isTemplatesPage = location.pathname.startsWith("/dashboard/templates");
@@ -168,6 +181,37 @@ const DashboardLayout = () => {
     if (!session?.email) return;
     setShowNotificationPrompt(isNotificationSoundEnabled() && !isNotificationAudioUnlocked());
   }, [session?.email]);
+  useEffect(() => {
+    if (!isPlatformOwner) return;
+    const path = location.pathname;
+    const tenantOnly = [
+      "/dashboard/inbox",
+      "/dashboard/contacts",
+      "/dashboard/campaigns",
+      "/dashboard/templates",
+      "/dashboard/sms-setup",
+      "/dashboard/automations",
+      "/dashboard/analytics",
+      "/dashboard/integrations",
+      "/dashboard/whatsapp-onboarding",
+      "/dashboard/billing",
+      "/dashboard/settings",
+      "/dashboard/mobile-devices",
+      "/dashboard/team",
+    ];
+    const platformOnly = [
+      "/dashboard/admin",
+      "/dashboard/platform-settings",
+      "/dashboard/platform-branding",
+    ];
+    if (isPlatformView && tenantOnly.some((prefix) => path.startsWith(prefix))) {
+      navigate("/dashboard", { replace: true });
+      return;
+    }
+    if (!isPlatformView && platformOnly.some((prefix) => path.startsWith(prefix))) {
+      navigate(tenantHomePath, { replace: true });
+    }
+  }, [isPlatformOwner, isPlatformView, location.pathname, navigate, tenantHomePath]);
   useEffect(() => {
     if (!isPlatformOwner) return;
     try {

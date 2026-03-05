@@ -38,11 +38,20 @@ function App() {
   const session = getSession();
   const authed = !!session.email;
   const isPlatformOwner = (session.role || "").toLowerCase() === "super_admin";
+  const ownerMode = (() => {
+    if (!isPlatformOwner) return "self";
+    try {
+      return localStorage.getItem("textzy_owner_mode") || "self";
+    } catch {
+      return "self";
+    }
+  })();
+  const isPlatformView = isPlatformOwner && ownerMode === "platform";
   const can = (permission) => isPlatformOwner || hasPermission(permission, session);
   const canAnalytics = isPlatformOwner || (hasPermission("campaigns.read", session) && hasPermission("api.read", session));
   const canIntegrations = isPlatformOwner || hasPermission("api.write", session);
   const canSettings = isPlatformOwner || (hasPermission("automation.read", session) && hasPermission("api.read", session));
-  const canManageTeam = isPlatformOwner || ["owner", "admin"].includes((session.role || "").toLowerCase());
+  const canManageTeam = isPlatformOwner || hasPermission("api.write", session);
   const firstTenantPath = can("inbox.read")
     ? "/dashboard/inbox"
     : can("contacts.read")
@@ -71,25 +80,25 @@ function App() {
 
             {/* Dashboard Routes */}
             <Route path="/dashboard" element={authed ? <DashboardLayout /> : <Navigate to="/login" replace />}>
-              <Route index element={isPlatformOwner ? <DashboardOverview /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="inbox" element={can("inbox.read") ? <InboxPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="contacts" element={can("contacts.read") ? <ContactsPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="campaigns" element={can("campaigns.read") ? <CampaignsPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="templates" element={can("templates.read") ? <TemplatesPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="sms-setup" element={can("templates.read") ? <SmsSetupPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="automations" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="automations/workflow" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="automations/qa" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="analytics" element={canAnalytics ? <AnalyticsPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="integrations" element={canIntegrations ? <IntegrationsPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="whatsapp-onboarding" element={can("inbox.read") ? <WhatsAppOnboardingPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="billing" element={can("billing.read") ? <BillingPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="settings" element={canSettings ? <SettingsPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="mobile-devices" element={can("inbox.read") ? <MobileDevicesPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="team" element={canManageTeam ? <TeamPage /> : <Navigate to={firstTenantPath} replace />} />
-              <Route path="admin" element={isPlatformOwner ? <AdminPage /> : <Navigate to="/dashboard" replace />} />
-              <Route path="platform-settings" element={isPlatformOwner ? <PlatformSettingsPage /> : <Navigate to="/dashboard" replace />} />
-              <Route path="platform-branding" element={isPlatformOwner ? <PlatformBrandingPage /> : <Navigate to="/dashboard" replace />} />
+              <Route index element={isPlatformView ? <DashboardOverview /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="inbox" element={!isPlatformView && can("inbox.read") ? <InboxPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="contacts" element={!isPlatformView && can("contacts.read") ? <ContactsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="campaigns" element={!isPlatformView && can("campaigns.read") ? <CampaignsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="templates" element={!isPlatformView && can("templates.read") ? <TemplatesPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="sms-setup" element={!isPlatformView && can("templates.read") ? <SmsSetupPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="automations" element={!isPlatformView && can("automation.read") ? <AutomationsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="automations/workflow" element={!isPlatformView && can("automation.read") ? <AutomationsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="automations/qa" element={!isPlatformView && can("automation.read") ? <AutomationsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="analytics" element={!isPlatformView && canAnalytics ? <AnalyticsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="integrations" element={!isPlatformView && canIntegrations ? <IntegrationsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="whatsapp-onboarding" element={!isPlatformView && can("inbox.read") ? <WhatsAppOnboardingPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="billing" element={!isPlatformView && can("billing.read") ? <BillingPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="settings" element={!isPlatformView && canSettings ? <SettingsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="mobile-devices" element={!isPlatformView && can("inbox.read") ? <MobileDevicesPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="team" element={!isPlatformView && canManageTeam ? <TeamPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="admin" element={isPlatformView ? <AdminPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="platform-settings" element={isPlatformView ? <PlatformSettingsPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="platform-branding" element={isPlatformView ? <PlatformBrandingPage /> : <Navigate to={firstTenantPath} replace />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
