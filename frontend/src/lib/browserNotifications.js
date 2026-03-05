@@ -2,6 +2,25 @@ const SW_PATH = "/sw.js";
 const FIREBASE_APP_URL = "https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js";
 const FIREBASE_MSG_URL = "https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-compat.js";
 
+let runtimePushConfig = {
+  vapidPublicKey: "",
+  firebaseConfig: null,
+};
+
+export function setRuntimePushConfig(next = {}) {
+  const firebaseConfig = next.firebaseConfig && typeof next.firebaseConfig === "object"
+    ? next.firebaseConfig
+    : null;
+  runtimePushConfig = {
+    vapidPublicKey: String(next.vapidPublicKey || "").trim(),
+    firebaseConfig,
+  };
+}
+
+export function getRuntimePushConfig() {
+  return runtimePushConfig;
+}
+
 export async function ensureServiceWorkerRegistered() {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;
   try {
@@ -77,6 +96,19 @@ export async function subscribePush(vapidPublicKey) {
 }
 
 function getFirebaseConfig() {
+  const runtimeCfg = runtimePushConfig.firebaseConfig;
+  if (runtimeCfg?.apiKey && runtimeCfg?.projectId && runtimeCfg?.messagingSenderId && runtimeCfg?.appId) {
+    return {
+      apiKey: String(runtimeCfg.apiKey || ""),
+      authDomain: String(runtimeCfg.authDomain || ""),
+      projectId: String(runtimeCfg.projectId || ""),
+      storageBucket: String(runtimeCfg.storageBucket || ""),
+      messagingSenderId: String(runtimeCfg.messagingSenderId || ""),
+      appId: String(runtimeCfg.appId || ""),
+      measurementId: String(runtimeCfg.measurementId || ""),
+    };
+  }
+
   const apiKey = process.env.REACT_APP_FIREBASE_API_KEY || "";
   const authDomain = process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || "";
   const projectId = process.env.REACT_APP_FIREBASE_PROJECT_ID || "";
@@ -101,7 +133,13 @@ async function loadScriptOnce(src, attr) {
   return true;
 }
 
-export async function subscribeFcm(vapidPublicKey) {
+export async function subscribeFcm(vapidPublicKey, firebaseConfigOverride = null) {
+  if (firebaseConfigOverride && typeof firebaseConfigOverride === "object") {
+    setRuntimePushConfig({
+      vapidPublicKey: runtimePushConfig.vapidPublicKey,
+      firebaseConfig: firebaseConfigOverride,
+    });
+  }
   const cfg = getFirebaseConfig();
   if (!cfg || !vapidPublicKey) return null;
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;

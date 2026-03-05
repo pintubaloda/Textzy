@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import * as signalR from "@microsoft/signalr";
-import { subscribeFcm, subscribePush } from "./lib/browserNotifications";
+import { subscribeFcm, subscribePush, setRuntimePushConfig, getRuntimePushConfig } from "./lib/browserNotifications";
 import { getPublicAppUpdateManifest } from "./lib/api";
 
 /* ═══════════════════════════════════════════════
@@ -1159,6 +1159,10 @@ export default function TextzyMobile() {
   const typingTimerRef = useRef(null);
   const typingActiveRef = useRef(false);
   const notifyRegisteredRef = useRef(false);
+  const runtimePushRef = useRef({
+    vapidPublicKey: "",
+    firebaseConfig: null,
+  });
 
   const active       = contacts.find(c=>c.id===activeId);
   const unreadCount  = contacts.filter(c=>c.unread>0).length;
@@ -1369,6 +1373,39 @@ export default function TextzyMobile() {
     return mapped;
   };
 
+  const loadAppBootstrap = async (ctx = authCtx) => {
+    if (!ctx?.token) return null;
+    const { res } = await apiFetch("/api/auth/app-bootstrap", {
+      token: ctx.token,
+      tenantSlug: ctx.tenantSlug,
+    });
+    if (!res.ok) throw new Error(await res.text() || "Failed to load app bootstrap");
+    const json = await res.json().catch(() => ({}));
+    const app = json?.app || {};
+    const runtimeCfg = {
+      vapidPublicKey:
+        String(
+          app.webPushPublicKey ||
+          app.vapidPublicKey ||
+          process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY ||
+          process.env.VITE_WEB_PUSH_PUBLIC_KEY ||
+          ""
+        ).trim(),
+      firebaseConfig: {
+        apiKey: String(app.firebaseApiKey || "").trim(),
+        authDomain: String(app.firebaseAuthDomain || "").trim(),
+        projectId: String(app.firebaseProjectId || "").trim(),
+        storageBucket: String(app.firebaseStorageBucket || "").trim(),
+        messagingSenderId: String(app.firebaseMessagingSenderId || "").trim(),
+        appId: String(app.firebaseAppId || "").trim(),
+        measurementId: String(app.firebaseMeasurementId || "").trim(),
+      },
+    };
+    runtimePushRef.current = runtimeCfg;
+    setRuntimePushConfig(runtimeCfg);
+    return json;
+  };
+
   const loadApprovedTemplates = async (ctx = authCtx) => {
     const { res } = await apiFetch("/api/templates", {
       token: ctx.token,
@@ -1390,10 +1427,16 @@ export default function TextzyMobile() {
   const ensureNotificationSubscription = async (ctx = authCtx) => {
     if (notifyRegisteredRef.current || !notifEnabled) return;
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    const vapid = process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY || process.env.VITE_WEB_PUSH_PUBLIC_KEY || "";
+    const runtimeCfg = getRuntimePushConfig();
+    const vapid =
+      String(runtimeCfg?.vapidPublicKey || runtimePushRef.current?.vapidPublicKey || "").trim() ||
+      process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY ||
+      process.env.VITE_WEB_PUSH_PUBLIC_KEY ||
+      "";
     if (!vapid) return;
     try {
-      const fcmToken = await subscribeFcm(vapid);
+      const firebaseConfig = runtimeCfg?.firebaseConfig || runtimePushRef.current?.firebaseConfig || null;
+      const fcmToken = await subscribeFcm(vapid, firebaseConfig);
       if (fcmToken) {
         const fcmRes = await apiFetch("/api/notifications/subscriptions", {
           method: "POST",
@@ -1514,6 +1557,7 @@ export default function TextzyMobile() {
       const nextSession = { accessToken, csrfToken, tenantSlug };
       setSession(nextSession);
       setUser(loggedUser);
+      await loadAppBootstrap(nextSession).catch(() => null);
       const projList = await loadProjects(accessToken).catch(() => []);
       if (tenantSlug) {
         const selected = projList.find((p) => String(p.slug).toLowerCase() === String(tenantSlug).toLowerCase()) || {
@@ -1545,6 +1589,7 @@ export default function TextzyMobile() {
     const nextUser = { email: payload.email };
     setSession(nextSession);
     setUser(nextUser);
+    await loadAppBootstrap(nextSession).catch(() => null);
     await loadProjects(accessToken);
     setScreen("project");
     persistSession(nextSession, nextUser, null);
@@ -1611,6 +1656,7 @@ export default function TextzyMobile() {
     setScreen("app");
     setAId(null);
     setInput("");
+    await loadAppBootstrap(nextSession).catch(() => null);
     persistSession(nextSession, user, selectedProject);
     await loadConversations(nextSession);
     });
@@ -2081,6 +2127,12 @@ export default function TextzyMobile() {
     const timer = setInterval(tick, 3000);
     return () => clearInterval(timer);
   }, [screen, authCtx.token, authCtx.tenantSlug, view, activeId]);
+
+  useEffect(() => {
+    if (screen !== "app") return;
+    if (!authCtx.token || !authCtx.tenantSlug) return;
+    loadAppBootstrap(authCtx).catch(() => {});
+  }, [screen, authCtx.token, authCtx.tenantSlug]);
 
   useEffect(() => {
     if (screen !== "app") return;

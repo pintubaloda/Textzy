@@ -526,6 +526,14 @@ public class AuthController(
         var supportUrl = GetSetting(values, "supportUrl", string.Empty);
         var termsUrl = GetSetting(values, "termsUrl", string.Empty);
         var privacyUrl = GetSetting(values, "privacyUrl", string.Empty);
+        var webPushPublicKey = GetSetting(values, "webPushPublicKey", string.Empty);
+        var firebaseApiKey = GetSetting(values, "firebaseApiKey", string.Empty);
+        var firebaseAuthDomain = GetSetting(values, "firebaseAuthDomain", string.Empty);
+        var firebaseProjectId = GetSetting(values, "firebaseProjectId", string.Empty);
+        var firebaseStorageBucket = GetSetting(values, "firebaseStorageBucket", string.Empty);
+        var firebaseMessagingSenderId = GetSetting(values, "firebaseMessagingSenderId", string.Empty);
+        var firebaseAppId = GetSetting(values, "firebaseAppId", string.Empty);
+        var firebaseMeasurementId = GetSetting(values, "firebaseMeasurementId", string.Empty);
         var apiCatalog = ParseApiCatalog(values, DefaultAppApiCatalog);
         var allowedApiPrefixes = ParseAllowedPrefixes(values, apiCatalog);
         var enforceAllowList = ParseBool(GetSetting(values, "enforceApiAllowList", "false"));
@@ -545,6 +553,14 @@ public class AuthController(
                 supportUrl,
                 termsUrl,
                 privacyUrl,
+                webPushPublicKey,
+                firebaseApiKey,
+                firebaseAuthDomain,
+                firebaseProjectId,
+                firebaseStorageBucket,
+                firebaseMessagingSenderId,
+                firebaseAppId,
+                firebaseMeasurementId,
                 enforceApiAllowList = enforceAllowList,
                 allowedApiPrefixes,
                 apiCatalog,

@@ -86,6 +86,14 @@ const PlatformSettingsPage = () => {
     supportUrl: "",
     termsUrl: "",
     privacyUrl: "",
+    webPushPublicKey: "",
+    firebaseApiKey: "",
+    firebaseAuthDomain: "",
+    firebaseProjectId: "",
+    firebaseStorageBucket: "",
+    firebaseMessagingSenderId: "",
+    firebaseAppId: "",
+    firebaseMeasurementId: "",
     enforceApiAllowList: false,
     maxDevicesPerUser: "3",
     pairCodeTtlSeconds: "180",
@@ -264,6 +272,14 @@ const PlatformSettingsPage = () => {
             supportUrl: values.supportUrl || "",
             termsUrl: values.termsUrl || "",
             privacyUrl: values.privacyUrl || "",
+            webPushPublicKey: values.webPushPublicKey || "",
+            firebaseApiKey: values.firebaseApiKey || "",
+            firebaseAuthDomain: values.firebaseAuthDomain || "",
+            firebaseProjectId: values.firebaseProjectId || "",
+            firebaseStorageBucket: values.firebaseStorageBucket || "",
+            firebaseMessagingSenderId: values.firebaseMessagingSenderId || "",
+            firebaseAppId: values.firebaseAppId || "",
+            firebaseMeasurementId: values.firebaseMeasurementId || "",
             enforceApiAllowList: String(values.enforceApiAllowList || "false").toLowerCase() === "true",
             maxDevicesPerUser: values.maxDevicesPerUser || "3",
             pairCodeTtlSeconds: values.pairCodeTtlSeconds || "180",
@@ -843,6 +859,45 @@ const PlatformSettingsPage = () => {
               <Label>Privacy URL</Label>
               <Input placeholder="https://textzy.in/privacy" value={appConfig.privacyUrl} onChange={(e) => setAppConfig((p) => ({ ...p, privacyUrl: e.target.value }))} />
             </div>
+            <div className="md:col-span-2 border-t border-slate-200 pt-3">
+              <p className="text-sm font-medium text-slate-900">Firebase / Push Runtime</p>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Web Push Public Key (VAPID)</Label>
+              <Input
+                placeholder="BEl..."
+                value={appConfig.webPushPublicKey}
+                onChange={(e) => setAppConfig((p) => ({ ...p, webPushPublicKey: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Firebase API Key</Label>
+              <Input value={appConfig.firebaseApiKey} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseApiKey: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Firebase Auth Domain</Label>
+              <Input placeholder="your-app.firebaseapp.com" value={appConfig.firebaseAuthDomain} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseAuthDomain: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Firebase Project ID</Label>
+              <Input value={appConfig.firebaseProjectId} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseProjectId: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Firebase Storage Bucket</Label>
+              <Input placeholder="your-app.appspot.com" value={appConfig.firebaseStorageBucket} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseStorageBucket: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Firebase Messaging Sender ID</Label>
+              <Input value={appConfig.firebaseMessagingSenderId} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseMessagingSenderId: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Firebase App ID</Label>
+              <Input value={appConfig.firebaseAppId} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseAppId: e.target.value }))} />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Firebase Measurement ID (optional)</Label>
+              <Input value={appConfig.firebaseMeasurementId} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseMeasurementId: e.target.value }))} />
+            </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Webhook Allowed Hosts (newline or comma separated)</Label>
               <textarea
@@ -1090,6 +1145,14 @@ const PlatformSettingsPage = () => {
                       supportUrl: appConfig.supportUrl || "",
                       termsUrl: appConfig.termsUrl || "",
                       privacyUrl: appConfig.privacyUrl || "",
+                      webPushPublicKey: appConfig.webPushPublicKey || "",
+                      firebaseApiKey: appConfig.firebaseApiKey || "",
+                      firebaseAuthDomain: appConfig.firebaseAuthDomain || "",
+                      firebaseProjectId: appConfig.firebaseProjectId || "",
+                      firebaseStorageBucket: appConfig.firebaseStorageBucket || "",
+                      firebaseMessagingSenderId: appConfig.firebaseMessagingSenderId || "",
+                      firebaseAppId: appConfig.firebaseAppId || "",
+                      firebaseMeasurementId: appConfig.firebaseMeasurementId || "",
                       enforceApiAllowList: appConfig.enforceApiAllowList ? "true" : "false",
                       maxDevicesPerUser: appConfig.maxDevicesPerUser || "3",
                       pairCodeTtlSeconds: appConfig.pairCodeTtlSeconds || "180",

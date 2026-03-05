@@ -39,10 +39,10 @@ import {
   X,
   CornerUpLeft,
 } from "lucide-react";
-import { apiGet, apiGetBlob, apiPost, apiPostForm, buildIdempotencyKey, getNotificationSettings, wabaGetOnboardingStatus } from "@/lib/api";
+import { apiGet, apiGetBlob, apiPost, apiPostForm, buildIdempotencyKey, getAppBootstrap, getNotificationSettings, wabaGetOnboardingStatus } from "@/lib/api";
 import { getSession } from "@/lib/api";
 import { playNotificationTone, isNotificationAudioUnlocked, unlockNotificationAudio, wasNotificationEverEnabled, getNotificationVolume, setNotificationVolume, setNotificationSoundEnabled } from "@/lib/notificationAudio";
-import { requestDesktopNotificationPermission, showDesktopNotification, subscribeFcm, subscribePush } from "@/lib/browserNotifications";
+import { requestDesktopNotificationPermission, setRuntimePushConfig, showDesktopNotification, subscribeFcm, subscribePush } from "@/lib/browserNotifications";
 import { toast } from "sonner";
 
 const NOTIFICATION_STYLE_KEY = "textzy.inbox.notificationStyle";
@@ -269,6 +269,10 @@ const InboxPage = () => {
   const lastSoundAtRef = useRef(0);
   const faviconBlinkTimerRef = useRef(null);
   const faviconBlinkStateRef = useRef(false);
+  const runtimePushRef = useRef({
+    vapidPublicKey: "",
+    firebaseConfig: null,
+  });
 
   const mapConversation = (x) => {
     const id = x.id ?? x.Id ?? "";
@@ -526,38 +530,88 @@ const InboxPage = () => {
     }
   }, [dndUntilUtc]);
 
-  useEffect(() => {
+  const loadRuntimePushConfig = useCallback(async () => {
+    try {
+      const bootstrap = await getAppBootstrap();
+      const app = bootstrap?.app || {};
+      const next = {
+        vapidPublicKey: String(
+          app.webPushPublicKey ||
+          app.vapidPublicKey ||
+          process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY ||
+          process.env.VITE_WEB_PUSH_PUBLIC_KEY ||
+          ""
+        ).trim(),
+        firebaseConfig: {
+          apiKey: String(app.firebaseApiKey || "").trim(),
+          authDomain: String(app.firebaseAuthDomain || "").trim(),
+          projectId: String(app.firebaseProjectId || "").trim(),
+          storageBucket: String(app.firebaseStorageBucket || "").trim(),
+          messagingSenderId: String(app.firebaseMessagingSenderId || "").trim(),
+          appId: String(app.firebaseAppId || "").trim(),
+          measurementId: String(app.firebaseMeasurementId || "").trim(),
+        },
+      };
+      runtimePushRef.current = next;
+      setRuntimePushConfig(next);
+      return next;
+    } catch {
+      const fallback = {
+        vapidPublicKey: String(
+          process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY ||
+          process.env.VITE_WEB_PUSH_PUBLIC_KEY ||
+          runtimePushRef.current?.vapidPublicKey ||
+          ""
+        ).trim(),
+        firebaseConfig: runtimePushRef.current?.firebaseConfig || null,
+      };
+      runtimePushRef.current = fallback;
+      setRuntimePushConfig(fallback);
+      return fallback;
+    }
+  }, []);
+
+  const ensureBrowserPushSubscription = useCallback(async (override = null) => {
     const perm = typeof Notification !== "undefined" ? Notification.permission : "denied";
     if (perm !== "granted") return;
-    const vapid = process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY || process.env.VITE_WEB_PUSH_PUBLIC_KEY || "";
+    const runtimeCfg = override || runtimePushRef.current || {};
+    const vapid = String(
+      runtimeCfg.vapidPublicKey ||
+      process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY ||
+      process.env.VITE_WEB_PUSH_PUBLIC_KEY ||
+      ""
+    ).trim();
     if (!vapid) return;
-    subscribeFcm(vapid)
-      .then(async (fcmToken) => {
-        if (fcmToken) {
-          await apiPost("/api/notifications/subscriptions", {
-            provider: "fcm",
-            endpoint: fcmToken,
-            p256dh: "",
-            auth: "",
-            userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
-          }).catch(() => {});
-          return;
-        }
-        return subscribePush(vapid)
-          .then((sub) => {
-            if (!sub?.endpoint) return;
-            const keys = sub.keys || {};
-            return apiPost("/api/notifications/subscriptions", {
-              provider: "webpush",
-              endpoint: sub.endpoint,
-              p256dh: keys.p256dh || "",
-              auth: keys.auth || "",
-              userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
-            });
-          });
-      })
-      .catch(() => {});
+
+    const fcmToken = await subscribeFcm(vapid, runtimeCfg.firebaseConfig || null);
+    if (fcmToken) {
+      await apiPost("/api/notifications/subscriptions", {
+        provider: "fcm",
+        endpoint: fcmToken,
+        p256dh: "",
+        auth: "",
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
+      }).catch(() => {});
+      return;
+    }
+
+    const sub = await subscribePush(vapid).catch(() => null);
+    if (!sub?.endpoint) return;
+    const keys = sub.keys || {};
+    await apiPost("/api/notifications/subscriptions", {
+      provider: "webpush",
+      endpoint: sub.endpoint,
+      p256dh: keys.p256dh || "",
+      auth: keys.auth || "",
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
+    }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    loadRuntimePushConfig()
+      .then((cfg) => ensureBrowserPushSubscription(cfg))
+      .catch(() => {});
+  }, [loadRuntimePushConfig, ensureBrowserPushSubscription]);
 
   useEffect(() => {
     if (!wasNotificationEverEnabled() || audioUnlocked) return;
@@ -842,31 +896,8 @@ const InboxPage = () => {
     try {
       const perm = await requestDesktopNotificationPermission();
       if (perm === "granted") {
-        const vapid = process.env.REACT_APP_WEB_PUSH_PUBLIC_KEY || process.env.VITE_WEB_PUSH_PUBLIC_KEY || "";
-        if (vapid) {
-          const fcmToken = await subscribeFcm(vapid);
-          if (fcmToken) {
-            await apiPost("/api/notifications/subscriptions", {
-              provider: "fcm",
-              endpoint: fcmToken,
-              p256dh: "",
-              auth: "",
-              userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
-            }).catch(() => {});
-          } else {
-            const sub = await subscribePush(vapid);
-            if (sub?.endpoint) {
-              const keys = sub.keys || {};
-              await apiPost("/api/notifications/subscriptions", {
-                provider: "webpush",
-                endpoint: sub.endpoint,
-                p256dh: keys.p256dh || "",
-                auth: keys.auth || "",
-                userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
-              }).catch(() => {});
-            }
-          }
-        }
+        const cfg = await loadRuntimePushConfig();
+        await ensureBrowserPushSubscription(cfg);
       }
       const ok = await unlockNotificationAudio();
       setAudioUnlocked(ok || isNotificationAudioUnlocked());
