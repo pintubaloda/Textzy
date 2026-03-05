@@ -129,7 +129,15 @@ export default function TeamPage() {
     if (!editMember) return;
     setEditBusy(true);
     try {
-      await apiPatch(`/api/team/members/${editMember.id}/role`, { role: editRole });
+      if (editMember.inviteOnly) {
+        await apiPost("/api/team/invite", {
+          name: editMember.name || "",
+          email: editMember.email || "",
+          role: editRole
+        });
+      } else {
+        await apiPatch(`/api/team/members/${editMember.id}/role`, { role: editRole });
+      }
       toast.success("Role updated.");
       setEditOpen(false);
       await load();
@@ -143,7 +151,11 @@ export default function TeamPage() {
   const removeMember = async (member) => {
     if (!window.confirm(`Remove ${member.name || member.email} from this project?`)) return;
     try {
-      await apiDelete(`/api/team/members/${member.id}`);
+      if (member.inviteOnly) {
+        await apiPost("/api/team/invitations/cancel", { email: member.email });
+      } else {
+        await apiDelete(`/api/team/members/${member.id}`);
+      }
       toast.success("Member removed.");
       await load();
     } catch (e) {
@@ -298,12 +310,16 @@ export default function TeamPage() {
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button></DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              {!member.inviteOnly && <DropdownMenuItem onClick={() => openEditRole(member)}><Edit className="w-4 h-4 mr-2" />Edit Role</DropdownMenuItem>}
-                              {!member.inviteOnly && <DropdownMenuItem onClick={() => openPermissions(member)}><Shield className="w-4 h-4 mr-2" />Role & Permissions</DropdownMenuItem>}
-                              {!member.inviteOnly && <DropdownMenuItem onClick={() => openActivity(member)}><MessageSquare className="w-4 h-4 mr-2" />View Activity</DropdownMenuItem>}
+                              <DropdownMenuItem onClick={() => openEditRole(member)}><Edit className="w-4 h-4 mr-2" />Edit Role</DropdownMenuItem>
+                              {member.inviteOnly
+                                ? <DropdownMenuItem disabled><Shield className="w-4 h-4 mr-2" />Role & Permissions (after accept)</DropdownMenuItem>
+                                : <DropdownMenuItem onClick={() => openPermissions(member)}><Shield className="w-4 h-4 mr-2" />Role & Permissions</DropdownMenuItem>}
+                              {member.inviteOnly
+                                ? <DropdownMenuItem disabled><MessageSquare className="w-4 h-4 mr-2" />View Activity (after accept)</DropdownMenuItem>
+                                : <DropdownMenuItem onClick={() => openActivity(member)}><MessageSquare className="w-4 h-4 mr-2" />View Activity</DropdownMenuItem>}
                               {member.invitationStatus === "pending" && <DropdownMenuItem onClick={() => resendInvite(member)}><UserPlus className="w-4 h-4 mr-2" />Resend Invitation</DropdownMenuItem>}
-                              {!member.inviteOnly && <DropdownMenuSeparator />}
-                              {!member.inviteOnly && <DropdownMenuItem className="text-red-600" onClick={() => removeMember(member)}><Trash2 className="w-4 h-4 mr-2" />Remove</DropdownMenuItem>}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-red-600" onClick={() => removeMember(member)}>{member.inviteOnly ? <UserPlus className="w-4 h-4 mr-2" /> : <Trash2 className="w-4 h-4 mr-2" />}{member.inviteOnly ? "Cancel Invite" : "Remove"}</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         )}

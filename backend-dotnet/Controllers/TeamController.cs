@@ -260,6 +260,38 @@ public class TeamController(
         return Ok(new { email = invite.Email, invitationStatus = invite.Status, sentAtUtc = invite.SentAtUtc, sendCount = invite.SendCount, inviteUrl });
     }
 
+    [HttpPost("invitations/cancel")]
+    public async Task<IActionResult> CancelInvitation([FromBody] CancelInvitationRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
+        if (!CanManageTeam(auth.Role)) return Forbid();
+
+        string email;
+        try
+        {
+            email = InputGuardService.ValidateEmailOrEmpty(request.Email, "Email").ToLowerInvariant();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        if (string.IsNullOrWhiteSpace(email)) return BadRequest("Email is required.");
+
+        var invites = await db.TeamInvitations
+            .Where(i => i.TenantId == tenancy.TenantId && i.Email.ToLower() == email && i.Status == "pending")
+            .ToListAsync(ct);
+        if (invites.Count == 0) return NotFound("Pending invitation not found.");
+
+        foreach (var inv in invites)
+        {
+            inv.Status = "cancelled";
+            inv.ExpiresAtUtc = DateTime.UtcNow;
+        }
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("team.invite.cancel", $"tenant={tenancy.TenantId}; email={email}; count={invites.Count}", ct);
+        return Ok(new { email, cancelled = true });
+    }
+
     [HttpPatch("members/{userId:guid}/role")]
     public async Task<IActionResult> UpdateRole(Guid userId, [FromBody] UpdateMemberRoleRequest request, CancellationToken ct)
     {
@@ -496,6 +528,11 @@ public class TeamController(
     }
 
     public sealed class ResendInvitationRequest
+    {
+        public string Email { get; set; } = string.Empty;
+    }
+
+    public sealed class CancelInvitationRequest
     {
         public string Email { get; set; } = string.Empty;
     }
