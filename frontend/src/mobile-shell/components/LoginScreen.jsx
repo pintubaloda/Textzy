@@ -433,7 +433,7 @@ const LoginScreen = ({ onLogin }) => {
                 </button>
               </div>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns: otpReady ? "1fr 92px 92px" : "1fr 160px", gap:8, marginBottom:10 }}>
+            <div style={{ display:"grid", gridTemplateColumns: otpReady ? "1fr 92px 92px" : "1fr", gap:8, marginBottom:10 }}>
               <button onClick={requestOtp} disabled={otpBusy} style={{ padding:"10px 12px",borderRadius:10,border:`1px solid ${C.divider}`,background:"#fff",fontWeight:700,color:C.textMain,cursor:otpBusy?"not-allowed":"pointer" }}>
                 {otpBusy ? "Sending..." : "Verify Email"}
               </button>
@@ -449,11 +449,7 @@ const LoginScreen = ({ onLogin }) => {
                     {verifyBusy ? "..." : "Verify"}
                   </button>
                 </>
-              ) : (
-                <button onClick={refreshOtpStatus} disabled={!otpSent || otpStatusBusy} style={{ padding:"10px 12px",borderRadius:10,border:`1px solid ${C.divider}`,background:"#fff",fontWeight:700,color:C.textMain,cursor:(!otpSent || otpStatusBusy)?"not-allowed":"pointer",opacity:(!otpSent || otpStatusBusy)?0.75:1 }}>
-                  {otpStatusBusy ? "Checking..." : "I clicked Verify"}
-                </button>
-              )}
+              ) : null}
             </div>
             {otpSent && (
               <p style={{ fontSize:12, color: otpVerified ? C.online : C.textSub, margin:"0 0 8px" }}>
@@ -461,7 +457,7 @@ const LoginScreen = ({ onLogin }) => {
                   ? "Email verified successfully."
                   : otpReady
                     ? "Verification link confirmed. Enter OTP from email tab."
-                    : "Mail sent. Click Verify Now in your email, then tap I clicked Verify."}
+                    : "Waiting for user action. Check your email and click Verify Now."}
               </p>
             )}
             {err&&<p style={{ color:C.danger,fontSize:13,marginBottom:10,textAlign:"center" }}>{err}</p>}
