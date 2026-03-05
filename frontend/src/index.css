@@ -35,6 +35,10 @@ body {
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background:
+    radial-gradient(1200px 500px at 10% -20%, rgba(249, 115, 22, 0.12), transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, rgba(14, 116, 144, 0.10), transparent 45%),
+    #f8fafc;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -109,6 +113,21 @@ code {
   body {
     @apply bg-background text-foreground;
   }
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.App {
+  min-height: 100vh;
+}
+
+[data-testid="dashboard-layout"] {
+  background:
+    radial-gradient(900px 360px at 5% -15%, rgba(249, 115, 22, 0.10), transparent 55%),
+    radial-gradient(900px 360px at 95% -20%, rgba(56, 189, 248, 0.08), transparent 55%),
+    #f8fafc;
 }
 
 /* Custom Scrollbar */

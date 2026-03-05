@@ -1,9 +1,10 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import "@/index.css";
 import App from "@/App";
-import TextzyMobile from "@/textzy-mobile";
 import { ensureServiceWorkerRegistered } from "@/lib/browserNotifications";
+
+const TextzyMobile = lazy(() => import("@/textzy-mobile"));
 
 const params = new URLSearchParams(window.location.search);
 const desktopShell = params.get("desktopShell") === "1";
@@ -18,7 +19,13 @@ const mobileShell =
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
   <React.StrictMode>
-    {mobileShell ? <TextzyMobile /> : desktopShell ? <TextzyMobile /> : <App />}
+    {mobileShell || desktopShell ? (
+      <Suspense fallback={<div style={{ padding: 16, fontFamily: "system-ui, sans-serif" }}>Loading…</div>}>
+        <TextzyMobile />
+      </Suspense>
+    ) : (
+      <App />
+    )}
   </React.StrictMode>,
 );
 

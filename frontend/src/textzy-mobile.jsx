@@ -1,501 +1,30 @@
-﻿import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import * as signalR from "@microsoft/signalr";
 import { subscribeFcm, subscribePush, setRuntimePushConfig, getRuntimePushConfig } from "./lib/browserNotifications";
 import { getPublicAppUpdateManifest } from "./lib/api";
+import {
+  C,
+  API_BASE,
+  SESSION_KEY,
+  idempotencyKey,
+  resolveCsrf,
+  parsePairingToken,
+  resolveDeviceContext,
+  getDeviceLocation,
+  apiFetch,
+} from "./mobile-shell/core";
+import { CONTACTS, PROJECTS, REPLIES, Logo, I, QA_LIBRARY, EMOJI_SET } from "./mobile-shell/uiAssets";
+import { mapConversation, mapMessage, extractTemplateParamIndexes } from "./mobile-shell/conversationMapping";
+import ModalShell from "./mobile-shell/components/ModalShell";
+import { NoticeDialog, UpdateDialog } from "./mobile-shell/components/Dialogs";
+import ChatComposer from "./mobile-shell/components/ChatComposer";
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   TEXTZY MOBILE â€” NO BLACK PALETTE
-   Orange #F97316  Â·  White #FFFFFF
+/* ═══════════════════════════════════════════════
+   TEXTZY MOBILE — NO BLACK PALETTE
+   Orange #F97316  ·  White #FFFFFF
    All dark tones replaced with deep teal/slate
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
-const C = {
-  /* brand */
-  orange:       "#F97316",
-  orangeDark:   "#EA6C0A",
-  orangeLight:  "#FB923C",
-  orangePale:   "#FFF7ED",
-  orangeLight2: "#FFEDD5",
+═══════════════════════════════════════════════ */
 
-  /* replacing all blacks with warm deep teal */
-  headerBg:     "#1E3A5F",   /* deep navy-blue (NOT black) */
-  headerText:   "#FFFFFF",
-  headerSub:    "rgba(255,255,255,0.65)",
-
-  /* surfaces */
-  bg:           "#F8FAFC",
-  sidebarBg:    "#FFFFFF",
-  chatBg:       "#F1F5F9",
-  bubbleSent:   "#FFEDD5",
-  bubbleRecv:   "#FFFFFF",
-  inputBg:      "#FFFFFF",
-  panelBg:      "#F8FAFC",
-
-  /* text â€” warm slates, never black */
-  textMain:     "#1E3A5F",
-  textSub:      "#64748B",
-  textMuted:    "#94A3B8",
-  textLight:    "#FFFFFF",
-
-  /* ui */
-  divider:      "#E2E8F0",
-  hover:        "#F8FAFC",
-  selected:     "#FFF7ED",
-  unread:       "#F97316",
-  online:       "#22C55E",
-  iconColor:    "#64748B",
-  danger:       "#EF4444",
-  scanLine:     "#F97316",
-};
-
-const API_BASE =
-  (typeof window !== "undefined" && window.__APP_CONFIG__?.API_BASE) ||
-  process.env.REACT_APP_API_BASE ||
-  process.env.VITE_API_BASE ||
-  "https://textzy-backend-production.up.railway.app";
-
-const SESSION_KEY = "textzy.mobile.session";
-const DEVICE_KEY = "textzy.mobile.device";
-
-const idempotencyKey = () =>
-  `mobile-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-
-const readCookie = (name) => {
-  if (typeof document === "undefined") return "";
-  const key = `${name}=`;
-  const parts = document.cookie.split(";").map((x) => x.trim());
-  const row = parts.find((x) => x.startsWith(key));
-  return row ? decodeURIComponent(row.slice(key.length)) : "";
-};
-
-const resolveCsrf = (token) => token || readCookie("textzy_csrf") || "";
-
-const parsePairingToken = (raw) => {
-  const input = String(raw || "").trim();
-  if (!input) return "";
-
-  const fromObject = (obj) =>
-    obj?.pairingToken ||
-    obj?.pairing_token ||
-    obj?.pairToken ||
-    obj?.token ||
-    obj?.Token ||
-    obj?.payload?.pairingToken ||
-    obj?.payload?.pairing_token ||
-    obj?.payload?.token ||
-    obj?.payload?.Token ||
-    "";
-
-  const tryJson = (text) => {
-    try {
-      const obj = JSON.parse(text);
-      return fromObject(obj) || "";
-    } catch {
-      return "";
-    }
-  };
-
-  // Plain JSON
-  let token = tryJson(input);
-  if (token) return String(token).trim();
-
-  // URL-encoded JSON (common with QR image providers)
-  const decodedOnce = (() => {
-    try {
-      return decodeURIComponent(input);
-    } catch {
-      return input;
-    }
-  })();
-  token = tryJson(decodedOnce);
-  if (token) return String(token).trim();
-
-  // Query string token
-  const tokenFromUrl =
-    input.match(/[?&](pairingToken|pairing_token|pairToken|token)=([^&]+)/i) ||
-    decodedOnce.match(/[?&](pairingToken|pairing_token|pairToken|token)=([^&]+)/i);
-  if (tokenFromUrl?.[2]) return decodeURIComponent(tokenFromUrl[2]).trim();
-
-  // Regex extraction from JSON-like text
-  const tokenRegex =
-    /"(pairingToken|pairing_token|pairToken|token|Token)"\s*:\s*"([^"]+)"/i;
-  const directMatch = input.match(tokenRegex) || decodedOnce.match(tokenRegex);
-  if (directMatch?.[2]) return directMatch[2].trim();
-
-  return "";
-};
-
-const parseJsonSafe = (raw, fallback = {}) => {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
-};
-
-const getNativeDeviceInfo = () => {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.TextzyNative?.getDeviceInfo?.();
-    if (!raw) return {};
-    const parsed = parseJsonSafe(String(raw), {});
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-};
-
-const resolveDeviceContext = (restored = {}) => {
-  const stored =
-    typeof localStorage !== "undefined"
-      ? parseJsonSafe(localStorage.getItem(DEVICE_KEY) || "{}", {})
-      : {};
-  const native = getNativeDeviceInfo();
-  const fallbackInstallId =
-    restored.installId ||
-    stored.installId ||
-    `web-mobile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const ctx = {
-    installId: native.installId || fallbackInstallId,
-    deviceName: native.deviceName || stored.deviceName || "Textzy Mobile",
-    devicePlatform: native.devicePlatform || stored.devicePlatform || "android",
-    deviceModel: native.deviceModel || stored.deviceModel || "webview",
-    osVersion: native.osVersion || stored.osVersion || "android",
-    appVersion: native.appVersion || stored.appVersion || "1.0.0",
-  };
-  if (typeof window !== "undefined") window.__TEXTZY_MOBILE_DEVICE__ = ctx;
-  if (typeof localStorage !== "undefined") {
-    localStorage.setItem(DEVICE_KEY, JSON.stringify(ctx));
-  }
-  return ctx;
-};
-
-const getDeviceLocation = async () => {
-  if (typeof navigator === "undefined" || !navigator.geolocation?.getCurrentPosition) return null;
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    const timer = setTimeout(() => finish(null), 5000);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        clearTimeout(timer);
-        finish({
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracyMeters: pos.coords.accuracy,
-          capturedAtUtc: new Date().toISOString(),
-        });
-      },
-      () => {
-        clearTimeout(timer);
-        finish(null);
-      },
-      {
-        enableHighAccuracy: false,
-        timeout: 4500,
-        maximumAge: 5 * 60 * 1000,
-      }
-    );
-  });
-};
-
-async function apiFetch(path, { method = "GET", token = "", tenantSlug = "", csrfToken = "", body, extraHeaders = {} } = {}) {
-  const headers = { ...extraHeaders };
-  if (typeof window !== "undefined" && window.__TEXTZY_MOBILE_DEVICE__) {
-    const device = window.__TEXTZY_MOBILE_DEVICE__;
-    if (device.installId) headers["X-Install-Id"] = String(device.installId);
-    if (device.devicePlatform) headers["X-Device-Platform"] = String(device.devicePlatform);
-    if (device.deviceModel) headers["X-Device-Model"] = String(device.deviceModel);
-    if (device.appVersion) headers["X-App-Version"] = String(device.appVersion);
-  }
-  if (token) headers.Authorization = `Bearer ${token}`;
-  if (tenantSlug && !path.startsWith("/api/auth/") && !path.startsWith("/api/public/")) headers["X-Tenant-Slug"] = tenantSlug;
-  if (path === "/api/messages/send" && !headers["Idempotency-Key"]) {
-    headers["Idempotency-Key"] = body?.idempotencyKey || idempotencyKey();
-  }
-  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
-  if (body != null && !isFormData) headers["Content-Type"] = "application/json";
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase())) {
-    const csrf = resolveCsrf(csrfToken);
-    if (csrf) headers["X-CSRF-Token"] = csrf;
-  }
-
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body == null ? undefined : (isFormData ? body : JSON.stringify(body)),
-    credentials: "include",
-    cache: "no-store",
-  });
-
-  const nextTokenHeader = res.headers.get("x-access-token") || "";
-  const nextCsrfHeader = res.headers.get("x-csrf-token") || "";
-  return { res, nextTokenHeader, nextCsrfHeader };
-}
-
-const mapConversation = (x) => {
-  const id = x.id ?? x.Id ?? "";
-  const customerName = x.customerName ?? x.CustomerName ?? "";
-  const customerPhone = x.customerPhone ?? x.CustomerPhone ?? "";
-  const status = x.status ?? x.Status ?? "";
-  const lastMessageAtUtc = x.lastMessageAtUtc ?? x.LastMessageAtUtc ?? null;
-  const createdAtUtc = x.createdAtUtc ?? x.CreatedAtUtc ?? null;
-  const labelsCsv = x.labelsCsv ?? x.LabelsCsv ?? "";
-  const assignedUserId = x.assignedUserId ?? x.AssignedUserId ?? "";
-  const assignedUserName = x.assignedUserName ?? x.AssignedUserName ?? "";
-  return {
-    id,
-    customerPhone,
-    name: customerName || customerPhone || "Conversation",
-    avatar: "",
-    color: "#F97316",
-    online: false,
-    unread: Number(x.unreadCount ?? x.UnreadCount ?? 0),
-    time: lastMessageAtUtc
-      ? new Date(lastMessageAtUtc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : (createdAtUtc ? new Date(createdAtUtc).toLocaleDateString() : ""),
-    lastMsg: status || "Conversation",
-    typing: false,
-    messages: [],
-    labels: String(labelsCsv).split(",").map((z) => z.trim()).filter(Boolean),
-    assignedUserId,
-    assignedUserName,
-  };
-};
-
-const mapMessage = (x) => {
-  const rawStatus = String(x.status ?? x.Status ?? "").toLowerCase();
-  const sender = rawStatus === "received" ? "customer" : "agent";
-  const messageType = String(x.messageType ?? x.MessageType ?? "session");
-  let text = String(x.body ?? x.Body ?? "");
-  let media = null;
-  if (messageType.startsWith("media:")) {
-    try {
-      media = JSON.parse(String(x.body ?? x.Body ?? "{}"));
-    } catch {
-      media = null;
-    }
-    const kind = messageType.split(":")[1] || "media";
-    const caption = media?.caption ? ` - ${media.caption}` : "";
-    text = `${kind.toUpperCase()}${caption}`;
-  }
-  if (messageType === "template") {
-    const name = String(x.body ?? x.Body ?? "").split("|")[0] || "template";
-    text = `Template: ${name}`;
-  }
-  const createdAt = x.createdAtUtc ?? x.CreatedAtUtc;
-  const interactiveButtons = parseInteractiveButtonsFromType(messageType);
-  const structured = parseInboundStructured(text, messageType);
-  return {
-    id: x.id ?? x.Id ?? `${Date.now()}-${Math.random()}`,
-    sent: sender === "agent",
-    direction: sender,
-    text,
-    time: createdAt
-      ? new Date(createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : "now",
-    createdAtMs: createdAt ? new Date(createdAt).getTime() : null,
-    status: rawStatus || "sent",
-    messageType,
-    interactiveButtons,
-    media,
-    specialKind: structured.kind,
-    specialData: structured.data,
-  };
-};
-
-/* â”€â”€ MOCK DATA â”€â”€ */
-const CONTACTS = [
-  { id:1, name:"Alice Johnson",    avatar:"AJ", color:"#7C3AED",
-    online:true, unread:2, time:"10:42 AM", lastMsg:"Sure, I'll send the report by EOD.", typing:false,
-    messages:[
-      {id:1,text:"Hey! Did you review the Q3 report?",sent:false,time:"10:30 AM",status:"read"},
-      {id:2,text:"Yes looks great! Just a few numbers to double-check.",sent:true,time:"10:35 AM",status:"read"},
-      {id:3,text:"Which ones? I can fix right now.",sent:false,time:"10:38 AM",status:"read"},
-      {id:4,text:"Pages 4 and 7 - the revenue projections look off.",sent:true,time:"10:40 AM",status:"read"},
-      {id:5,text:"Sure, I'll send the report by EOD.",sent:false,time:"10:42 AM",status:"read"},
-    ]},
-  { id:2, name:"Bob Martinez",     avatar:"BM", color:"#DC2626",
-    online:false, unread:0, time:"9:15 AM", lastMsg:"Meeting rescheduled to 3 PM", typing:false,
-    messages:[
-      {id:1,text:"Are we still on for the 2 PM sync?",sent:false,time:"8:50 AM",status:"read"},
-      {id:2,text:"Let me check with the team.",sent:true,time:"8:55 AM",status:"read"},
-      {id:3,text:"Meeting rescheduled to 3 PM",sent:false,time:"9:15 AM",status:"read"},
-    ]},
-  { id:3, name:"Customer Support", avatar:"CS", color:"#0891B2",
-    online:true, unread:1, time:"Yesterday", lastMsg:"Ticket #4821 has been resolved.", typing:true,
-    messages:[
-      {id:1,text:"Hello, I need help with my subscription.",sent:true,time:"Yesterday",status:"read"},
-      {id:2,text:"Hi! Happy to help. Can you share your account email?",sent:false,time:"Yesterday",status:"read"},
-      {id:3,text:"It's user@example.com",sent:true,time:"Yesterday",status:"read"},
-      {id:4,text:"Ticket #4821 has been resolved.",sent:false,time:"Yesterday",status:"read"},
-    ]},
-  { id:4, name:"Dev Team",      avatar:"DT", color:"#059669",
-    online:true, unread:0, time:"Yesterday", lastMsg:"Deployment to prod done.", typing:false,
-    messages:[
-      {id:1,text:"Starting prod deployment...",sent:false,time:"Yesterday",status:"read"},
-      {id:2,text:"Pipeline passed all checks.",sent:false,time:"Yesterday",status:"read"},
-      {id:3,text:"Deployment to prod done.",sent:false,time:"Yesterday",status:"read"},
-    ]},
-  { id:5, name:"Sarah Patel",      avatar:"SP", color:"#9333EA",
-    online:false, unread:0, time:"Mon", lastMsg:"Can you review my PR?", typing:false,
-    messages:[
-      {id:1,text:"Just pushed my feature branch.",sent:false,time:"Mon",status:"read"},
-      {id:2,text:"Looks good from the summary!",sent:true,time:"Mon",status:"read"},
-      {id:3,text:"Can you review my PR when free?",sent:false,time:"Mon",status:"read"},
-    ]},
-  { id:6, name:"Marketing Hub",    avatar:"MH", color:"#D97706",
-    online:false, unread:3, time:"Sun", lastMsg:"New campaign brief ready.", typing:false,
-    messages:[
-      {id:1,text:"Q4 campaign planning started!",sent:false,time:"Sun",status:"read"},
-      {id:2,text:"New campaign brief ready.",sent:false,time:"Sun",status:"read"},
-    ]},
-];
-
-const PROJECTS = [
-  {slug:"moneyart",  name:"MoneyArt",  icon:"MA", role:"Agent"},
-  {slug:"techcorp",  name:"TechCorp",  icon:"TC", role:"Admin"},
-  {slug:"retailhub", name:"RetailHub", icon:"RH", role:"Agent"},
-];
-
-const REPLIES = [
-  "Got it!", "Sure thing!", "I'll check and get back to you.",
-  "Sounds good!", "On it.", "Thanks!", "Will do.", "Let me look into this.", "Perfect!",
-];
-
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   TEXTZY LOGO
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
-const Logo = ({ size=32 }) => (
-  <svg width={size} height={size} viewBox="0 0 40 40" fill="none">
-    <rect width="40" height="40" rx="10" fill="#F97316"/>
-    <path d="M8 12C8 10.343 9.343 9 11 9H29C30.657 9 32 10.343 32 12V22C32 23.657 30.657 25 29 25H22L16 31V25H11C9.343 25 8 23.657 8 22V12Z" fill="white"/>
-  </svg>
-);
-
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   ICONS
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
-const I = {
-  Send:    ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>,
-  Key:     ()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="7.5" cy="15.5" r="3.5"/><path d="M11 13l9-9"/><path d="M16 4l4 4"/><path d="M14 6l4 4"/></svg>,
-  Mic:     ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>,
-  Attach:  ()=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>,
-  Emoji:   ()=><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>,
-  Back:    ()=><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>,
-  More:    ()=><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>,
-  Phone:   ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.8 19.79 19.79 0 01.22 2.18 2 2 0 012.18 0h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L6.91 7.91a16 16 0 006.07 6.07l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg>,
-  Video:   ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>,
-  Search:  ()=><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
-  Eye:     ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>,
-  EyeOff:  ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0112 19c-7 0-11-7-11-7a21.77 21.77 0 015.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0112 5c7 0 11 7 11 7a21.8 21.8 0 01-3.22 4.38"/><line x1="1" y1="1" x2="23" y2="23"/></svg>,
-  ArrowRight: ()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
-  Shield:  ()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l8 4v6c0 5-3.4 9.7-8 10-4.6-.3-8-5-8-10V6z"/></svg>,
-  Close:   ()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
-  Logout:  ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
-  Camera:  ()=><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>,
-  Check:   ()=><svg width="13" height="10" viewBox="0 0 13 10" fill="none"><path d="M1 5L4.5 8.5L12 1" stroke={C.textMuted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  DblChk:  ()=><svg width="18" height="11" viewBox="0 0 18 11" fill="none"><path d="M1 5.5L4.5 9L11 1.5" stroke={C.orange} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M7 5.5L10.5 9L17 1.5" stroke={C.orange} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  Star:    ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
-  Device:  ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>,
-  Bell:    ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>,
-  Cog:     ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33h.01a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51h.01a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v.01a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>,
-  Tag:     ()=><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41L11 22l-9-9V2h11z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>,
-  Plus:    ()=><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
-};
-
-const QA_LIBRARY = [
-  "QA: Thank you for contacting Textzy. How can I assist you today?",
-  "QA: We are open 7 AM to 11 PM, 24x7 support available.",
-  "QA: Please share your order ID so I can check details quickly.",
-  "QA: I am connecting you with our support specialist now.",
-];
-
-const EMOJI_SET = [
-  0x1F600, 0x1F601, 0x1F602, 0x1F923, 0x1F60A, 0x1F60D, 0x1F618, 0x1F60E,
-  0x1F91D, 0x1F64F, 0x1F44D, 0x1F44B, 0x1F4AC, 0x1F525, 0x2705, 0x1F389,
-].map((cp) => String.fromCodePoint(cp));
-
-const parseInteractiveButtonsFromType = (messageType) => {
-  const raw = String(messageType || "");
-  if (!raw.startsWith("interactive:")) return [];
-  const parts = raw.split(":");
-  if (parts.length < 3) return [];
-  const encoded = parts.slice(2).join(":");
-  return encoded
-    .split("~")
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .slice(0, 3);
-};
-
-const parseInboundStructured = (text, messageType) => {
-  const raw = String(text || "").trim();
-  const type = String(messageType || "").toLowerCase();
-  if (!raw) return { kind: "", data: null };
-
-  if (raw.startsWith("Location:")) {
-    const m = raw.match(/^Location:\s*(.*?)\s*\(([-\d.]+),([-\d.]+)\)\s*$/);
-    if (m) {
-      return {
-        kind: "location",
-        data: {
-          label: m[1]?.trim() || "Shared location",
-          lat: m[2],
-          lng: m[3],
-        },
-      };
-    }
-    return { kind: "location", data: { label: raw.replace(/^Location:\s*/i, "") } };
-  }
-
-  if (raw.startsWith("Order:")) {
-    const catalog = (raw.match(/catalog=([^;]+)/i)?.[1] || "").trim();
-    const items = (raw.match(/items=([^;]+)/i)?.[1] || "").trim();
-    const note = (raw.match(/text=(.+)$/i)?.[1] || "").trim();
-    return { kind: "order", data: { catalog, items, note } };
-  }
-
-  if (raw.startsWith("Shared contacts:")) {
-    const count = Number(raw.replace(/[^0-9]/g, "") || 0);
-    return { kind: "contacts", data: { count } };
-  }
-
-  if (raw.startsWith("Reaction:")) {
-    return { kind: "reaction", data: { emoji: raw.replace(/^Reaction:\s*/i, "").trim() } };
-  }
-
-  if (
-    raw.startsWith("Unsupported message:") ||
-    raw === "Unsupported incoming WhatsApp message type." ||
-    raw === "Inbound unsupported message" ||
-    type === "unsupported"
-  ) {
-    return { kind: "unsupported", data: { reason: raw } };
-  }
-
-  if (raw.startsWith("Referral:")) {
-    return { kind: "referral", data: { headline: raw.replace(/^Referral:\s*/i, "").trim() } };
-  }
-
-  return { kind: "", data: null };
-};
-
-const extractTemplateParamIndexes = (body = "") => {
-  const seen = new Set();
-  const out = [];
-  const matches = String(body).match(/\{\{(\d+)\}\}/g) || [];
-  matches.forEach((m) => {
-    const idx = Number(String(m).replace(/[{}]/g, ""));
-    if (!Number.isFinite(idx) || idx < 1 || seen.has(idx)) return;
-    seen.add(idx);
-    out.push(idx);
-  });
-  return out.sort((a, b) => a - b);
-};
 
 const renderMessageBody = (msg) => {
   const kind = String(msg?.specialKind || "");
@@ -576,9 +105,9 @@ const renderMessageBody = (msg) => {
   );
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ════════════════════════════
    AVATAR
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+════════════════════════════ */
 const Avatar = ({ name, color, size=46, online=false }) => (
   <div style={{ position:"relative", flexShrink:0 }}>
     <div style={{
@@ -600,9 +129,9 @@ const Avatar = ({ name, color, size=46, online=false }) => (
   </div>
 );
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ════════════════════════════
    TYPING INDICATOR
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+════════════════════════════ */
 const Typing = () => (
   <div style={{ display:"flex", gap:5, alignItems:"center", padding:"11px 15px" }}>
     {[0,1,2].map(i=>(
@@ -615,9 +144,9 @@ const Typing = () => (
   </div>
 );
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ════════════════════════════
    QR CODE (decorative)
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+════════════════════════════ */
 const QRCode = ({ size=175 }) => {
   const cells=21, cs=size/cells;
   const grid = Array.from({length:cells},(_,r)=>
@@ -647,9 +176,9 @@ const QRCode = ({ size=175 }) => {
   );
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ════════════════════════════
    SCAN ANIMATION (camera view)
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+════════════════════════════ */
 const Scanner = ({ onDone }) => {
   const [pct, setPct]   = useState(0);
   const [done, setDone] = useState(false);
@@ -875,10 +404,10 @@ const Scanner = ({ onDone }) => {
   );
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   SCREEN 1 â€” MOBILE LOGIN
-   Orange gradient bg Â· no black
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+/* ══════════════════════════════════════
+   SCREEN 1 — MOBILE LOGIN
+   Orange gradient bg · no black
+══════════════════════════════════════ */
 const LoginScreen = ({ onLogin }) => {
   const [tab,setTab]     = useState("password");
   const [email,setEmail] = useState("admin@textzy.io");
@@ -929,7 +458,7 @@ const LoginScreen = ({ onLogin }) => {
     }
   };
 
-  const refreshOtpStatus = async () => {
+  const refreshOtpStatus = useCallback(async () => {
     if (!verificationId) return;
     setOtpStatusBusy(true);
     try {
@@ -944,7 +473,7 @@ const LoginScreen = ({ onLogin }) => {
     } finally {
       setOtpStatusBusy(false);
     }
-  };
+  }, [verificationId, onLogin, email]);
 
   useEffect(() => {
     if (!otpSent || !verificationId || otpReady || otpVerified) return;
@@ -952,7 +481,7 @@ const LoginScreen = ({ onLogin }) => {
       refreshOtpStatus();
     }, 2500);
     return () => clearInterval(timer);
-  }, [otpSent, verificationId, otpReady, otpVerified]);
+  }, [otpSent, verificationId, otpReady, otpVerified, refreshOtpStatus]);
 
   const verifyOtp = async () => {
     if (!verificationId || !otp) { setErr("Enter OTP first."); return; }
@@ -971,14 +500,14 @@ const LoginScreen = ({ onLogin }) => {
   return (
     <div style={{
       minHeight:"100vh", display:"flex", flexDirection:"column",
-      background:`linear-gradient(165deg, ${C.orange} 0%, #EA6C0A 35%, #C2560A 75%, #1E3A5F 100%)`,
+      background:`radial-gradient(1200px 460px at 50% -10%, rgba(255,255,255,0.2), transparent 60%), linear-gradient(165deg, ${C.orange} 0%, #EA6C0A 35%, #C2560A 75%, #1E3A5F 100%)`,
       fontFamily:"'Segoe UI',system-ui,sans-serif",
     }}>
       {/* top hero */}
       <div style={{
-        flex:"0 0 32vh", display:"flex", flexDirection:"column",
+        flex:"0 0 26vh", display:"flex", flexDirection:"column",
         alignItems:"center", justifyContent:"center",
-        padding:"12px 20px 6px",
+        padding:"10px 20px 4px",
       }}>
         <div style={{
           width:58, height:58, borderRadius:16,
@@ -997,10 +526,11 @@ const LoginScreen = ({ onLogin }) => {
       {/* card */}
       <div style={{
         flex:1,
-        minHeight:"68vh",
+        minHeight:"74vh",
         background:"#fff", borderRadius:"28px 28px 0 0",
-        padding:"24px 24px 42px",
-        boxShadow:"0 -8px 40px rgba(0,0,0,0.12)",
+        padding:"22px 24px 42px",
+        boxShadow:"0 -14px 46px rgba(0,0,0,0.16)",
+        borderTop:"1px solid rgba(255,255,255,0.45)",
       }}>
         {/* tab switcher */}
         <div style={{ display:"flex", background:C.panelBg, borderRadius:12, padding:4, marginBottom:22 }}>
@@ -1130,7 +660,7 @@ const LoginScreen = ({ onLogin }) => {
               <span style={{ display:"inline-flex",alignItems:"center",gap:6 }}><I.Shield/>Secure session | HTTPS only</span>
             </p>
             <p style={{ textAlign:"center",marginTop:8,fontSize:12,color:C.textMuted }}>
-              Powerd By - Moneyart Private Limited
+              Powered By - Moneyart Private Limited
             </p>
           </>
         ) : (
@@ -1166,24 +696,24 @@ const LoginScreen = ({ onLogin }) => {
   );
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-   SCREEN 2 â€” PROJECT PICKER
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+/* ══════════════════════════════════════
+   SCREEN 2 — PROJECT PICKER
+══════════════════════════════════════ */
 const ProjectPicker = ({ projects, onSelect, loading = false }) => {
   const [sel, setSel] = useState(null);
   const rows = projects?.length ? projects : PROJECTS;
   return (
     <div style={{
       minHeight:"100vh", display:"flex", flexDirection:"column",
-      background:`linear-gradient(165deg,${C.orange} 0%,#EA6C0A 30%,#C2560A 65%,#1E3A5F 100%)`,
+      background:`radial-gradient(900px 360px at 50% -10%, rgba(255,255,255,0.18), transparent 60%), linear-gradient(165deg,${C.orange} 0%,#EA6C0A 30%,#C2560A 65%,#1E3A5F 100%)`,
       fontFamily:"'Segoe UI',system-ui,sans-serif",
     }}>
-      <div style={{ flex:"0 0 30vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"20px 24px 10px" }}>
+      <div style={{ flex:"0 0 24vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"16px 24px 8px" }}>
         <Logo size={40}/>
         <h2 style={{ margin:"12px 0 4px",fontSize:24,fontWeight:800,color:"#fff" }}>Select Workspace</h2>
         <p style={{ margin:0,color:"rgba(255,255,255,0.7)",fontSize:13 }}>Choose a project to continue</p>
       </div>
-      <div style={{ flex:1, minHeight:"70vh", background:"#fff",borderRadius:"28px 28px 0 0",padding:"28px 20px 40px",boxShadow:"0 -8px 40px rgba(0,0,0,0.12)" }}>
+      <div style={{ flex:1, minHeight:"76vh", background:"#fff",borderRadius:"28px 28px 0 0",padding:"24px 20px 40px",boxShadow:"0 -14px 46px rgba(0,0,0,0.16)" }}>
         {rows.map(p=>{
           const a=sel===p.slug;
           return (
@@ -1218,9 +748,9 @@ const ProjectPicker = ({ projects, onSelect, loading = false }) => {
   );
 };
 
-/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+/* ══════════════════════════════════════
    MAIN MOBILE APP
-â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+══════════════════════════════════════ */
 export default function TextzyMobile() {
   const restored = (() => {
     try {
@@ -1329,6 +859,29 @@ export default function TextzyMobile() {
     }
   };
 
+  const openTrustedDownloadUrl = useCallback((rawUrl) => {
+    const text = String(rawUrl || "").trim();
+    if (!text) {
+      setNotice("Download URL is not configured in platform settings.");
+      return;
+    }
+    try {
+      const u = new URL(text, window.location.origin);
+      const trustedHosts = new Set([
+        window.location.hostname,
+        "textzy-frontend-production.up.railway.app",
+        "textzy-backend-production.up.railway.app",
+      ]);
+      if (u.protocol !== "https:" || !trustedHosts.has(u.hostname)) {
+        setNotice("Blocked untrusted update URL. Please check platform app-update settings.");
+        return;
+      }
+      window.location.assign(u.toString());
+    } catch {
+      setNotice("Invalid update URL in platform settings.");
+    }
+  }, []);
+
   const withBusy = async (key, fn) => {
     if (busy[key]) return;
     setBusy((p) => ({ ...p, [key]: true }));
@@ -1386,11 +939,12 @@ export default function TextzyMobile() {
     setTemplateVars({});
   }, [selectedTemplateId]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!showTemplateModal) return;
     if (templates.length > 0) return;
     loadApprovedTemplates().catch(() => {});
-  }, [showTemplateModal]);
+  }, [showTemplateModal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const deviceCtx = deviceCtxRef.current || resolveDeviceContext(restored);
@@ -1410,7 +964,7 @@ export default function TextzyMobile() {
         });
       })
       .catch(() => {});
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const persistSession = (nextSession, nextUser = user, nextProject = project) => {
     const deviceCtx = deviceCtxRef.current || resolveDeviceContext(restored);
@@ -2228,8 +1782,9 @@ export default function TextzyMobile() {
     if (!authCtx.token || !authCtx.tenantSlug) return;
     if (contacts.length > 0) return;
     loadConversations().catch(() => setCons(CONTACTS));
-  }, [screen, authCtx.token, authCtx.tenantSlug]);
+  }, [screen, authCtx.token, authCtx.tenantSlug]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!restored.accessToken) return;
     if (restored.tenantSlug) {
@@ -2246,8 +1801,9 @@ export default function TextzyMobile() {
       .catch(() => {
         localStorage.removeItem(SESSION_KEY);
       });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (screen !== "app") return;
     if (!authCtx.token || !authCtx.tenantSlug) return;
@@ -2260,19 +1816,21 @@ export default function TextzyMobile() {
     };
     const timer = setInterval(tick, 3000);
     return () => clearInterval(timer);
-  }, [screen, authCtx.token, authCtx.tenantSlug, view, activeId]);
+  }, [screen, authCtx.token, authCtx.tenantSlug, view, activeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (screen !== "app") return;
     if (!authCtx.token || !authCtx.tenantSlug) return;
     loadAppBootstrap(authCtx).catch(() => {});
-  }, [screen, authCtx.token, authCtx.tenantSlug]);
+  }, [screen, authCtx.token, authCtx.tenantSlug]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (screen !== "app") return;
     if (!authCtx.token || !authCtx.tenantSlug) return;
     ensureNotificationSubscription().catch(() => {});
-  }, [screen, authCtx.token, authCtx.tenantSlug, notifEnabled]);
+  }, [screen, authCtx.token, authCtx.tenantSlug, notifEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     return () => {
@@ -2280,10 +1838,12 @@ export default function TextzyMobile() {
     };
   }, []);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (view !== "chat") stopTypingNow();
-  }, [view, activeId]);
+  }, [view, activeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (screen !== "app") return;
     if (!authCtx.token || !authCtx.tenantSlug) return;
@@ -2350,8 +1910,9 @@ export default function TextzyMobile() {
         connection.stop().catch(() => {});
       }
     };
-  }, [screen, authCtx.token, authCtx.tenantSlug, view, activeId]);
+  }, [screen, authCtx.token, authCtx.tenantSlug, view, activeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const total = contacts.reduce((sum, c) => sum + (Number(c.unread) || 0), 0);
     const prev = unreadTotalRef.current;
@@ -2370,68 +1931,20 @@ export default function TextzyMobile() {
       }
     }
     unreadTotalRef.current = total;
-  }, [contacts, screen, notifEnabled]);
-
-  const Overlay = ({ children }) => (
-    <div style={{
-      position:"fixed", inset:0, zIndex:60, background:"rgba(15,23,42,0.45)",
-      display:"flex", alignItems:"center", justifyContent:"center", padding:18,
-    }}>
-      <div style={{
-        width:"100%", maxWidth:420, background:"#fff", borderRadius:16,
-        boxShadow:"0 16px 40px rgba(0,0,0,0.25)", padding:18,
-      }}>
-        {children}
-      </div>
-    </div>
-  );
+  }, [contacts, screen, notifEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const SharedDialogs = () => (
     <>
-      {notice ? (
-        <Overlay>
-          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Textzy</h3>
-          <p style={{ margin:"0 0 16px", color:C.textSub, lineHeight:1.45, whiteSpace:"pre-wrap" }}>{notice}</p>
-          <div style={{ display:"flex", justifyContent:"flex-end" }}>
-            <button onClick={()=>setNotice("")} style={{ border:"none", borderRadius:10, padding:"10px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:"pointer" }}>OK</button>
-          </div>
-        </Overlay>
-      ) : null}
-
-      {updatePrompt ? (
-        <Overlay>
-          <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Update Available</h3>
-          <p style={{ margin:"0 0 8px", color:C.textSub, lineHeight:1.45 }}>
-            Current version: {updatePrompt.appVersion}{"\n"}
-            Latest version: {updatePrompt.latestVersion || "latest"}
-          </p>
-          <p style={{ margin:"0 0 16px", color:C.textSub, lineHeight:1.45 }}>
-            {updatePrompt.forceUpdate ? "This update is required to continue." : "A newer app version is available."}
-          </p>
-          <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
-            {!updatePrompt.forceUpdate ? (
-              <button
-                onClick={() => setUpdatePrompt(null)}
-                style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"10px 14px", background:"#fff", cursor:"pointer" }}
-              >
-                Later
-              </button>
-            ) : null}
-            <button
-              onClick={() => {
-                if (updatePrompt.downloadUrl) window.location.assign(updatePrompt.downloadUrl);
-                else setNotice("Download URL is not configured in platform settings.");
-              }}
-              style={{ border:"none", borderRadius:10, padding:"10px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:"pointer" }}
-            >
-              Update Now
-            </button>
-          </div>
-        </Overlay>
-      ) : null}
+      <NoticeDialog C={C} notice={notice} onClose={() => setNotice("")} />
+      <UpdateDialog
+        C={C}
+        prompt={updatePrompt}
+        onLater={() => setUpdatePrompt(null)}
+        onUpdate={() => openTrustedDownloadUrl(updatePrompt?.downloadUrl)}
+      />
 
       {showNewChat ? (
-        <Overlay>
+        <ModalShell>
           <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Start New Chat</h3>
           <label style={{ display:"block", fontSize:12, color:C.textSub, marginBottom:6 }}>WhatsApp Number</label>
           <input value={newChatRecipient} onChange={(e)=>setNewChatRecipient(e.target.value)} placeholder="+91xxxxxxxxxx" style={{ width:"100%", border:`1.5px solid ${C.divider}`, borderRadius:10, padding:"10px 12px", marginBottom:10 }} />
@@ -2441,11 +1954,11 @@ export default function TextzyMobile() {
             <button onClick={()=>setShowNewChat(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Cancel</button>
             <button disabled={busy.newChat} onClick={submitNewChat} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.newChat?"not-allowed":"pointer", opacity:busy.newChat?0.8:1 }}>{busy.newChat ? "Starting..." : "Start"}</button>
           </div>
-        </Overlay>
+        </ModalShell>
       ) : null}
 
       {showTransfer ? (
-        <Overlay>
+        <ModalShell>
           <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>{transferMode === "assign" ? "Assign Chat" : "Transfer Chat"}</h3>
           <label style={{ display:"block", fontSize:12, color:C.textSub, marginBottom:6 }}>Assignee Name or Email</label>
           <input value={transferAssignee} onChange={(e)=>setTransferAssignee(e.target.value)} placeholder="Enter assignee" style={{ width:"100%", border:`1.5px solid ${C.divider}`, borderRadius:10, padding:"10px 12px", marginBottom:8 }} />
@@ -2461,11 +1974,11 @@ export default function TextzyMobile() {
             <button onClick={()=>setShowTransfer(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Cancel</button>
             <button disabled={busy.transfer} onClick={submitTransferConversation} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.transfer?"not-allowed":"pointer", opacity:busy.transfer?0.8:1 }}>{busy.transfer ? (transferMode === "assign" ? "Assigning..." : "Transferring...") : (transferMode === "assign" ? "Assign" : "Transfer")}</button>
           </div>
-        </Overlay>
+        </ModalShell>
       ) : null}
 
       {showLabelsModal ? (
-        <Overlay>
+        <ModalShell>
           <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Set Labels</h3>
           <label style={{ display:"block", fontSize:12, color:C.textSub, marginBottom:6 }}>Comma separated labels</label>
           <input value={labelsInput} onChange={(e)=>setLabelsInput(e.target.value)} placeholder="support, priority-high" style={{ width:"100%", border:`1.5px solid ${C.divider}`, borderRadius:10, padding:"10px 12px", marginBottom:12 }} />
@@ -2473,11 +1986,11 @@ export default function TextzyMobile() {
             <button onClick={()=>setShowLabelsModal(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Cancel</button>
             <button disabled={busy.labels} onClick={submitLabels} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.labels?"not-allowed":"pointer", opacity:busy.labels?0.8:1 }}>{busy.labels ? "Saving..." : "Save"}</button>
           </div>
-        </Overlay>
+        </ModalShell>
       ) : null}
 
       {showNotesModal ? (
-        <Overlay>
+        <ModalShell>
           <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Conversation Notes</h3>
           <textarea
             value={notesInput}
@@ -2500,11 +2013,11 @@ export default function TextzyMobile() {
               </div>
             ))}
           </div>
-        </Overlay>
+        </ModalShell>
       ) : null}
 
       {showTemplateModal ? (
-        <Overlay>
+        <ModalShell>
           <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Send Template</h3>
           {templates.length === 0 ? (
             <p style={{ margin:"0 0 12px", color:C.textSub, fontSize:13 }}>No approved WhatsApp templates available.</p>
@@ -2533,11 +2046,11 @@ export default function TextzyMobile() {
             <button onClick={()=>setShowTemplateModal(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Cancel</button>
             <button disabled={busy.template || templates.length === 0} onClick={sendTemplateFallback} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:busy.template?"not-allowed":"pointer", opacity:(busy.template || templates.length === 0)?0.8:1 }}>{busy.template ? "Sending..." : "Send Template"}</button>
           </div>
-        </Overlay>
+        </ModalShell>
       ) : null}
 
       {showQaModal ? (
-        <Overlay>
+        <ModalShell>
           <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Select QA</h3>
           <div style={{ maxHeight:180, overflowY:"auto", border:`1px solid ${C.divider}`, borderRadius:10, marginBottom:12 }}>
             {QA_LIBRARY.map((q, i) => (
@@ -2549,11 +2062,11 @@ export default function TextzyMobile() {
           <div style={{ display:"flex", justifyContent:"flex-end" }}>
             <button onClick={()=>setShowQaModal(false)} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:"pointer" }}>Close</button>
           </div>
-        </Overlay>
+        </ModalShell>
       ) : null}
 
       {showDevicesModal ? (
-        <Overlay>
+        <ModalShell>
           <h3 style={{ margin:"0 0 10px", fontSize:18, color:C.textMain }}>Linked Devices</h3>
           <div style={{ maxHeight:220, overflowY:"auto", border:`1px solid ${C.divider}`, borderRadius:10, marginBottom:12 }}>
             {devices.length === 0 ? (
@@ -2579,11 +2092,11 @@ export default function TextzyMobile() {
             <button disabled={busy.devices} onClick={openDevicesModal} style={{ border:`1px solid ${C.divider}`, borderRadius:10, padding:"9px 14px", background:"#fff", cursor:busy.devices?"not-allowed":"pointer" }}>{busy.devices ? "Refreshing..." : "Refresh"}</button>
             <button onClick={()=>setShowDevicesModal(false)} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:"pointer" }}>Close</button>
           </div>
-        </Overlay>
+        </ModalShell>
       ) : null}
 
       {showSettingsModal ? (
-        <Overlay>
+        <ModalShell>
           <h3 style={{ margin:"0 0 12px", fontSize:18, color:C.textMain }}>Settings</h3>
           <div style={{ display:"grid", gap:10, marginBottom:14 }}>
             {[
@@ -2599,11 +2112,11 @@ export default function TextzyMobile() {
           <div style={{ display:"flex", justifyContent:"flex-end" }}>
             <button onClick={()=>setShowSettingsModal(false)} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:"pointer" }}>Done</button>
           </div>
-        </Overlay>
+        </ModalShell>
       ) : null}
 
       {showNotificationsModal ? (
-        <Overlay>
+        <ModalShell>
           <h3 style={{ margin:"0 0 12px", fontSize:18, color:C.textMain }}>Notifications</h3>
           <label style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", border:`1px solid ${C.divider}`, borderRadius:10, marginBottom:12 }}>
             <span style={{ color:C.textMain, fontSize:14 }}>Enable push notifications</span>
@@ -2615,7 +2128,7 @@ export default function TextzyMobile() {
           <div style={{ display:"flex", justifyContent:"flex-end" }}>
             <button onClick={()=>setShowNotificationsModal(false)} style={{ border:"none", borderRadius:10, padding:"9px 14px", background:C.orange, color:"#fff", fontWeight:700, cursor:"pointer" }}>Done</button>
           </div>
-        </Overlay>
+        </ModalShell>
       ) : null}
     </>
   );
@@ -2631,7 +2144,7 @@ export default function TextzyMobile() {
 
   const uname=(user?.email||"User").split("@")[0];
 
-  /* â”€â”€ PROFILE PANEL â”€â”€ */
+  /* ── PROFILE PANEL ── */
   if (view==="profile") return (
     <div style={{ minHeight:"100vh",fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#fff" }}>
       {/* header */}
@@ -2712,12 +2225,12 @@ export default function TextzyMobile() {
     </div>
   );
 
-  /* â”€â”€ CHAT VIEW â”€â”€ */
+  /* ── CHAT VIEW ── */
   if (view==="chat" && active) return (
     <div style={{ height:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Segoe UI',system-ui,sans-serif",background:C.chatBg }}>
       {/* header */}
       <div style={{
-        background:`linear-gradient(135deg,${C.headerBg},#16304F)`,
+        background:`radial-gradient(560px 200px at 50% -35%, rgba(255,255,255,0.12), transparent 60%), linear-gradient(135deg,${C.headerBg},#16304F)`,
         padding:"10px 12px 10px",
         display:"flex",alignItems:"center",gap:10,flexShrink:0,
         boxShadow:"0 2px 12px rgba(30,58,95,0.3)",
@@ -2864,53 +2377,21 @@ export default function TextzyMobile() {
         </div>
       )}
 
-      {/* input bar */}
-      <div style={{
-        background:"#fff",padding:"10px 12px 10px",
-        display:"flex",alignItems:"center",gap:8,flexShrink:0,
-        borderTop:`1px solid ${C.divider}`,
-        boxShadow:"0 -2px 12px rgba(0,0,0,0.06)",
-        paddingBottom:"calc(10px + env(safe-area-inset-bottom,0px))",
-      }}>
-        <button onClick={handleEmoji} style={{ background:"none",border:"none",color:C.iconColor,cursor:"pointer",padding:"6px",display:"flex",borderRadius:"50%" }}>
-          <I.Emoji/>
-        </button>
-        <button onClick={handleAttachClick} style={{ background:"none",border:"none",color:C.iconColor,cursor:"pointer",padding:"6px",display:"flex",borderRadius:"50%" }}>
-          <I.Attach/>
-        </button>
-        <div style={{ flex:1,background:C.panelBg,borderRadius:22,padding:"11px 16px",border:`1.5px solid ${C.divider}`,display:"flex",alignItems:"center",transition:"border-color 0.2s" }}
-          onFocusCapture={e=>e.currentTarget.style.borderColor=C.orange}
-          onBlurCapture={e=>e.currentTarget.style.borderColor=C.divider}
-        >
-          <input ref={inputRef} value={input}
-            onChange={e=>onInputTyping(e.target.value)}
-            onFocus={() => setShowEmojiPicker(false)}
-            onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()}
-            placeholder="Type a message..."
-            style={{ border:"none",outline:"none",flex:1,fontSize:15,color:C.textMain,background:"transparent",fontFamily:"inherit" }}
-          />
-        </div>
-        <button disabled={busy.send} onClick={input.trim()?send:handleMicInput} style={{
-          width:48,height:48,borderRadius:"50%",border:"none",flexShrink:0,
-          background:input.trim()?`linear-gradient(135deg,${C.orange},${C.orangeLight})`:C.divider,
-          color:input.trim()?"#fff":C.textSub,
-          cursor:busy.send?"not-allowed":"pointer",
-          display:"flex",alignItems:"center",justifyContent:"center",
-          boxShadow:input.trim()?`0 4px 16px ${C.orange}55`:"none",
-          transition:"all 0.2s",
-          opacity:busy.send?0.8:1,
-        }}>
-          {busy.send
-            ? <span style={{ width:16, height:16, border:"2px solid rgba(255,255,255,0.7)", borderTopColor:"transparent", borderRadius:"50%", animation:"spin 0.8s linear infinite" }} />
-            : (input.trim()?<I.Send/>:<I.Mic/>)}
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          style={{ display:"none" }}
-          onChange={handleAttachmentSelected}
-        />
-      </div>
+      <ChatComposer
+        C={C}
+        I={I}
+        input={input}
+        onInputTyping={onInputTyping}
+        onSend={send}
+        onMic={handleMicInput}
+        busySend={busy.send}
+        onEmoji={handleEmoji}
+        onAttach={handleAttachClick}
+        inputRef={inputRef}
+        fileInputRef={fileInputRef}
+        onAttachmentSelected={handleAttachmentSelected}
+        setShowEmojiPicker={setShowEmojiPicker}
+      />
 
       <style>{`
         *{box-sizing:border-box;margin:0;padding:0;}
@@ -2923,12 +2404,12 @@ export default function TextzyMobile() {
     </div>
   );
 
-  /* â”€â”€ INBOX LIST VIEW â”€â”€ */
+  /* ── INBOX LIST VIEW ── */
   return (
     <div style={{ height:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#fff" }}>
       {/* header */}
       <div style={{
-        background:`linear-gradient(135deg,${C.orange} 0%,${C.orangeLight} 100%)`,
+        background:`radial-gradient(620px 220px at 50% -40%, rgba(255,255,255,0.2), transparent 60%), linear-gradient(135deg,${C.orange} 0%,${C.orangeLight} 100%)`,
         padding:"10px 16px 14px",
         paddingTop:"calc(10px + env(safe-area-inset-top,0px))",
         flexShrink:0,
@@ -3053,6 +2534,12 @@ export default function TextzyMobile() {
     </div>
   );
 }
+
+
+
+
+
+
 
 
 

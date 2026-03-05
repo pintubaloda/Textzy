@@ -1,37 +1,38 @@
 import "@/App.css";
+import { Suspense, lazy } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { getSession, hasPermission } from "@/lib/api";
 
 // Landing Page
-import LandingPage from "@/pages/LandingPage";
+const LandingPage = lazy(() => import("@/pages/LandingPage"));
 
 // Auth Pages
-import LoginPage from "@/pages/auth/LoginPage";
-import ProjectSelectPage from "@/pages/auth/ProjectSelectPage";
-import RegisterPage from "@/pages/auth/RegisterPage";
-import ForgotPasswordPage from "@/pages/auth/ForgotPasswordPage";
-import AcceptInvitePage from "@/pages/auth/AcceptInvitePage";
+const LoginPage = lazy(() => import("@/pages/auth/LoginPage"));
+const ProjectSelectPage = lazy(() => import("@/pages/auth/ProjectSelectPage"));
+const RegisterPage = lazy(() => import("@/pages/auth/RegisterPage"));
+const ForgotPasswordPage = lazy(() => import("@/pages/auth/ForgotPasswordPage"));
+const AcceptInvitePage = lazy(() => import("@/pages/auth/AcceptInvitePage"));
 
 // Dashboard Pages
-import DashboardLayout from "@/layouts/DashboardLayout";
-import DashboardOverview from "@/pages/dashboard/DashboardOverview";
-import InboxPage from "@/pages/dashboard/InboxPage";
-import ContactsPage from "@/pages/dashboard/ContactsPage";
-import CampaignsPage from "@/pages/dashboard/CampaignsPage";
-import TemplatesPage from "@/pages/dashboard/TemplatesPage";
-import AutomationsPage from "@/pages/dashboard/AutomationsPage";
-import AnalyticsPage from "@/pages/dashboard/AnalyticsPage";
-import IntegrationsPage from "@/pages/dashboard/IntegrationsPage";
-import BillingPage from "@/pages/dashboard/BillingPage";
-import SettingsPage from "@/pages/dashboard/SettingsPage";
-import AdminPage from "@/pages/dashboard/AdminPage";
-import TeamPage from "@/pages/dashboard/TeamPage";
-import PlatformSettingsPage from "@/pages/dashboard/PlatformSettingsPage";
-import PlatformBrandingPage from "@/pages/dashboard/PlatformBrandingPage";
-import SmsSetupPage from "@/pages/dashboard/SmsSetupPage";
-import MobileDevicesPage from "@/pages/dashboard/MobileDevicesPage";
-import WhatsAppOnboardingPage from "@/pages/dashboard/WhatsAppOnboardingPage";
+const DashboardLayout = lazy(() => import("@/layouts/DashboardLayout"));
+const DashboardOverview = lazy(() => import("@/pages/dashboard/DashboardOverview"));
+const InboxPage = lazy(() => import("@/pages/dashboard/InboxPage"));
+const ContactsPage = lazy(() => import("@/pages/dashboard/ContactsPage"));
+const CampaignsPage = lazy(() => import("@/pages/dashboard/CampaignsPage"));
+const TemplatesPage = lazy(() => import("@/pages/dashboard/TemplatesPage"));
+const AutomationsPage = lazy(() => import("@/pages/dashboard/AutomationsPage"));
+const AnalyticsPage = lazy(() => import("@/pages/dashboard/AnalyticsPage"));
+const IntegrationsPage = lazy(() => import("@/pages/dashboard/IntegrationsPage"));
+const BillingPage = lazy(() => import("@/pages/dashboard/BillingPage"));
+const SettingsPage = lazy(() => import("@/pages/dashboard/SettingsPage"));
+const AdminPage = lazy(() => import("@/pages/dashboard/AdminPage"));
+const TeamPage = lazy(() => import("@/pages/dashboard/TeamPage"));
+const PlatformSettingsPage = lazy(() => import("@/pages/dashboard/PlatformSettingsPage"));
+const PlatformBrandingPage = lazy(() => import("@/pages/dashboard/PlatformBrandingPage"));
+const SmsSetupPage = lazy(() => import("@/pages/dashboard/SmsSetupPage"));
+const MobileDevicesPage = lazy(() => import("@/pages/dashboard/MobileDevicesPage"));
+const WhatsAppOnboardingPage = lazy(() => import("@/pages/dashboard/WhatsAppOnboardingPage"));
 
 function App() {
   const session = getSession();
@@ -58,39 +59,41 @@ function App() {
   return (
     <div className="App">
       <BrowserRouter>
-        <Routes>
-          {/* Public Routes */}
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/projects" element={<ProjectSelectPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-          <Route path="/accept-invite" element={<AcceptInvitePage />} />
+        <Suspense fallback={<div className="p-6 text-sm text-slate-600">Loading page…</div>}>
+          <Routes>
+            {/* Public Routes */}
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/projects" element={<ProjectSelectPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/accept-invite" element={<AcceptInvitePage />} />
 
-          {/* Dashboard Routes */}
-          <Route path="/dashboard" element={authed ? <DashboardLayout /> : <Navigate to="/login" replace />}>
-            <Route index element={isPlatformOwner ? <DashboardOverview /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="inbox" element={can("inbox.read") ? <InboxPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="contacts" element={can("contacts.read") ? <ContactsPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="campaigns" element={can("campaigns.read") ? <CampaignsPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="templates" element={can("templates.read") ? <TemplatesPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="sms-setup" element={can("templates.read") ? <SmsSetupPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="automations" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="automations/workflow" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="automations/qa" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="analytics" element={canAnalytics ? <AnalyticsPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="integrations" element={canIntegrations ? <IntegrationsPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="whatsapp-onboarding" element={can("inbox.read") ? <WhatsAppOnboardingPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="billing" element={can("billing.read") ? <BillingPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="settings" element={canSettings ? <SettingsPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="mobile-devices" element={can("inbox.read") ? <MobileDevicesPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="team" element={canManageTeam ? <TeamPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="admin" element={isPlatformOwner ? <AdminPage /> : <Navigate to="/dashboard" replace />} />
-            <Route path="platform-settings" element={isPlatformOwner ? <PlatformSettingsPage /> : <Navigate to="/dashboard" replace />} />
-            <Route path="platform-branding" element={isPlatformOwner ? <PlatformBrandingPage /> : <Navigate to="/dashboard" replace />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            {/* Dashboard Routes */}
+            <Route path="/dashboard" element={authed ? <DashboardLayout /> : <Navigate to="/login" replace />}>
+              <Route index element={isPlatformOwner ? <DashboardOverview /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="inbox" element={can("inbox.read") ? <InboxPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="contacts" element={can("contacts.read") ? <ContactsPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="campaigns" element={can("campaigns.read") ? <CampaignsPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="templates" element={can("templates.read") ? <TemplatesPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="sms-setup" element={can("templates.read") ? <SmsSetupPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="automations" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="automations/workflow" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="automations/qa" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="analytics" element={canAnalytics ? <AnalyticsPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="integrations" element={canIntegrations ? <IntegrationsPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="whatsapp-onboarding" element={can("inbox.read") ? <WhatsAppOnboardingPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="billing" element={can("billing.read") ? <BillingPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="settings" element={canSettings ? <SettingsPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="mobile-devices" element={can("inbox.read") ? <MobileDevicesPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="team" element={canManageTeam ? <TeamPage /> : <Navigate to={firstTenantPath} replace />} />
+              <Route path="admin" element={isPlatformOwner ? <AdminPage /> : <Navigate to="/dashboard" replace />} />
+              <Route path="platform-settings" element={isPlatformOwner ? <PlatformSettingsPage /> : <Navigate to="/dashboard" replace />} />
+              <Route path="platform-branding" element={isPlatformOwner ? <PlatformBrandingPage /> : <Navigate to="/dashboard" replace />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
       <Toaster position="top-right" richColors />
     </div>

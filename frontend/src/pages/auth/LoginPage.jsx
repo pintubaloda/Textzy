@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -97,7 +97,7 @@ const LoginPage = () => {
     }
   };
 
-  const checkOtpStatus = async () => {
+  const checkOtpStatus = useCallback(async () => {
     if (!verificationId) return;
     setOtpStatusBusy(true);
     try {
@@ -115,7 +115,7 @@ const LoginPage = () => {
     } finally {
       setOtpStatusBusy(false);
     }
-  };
+  }, [verificationId, formData.email]);
 
   useEffect(() => {
     if (!otpSent || !verificationId || otpFlowStage !== "waiting" || otpReady || otpVerified) return;
@@ -123,7 +123,7 @@ const LoginPage = () => {
       checkOtpStatus();
     }, 2500);
     return () => clearInterval(timer);
-  }, [otpSent, verificationId, otpFlowStage, otpReady, otpVerified]);
+  }, [otpSent, verificationId, otpFlowStage, otpReady, otpVerified, checkOtpStatus]);
 
   const verifyOtp = async () => {
     if (!verificationId || !otp) {

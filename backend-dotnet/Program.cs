@@ -72,6 +72,10 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var allowedOrigins = ParseAllowedOrigins(builder.Configuration).ToArray();
+if (builder.Environment.IsProduction() && allowedOrigins.Length == 0)
+{
+    throw new InvalidOperationException("AllowedOrigins is required in production. Set AllowedOrigins with full origin(s).");
+}
 
 builder.Services.AddCors(options =>
 {
