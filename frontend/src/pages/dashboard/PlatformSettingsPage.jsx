@@ -126,7 +126,7 @@ const PlatformSettingsPage = () => {
     allowedApiPrefixes: "/api/auth\n/api/inbox\n/api/messages\n/hubs/inbox",
     apiCatalog: "/api/auth/login\n/api/auth/refresh\n/api/auth/logout\n/api/auth/me\n/api/auth/projects\n/api/auth/switch-project\n/api/auth/app-bootstrap\n/api/inbox/conversations\n/api/inbox/conversations/{id}/messages\n/api/inbox/conversations/{id}/assign\n/api/inbox/conversations/{id}/transfer\n/api/inbox/conversations/{id}/labels\n/api/inbox/conversations/{id}/notes\n/api/inbox/typing\n/api/inbox/sla\n/api/messages/send\n/api/messages/media/{mediaId}\n/hubs/inbox",
   });
-  const [payment, setPayment] = useState({ provider: "razorpay", mode: "test", merchantId: "", keyId: "", keySecret: "", webhookSecret: "" });
+  const [payment, setPayment] = useState({ provider: "razorpay", mode: "test", merchantId: "", keyId: "", keySecret: "", webhookSecret: "", webhookAllowedIps: "" });
   const [smtp, setSmtp] = useState({
     provider: "smtp",
     host: "smtppro.zoho.in",
@@ -320,6 +320,7 @@ const PlatformSettingsPage = () => {
             keyId: values.keyId || "",
             keySecret: values.keySecret || "",
             webhookSecret: values.webhookSecret || "",
+            webhookAllowedIps: values.webhookAllowedIps || "",
           });
           const hooks = await listPaymentWebhooks().catch(() => []);
           if (!active) return;
@@ -684,6 +685,16 @@ const PlatformSettingsPage = () => {
             <div className="space-y-2 md:col-span-2">
               <Label htmlFor="pg-webhook">Webhook Secret</Label>
               <Input id="pg-webhook" type="password" placeholder="Enter payment webhook secret" value={payment.webhookSecret} onChange={(e) => setPayment((p) => ({ ...p, webhookSecret: e.target.value }))} />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="pg-webhook-ips">Webhook Allowed IPs / CIDR (optional)</Label>
+              <Input
+                id="pg-webhook-ips"
+                placeholder="e.g. 52.66.25.127, 13.126.0.0/16"
+                value={payment.webhookAllowedIps}
+                onChange={(e) => setPayment((p) => ({ ...p, webhookAllowedIps: e.target.value }))}
+              />
+              <p className="text-xs text-slate-500">Leave empty to allow all source IPs. Recommended: add Razorpay webhook IP ranges.</p>
             </div>
             <div className="md:col-span-2 flex gap-2">
               <Button className="bg-orange-500 hover:bg-orange-600" disabled={loading} onClick={async () => {

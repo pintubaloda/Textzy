@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Net;
 using Textzy.Api.Data;
 using Textzy.Api.Models;
 using Textzy.Api.Services;
@@ -28,6 +29,22 @@ public class PaymentWebhookController(
         var raw = await reader.ReadToEndAsync(ct);
         var scopeRows = await db.PlatformSettings.Where(x => x.Scope == "payment-gateway").ToListAsync(ct);
         var settings = scopeRows.ToDictionary(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase);
+        var sourceIp = ResolveSourceIp(HttpContext);
+        var allowedIpsRaw = settings.TryGetValue("webhookAllowedIps", out var ipRaw) ? ipRaw : string.Empty;
+        if (!IsAllowedSourceIp(sourceIp, allowedIpsRaw))
+        {
+            db.AuditLogs.Add(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                TenantId = null,
+                ActorUserId = Guid.Empty,
+                Action = "payment.webhook.rejected",
+                Details = $"provider={provider}; reason=ip_untrusted; sourceIp={sourceIp}",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync(ct);
+            return StatusCode(StatusCodes.Status403Forbidden, "Untrusted source IP.");
+        }
 
         var secret = settings.TryGetValue("webhookSecret", out var s) ? s : string.Empty;
         if (string.IsNullOrWhiteSpace(secret))
@@ -223,6 +240,63 @@ public class PaymentWebhookController(
         using var sha = SHA256.Create();
         var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(raw ?? string.Empty));
         return $"{provider}:{eventName}:{Convert.ToHexString(hash)}";
+    }
+
+    private static string ResolveSourceIp(HttpContext ctx)
+    {
+        var fwd = ctx.Request.Headers["X-Forwarded-For"].ToString();
+        if (!string.IsNullOrWhiteSpace(fwd))
+        {
+            var first = fwd.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(first)) return first;
+        }
+        return ctx.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
+    }
+
+    private static bool IsAllowedSourceIp(string sourceIpRaw, string allowedIpsRaw)
+    {
+        if (string.IsNullOrWhiteSpace(allowedIpsRaw)) return true; // backward compatible: empty means allow all
+        if (string.IsNullOrWhiteSpace(sourceIpRaw)) return false;
+        if (!IPAddress.TryParse(sourceIpRaw, out var sourceIp)) return false;
+
+        var tokens = allowedIpsRaw
+            .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var token in tokens)
+        {
+            if (TryMatchIpOrCidr(sourceIp, token)) return true;
+        }
+        return false;
+    }
+
+    private static bool TryMatchIpOrCidr(IPAddress source, string token)
+    {
+        if (IPAddress.TryParse(token, out var single))
+            return source.Equals(single);
+
+        var parts = token.Split('/', StringSplitOptions.TrimEntries);
+        if (parts.Length != 2) return false;
+        if (!IPAddress.TryParse(parts[0], out var network)) return false;
+        if (!int.TryParse(parts[1], out var prefix)) return false;
+
+        var srcBytes = source.GetAddressBytes();
+        var netBytes = network.GetAddressBytes();
+        if (srcBytes.Length != netBytes.Length) return false;
+
+        var maxBits = srcBytes.Length * 8;
+        if (prefix < 0 || prefix > maxBits) return false;
+
+        var fullBytes = prefix / 8;
+        var remBits = prefix % 8;
+
+        for (var i = 0; i < fullBytes; i++)
+        {
+            if (srcBytes[i] != netBytes[i]) return false;
+        }
+
+        if (remBits == 0) return true;
+        var mask = (byte)(0xFF << (8 - remBits));
+        return (srcBytes[fullBytes] & mask) == (netBytes[fullBytes] & mask);
     }
 
     private async Task ActivateSubscriptionFromPaymentAsync(BillingPaymentAttempt attempt, CancellationToken ct)
