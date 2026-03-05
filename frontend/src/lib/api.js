@@ -461,6 +461,20 @@ export async function authAcceptInvite({ token, fullName, password }) {
   return data
 }
 
+export async function authInvitePreview({ token }) {
+  const q = new URLSearchParams()
+  q.set("token", token || "")
+  const res = await fetch(`${API_BASE}/api/auth/invite-preview?${q.toString()}`, {
+    method: "GET",
+    credentials: "include"
+  })
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "")
+    throw new Error(msg || "Failed to load invite details")
+  }
+  return res.json()
+}
+
 export async function initializeMe() {
   try {
     const me = await apiGet('/api/auth/me')

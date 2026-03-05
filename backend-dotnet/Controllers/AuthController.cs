@@ -440,6 +440,36 @@ public class AuthController(
         return Ok(new { accessToken = sessionToken, tenantSlug = inviteTenant.Slug, projectName = inviteTenant.Name, role = invite.Role });
     }
 
+    [HttpGet("invite-preview")]
+    public async Task<IActionResult> InvitePreview([FromQuery] string token, CancellationToken ct)
+    {
+        var safeToken = (token ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(safeToken)) return BadRequest("Invite token is required.");
+
+        var tokenHash = HashToken(safeToken);
+        var invite = await db.TeamInvitations
+            .Where(i => i.TokenHash == tokenHash)
+            .OrderByDescending(i => i.SentAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (invite is null) return NotFound("Invite not found.");
+        if (invite.Status == "accepted") return BadRequest("Invite already accepted.");
+        if (invite.ExpiresAtUtc <= DateTime.UtcNow) return BadRequest("Invite expired.");
+
+        var tenantName = await db.Tenants
+            .Where(t => t.Id == invite.TenantId)
+            .Select(t => t.Name)
+            .FirstOrDefaultAsync(ct);
+
+        return Ok(new
+        {
+            email = invite.Email,
+            fullName = invite.Name,
+            role = invite.Role,
+            tenantName = tenantName ?? string.Empty,
+            expiresAtUtc = invite.ExpiresAtUtc
+        });
+    }
+
     [HttpPost("logout")]
     public async Task<IActionResult> Logout(CancellationToken ct)
     {

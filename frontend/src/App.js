@@ -38,6 +38,9 @@ function App() {
   const authed = !!session.email;
   const isPlatformOwner = (session.role || "").toLowerCase() === "super_admin";
   const can = (permission) => isPlatformOwner || hasPermission(permission, session);
+  const canAnalytics = isPlatformOwner || (hasPermission("campaigns.read", session) && hasPermission("api.read", session));
+  const canIntegrations = isPlatformOwner || hasPermission("api.write", session);
+  const canSettings = isPlatformOwner || (hasPermission("automation.read", session) && hasPermission("api.read", session));
   const canManageTeam = isPlatformOwner || ["owner", "admin"].includes((session.role || "").toLowerCase());
   const firstTenantPath = can("inbox.read")
     ? "/dashboard/inbox"
@@ -75,11 +78,11 @@ function App() {
             <Route path="automations" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
             <Route path="automations/workflow" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
             <Route path="automations/qa" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="analytics" element={can("api.read") ? <AnalyticsPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="integrations" element={can("api.read") ? <IntegrationsPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="analytics" element={canAnalytics ? <AnalyticsPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="integrations" element={canIntegrations ? <IntegrationsPage /> : <Navigate to={firstTenantPath} replace />} />
             <Route path="whatsapp-onboarding" element={can("inbox.read") ? <WhatsAppOnboardingPage /> : <Navigate to={firstTenantPath} replace />} />
             <Route path="billing" element={can("billing.read") ? <BillingPage /> : <Navigate to={firstTenantPath} replace />} />
-            <Route path="settings" element={can("api.read") ? <SettingsPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="settings" element={canSettings ? <SettingsPage /> : <Navigate to={firstTenantPath} replace />} />
             <Route path="mobile-devices" element={can("inbox.read") ? <MobileDevicesPage /> : <Navigate to={firstTenantPath} replace />} />
             <Route path="team" element={canManageTeam ? <TeamPage /> : <Navigate to={firstTenantPath} replace />} />
             <Route path="admin" element={isPlatformOwner ? <AdminPage /> : <Navigate to="/dashboard" replace />} />

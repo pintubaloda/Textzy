@@ -74,6 +74,9 @@ const DashboardLayout = () => {
   const canViewTemplates = isPlatformOwner || hasPermission("templates.read", session);
   const canViewAutomations = isPlatformOwner || hasPermission("automation.read", session);
   const canViewApi = isPlatformOwner || hasPermission("api.read", session);
+  const canViewAnalytics = isPlatformOwner || (hasPermission("campaigns.read", session) && hasPermission("api.read", session));
+  const canViewIntegrations = isPlatformOwner || hasPermission("api.write", session);
+  const canViewSettings = isPlatformOwner || (hasPermission("automation.read", session) && hasPermission("api.read", session));
   const canViewBilling = isPlatformOwner || hasPermission("billing.read", session);
   const canManageTeam = ["owner", "admin", "super_admin"].includes(role);
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
@@ -194,11 +197,11 @@ const DashboardLayout = () => {
     canViewContacts ? { name: "Contacts", href: "/dashboard/contacts", icon: Users } : null,
     canViewCampaigns ? { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone } : null,
     canViewAutomations ? { name: "Automations", href: "/dashboard/automations", icon: Zap } : null,
-    canViewApi ? { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 } : null,
-    canViewApi ? { name: "Integrations", href: "/dashboard/integrations", icon: Plug } : null,
+    canViewAnalytics ? { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 } : null,
+    canViewIntegrations ? { name: "Integrations", href: "/dashboard/integrations", icon: Plug } : null,
     canManageTeam ? { name: "Team", href: "/dashboard/team", icon: UsersRound } : null,
     canViewBilling ? { name: "Billing", href: "/dashboard/billing", icon: CreditCard } : null,
-    canViewApi ? { name: "Settings", href: "/dashboard/settings", icon: Settings } : null,
+    canViewSettings ? { name: "Settings", href: "/dashboard/settings", icon: Settings } : null,
     canViewInbox ? { name: "Mobile Devices", href: "/dashboard/mobile-devices", icon: Smartphone } : null,
   ].filter(Boolean);
 
@@ -400,7 +403,7 @@ const DashboardLayout = () => {
                 <User className="w-4 h-4 mr-2" />
                 Profile
               </DropdownMenuItem>
-              {canViewApi && (
+              {canViewSettings && (
                 <DropdownMenuItem data-testid="settings-menu-item">
                   <Settings className="w-4 h-4 mr-2" />
                   Settings
@@ -713,7 +716,7 @@ const DashboardLayout = () => {
           </nav>
 
           {/* Usage Stats */}
-          {sidebarOpen && (
+          {sidebarOpen && canViewBilling && (
             <div className="mx-3 mt-8 p-4 bg-slate-50 rounded-xl">
               <p className="text-sm font-medium text-slate-900 mb-3">Monthly Usage</p>
               <div className="space-y-3">

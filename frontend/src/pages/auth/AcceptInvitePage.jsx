@@ -1,19 +1,43 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { authAcceptInvite, setSession } from "@/lib/api";
+import { authAcceptInvite, authInvitePreview, setSession } from "@/lib/api";
 import { toast } from "sonner";
 
 export default function AcceptInvitePage() {
   const [params] = useSearchParams();
   const token = useMemo(() => params.get("token") || "", [params]);
   const [name, setName] = useState("");
+  const [prefillLoaded, setPrefillLoaded] = useState(false);
+  const [inviteMeta, setInviteMeta] = useState({ email: "", role: "", tenantName: "" });
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    let active = true;
+    if (!token) return;
+    authInvitePreview({ token })
+      .then((data) => {
+        if (!active) return;
+        if (data?.fullName) setName(String(data.fullName));
+        setInviteMeta({
+          email: String(data?.email || ""),
+          role: String(data?.role || ""),
+          tenantName: String(data?.tenantName || "")
+        });
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setPrefillLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [token]);
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -42,12 +66,15 @@ export default function AcceptInvitePage() {
         <CardHeader>
           <CardTitle>Accept Team Invite</CardTitle>
           <CardDescription>Set your name and password to join the project.</CardDescription>
+          {inviteMeta.tenantName && <CardDescription>Project: {inviteMeta.tenantName}</CardDescription>}
+          {inviteMeta.email && <CardDescription>Email: {inviteMeta.email}</CardDescription>}
+          {inviteMeta.role && <CardDescription>Role: {inviteMeta.role}</CardDescription>}
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={onSubmit}>
             <div className="space-y-2">
               <Label>Full Name</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Rakesh Kumar" />
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Rakesh Kumar" disabled={!prefillLoaded} />
             </div>
             <div className="space-y-2">
               <Label>Password</Label>
