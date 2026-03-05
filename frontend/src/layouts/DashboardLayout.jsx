@@ -43,7 +43,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { apiGet, authProjects, clearSession, getPlatformSettings, getSession, initializeMe, switchProject } from "@/lib/api";
+import { apiGet, authProjects, clearSession, getPlatformSettings, getSession, hasPermission, initializeMe, switchProject } from "@/lib/api";
 import { isNotificationAudioUnlocked, isNotificationSoundEnabled, unlockNotificationAudio } from "@/lib/notificationAudio";
 
 const DashboardLayout = () => {
@@ -68,6 +68,14 @@ const DashboardLayout = () => {
   const canAccessPlatformSettings = role === "super_admin";
   const isPlatformOwner = role === "super_admin";
   const isPlatformView = isPlatformOwner && ownerMode === "platform";
+  const canViewInbox = isPlatformOwner || hasPermission("inbox.read", session);
+  const canViewContacts = isPlatformOwner || hasPermission("contacts.read", session);
+  const canViewCampaigns = isPlatformOwner || hasPermission("campaigns.read", session);
+  const canViewTemplates = isPlatformOwner || hasPermission("templates.read", session);
+  const canViewAutomations = isPlatformOwner || hasPermission("automation.read", session);
+  const canViewApi = isPlatformOwner || hasPermission("api.read", session);
+  const canViewBilling = isPlatformOwner || hasPermission("billing.read", session);
+  const canManageTeam = ["owner", "admin", "super_admin"].includes(role);
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
   const isBrandingPage = location.pathname.startsWith("/dashboard/platform-branding");
   const isTemplatesPage = location.pathname.startsWith("/dashboard/templates");
@@ -182,18 +190,17 @@ const DashboardLayout = () => {
   };
 
   const tenantNavigation = [
-    { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-    { name: "Inbox", href: "/dashboard/inbox", icon: Inbox, badge: inboxUnreadCount > 0 ? String(inboxUnreadCount) : "" },
-    { name: "Contacts", href: "/dashboard/contacts", icon: Users },
-    { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone },
-    { name: "Automations", href: "/dashboard/automations", icon: Zap },
-    { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
-    { name: "Integrations", href: "/dashboard/integrations", icon: Plug },
-    { name: "Team", href: "/dashboard/team", icon: UsersRound },
-    { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
-    { name: "Settings", href: "/dashboard/settings", icon: Settings },
-    { name: "Mobile Devices", href: "/dashboard/mobile-devices", icon: Smartphone },
-  ];
+    canViewInbox ? { name: "Inbox", href: "/dashboard/inbox", icon: Inbox, badge: inboxUnreadCount > 0 ? String(inboxUnreadCount) : "" } : null,
+    canViewContacts ? { name: "Contacts", href: "/dashboard/contacts", icon: Users } : null,
+    canViewCampaigns ? { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone } : null,
+    canViewAutomations ? { name: "Automations", href: "/dashboard/automations", icon: Zap } : null,
+    canViewApi ? { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 } : null,
+    canViewApi ? { name: "Integrations", href: "/dashboard/integrations", icon: Plug } : null,
+    canManageTeam ? { name: "Team", href: "/dashboard/team", icon: UsersRound } : null,
+    canViewBilling ? { name: "Billing", href: "/dashboard/billing", icon: CreditCard } : null,
+    canViewApi ? { name: "Settings", href: "/dashboard/settings", icon: Settings } : null,
+    canViewInbox ? { name: "Mobile Devices", href: "/dashboard/mobile-devices", icon: Smartphone } : null,
+  ].filter(Boolean);
 
   const platformNavigation = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -393,14 +400,18 @@ const DashboardLayout = () => {
                 <User className="w-4 h-4 mr-2" />
                 Profile
               </DropdownMenuItem>
-              <DropdownMenuItem data-testid="settings-menu-item">
-                <Settings className="w-4 h-4 mr-2" />
-                Settings
-              </DropdownMenuItem>
-              <DropdownMenuItem data-testid="billing-menu-item">
-                <CreditCard className="w-4 h-4 mr-2" />
-                Billing
-              </DropdownMenuItem>
+              {canViewApi && (
+                <DropdownMenuItem data-testid="settings-menu-item">
+                  <Settings className="w-4 h-4 mr-2" />
+                  Settings
+                </DropdownMenuItem>
+              )}
+              {canViewBilling && (
+                <DropdownMenuItem data-testid="billing-menu-item">
+                  <CreditCard className="w-4 h-4 mr-2" />
+                  Billing
+                </DropdownMenuItem>
+              )}
               {isPlatformOwner && (
                 <>
                   <DropdownMenuSeparator />

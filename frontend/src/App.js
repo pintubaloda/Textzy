@@ -1,7 +1,7 @@
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
-import { getSession } from "@/lib/api";
+import { getSession, hasPermission } from "@/lib/api";
 
 // Landing Page
 import LandingPage from "@/pages/LandingPage";
@@ -37,6 +37,21 @@ function App() {
   const session = getSession();
   const authed = !!session.email;
   const isPlatformOwner = (session.role || "").toLowerCase() === "super_admin";
+  const can = (permission) => isPlatformOwner || hasPermission(permission, session);
+  const canManageTeam = isPlatformOwner || ["owner", "admin"].includes((session.role || "").toLowerCase());
+  const firstTenantPath = can("inbox.read")
+    ? "/dashboard/inbox"
+    : can("contacts.read")
+      ? "/dashboard/contacts"
+      : can("campaigns.read")
+        ? "/dashboard/campaigns"
+        : can("automation.read")
+          ? "/dashboard/automations"
+          : can("billing.read")
+            ? "/dashboard/billing"
+            : can("api.read")
+              ? "/dashboard/settings"
+              : "/login";
   return (
     <div className="App">
       <BrowserRouter>
@@ -51,22 +66,22 @@ function App() {
 
           {/* Dashboard Routes */}
           <Route path="/dashboard" element={authed ? <DashboardLayout /> : <Navigate to="/login" replace />}>
-            <Route index element={<DashboardOverview />} />
-            <Route path="inbox" element={<InboxPage />} />
-            <Route path="contacts" element={<ContactsPage />} />
-            <Route path="campaigns" element={<CampaignsPage />} />
-            <Route path="templates" element={<TemplatesPage />} />
-            <Route path="sms-setup" element={<SmsSetupPage />} />
-            <Route path="automations" element={<AutomationsPage />} />
-            <Route path="automations/workflow" element={<AutomationsPage />} />
-            <Route path="automations/qa" element={<AutomationsPage />} />
-            <Route path="analytics" element={<AnalyticsPage />} />
-            <Route path="integrations" element={<IntegrationsPage />} />
-            <Route path="whatsapp-onboarding" element={<WhatsAppOnboardingPage />} />
-            <Route path="billing" element={<BillingPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="mobile-devices" element={<MobileDevicesPage />} />
-            <Route path="team" element={<TeamPage />} />
+            <Route index element={isPlatformOwner ? <DashboardOverview /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="inbox" element={can("inbox.read") ? <InboxPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="contacts" element={can("contacts.read") ? <ContactsPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="campaigns" element={can("campaigns.read") ? <CampaignsPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="templates" element={can("templates.read") ? <TemplatesPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="sms-setup" element={can("templates.read") ? <SmsSetupPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="automations" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="automations/workflow" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="automations/qa" element={can("automation.read") ? <AutomationsPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="analytics" element={can("api.read") ? <AnalyticsPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="integrations" element={can("api.read") ? <IntegrationsPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="whatsapp-onboarding" element={can("inbox.read") ? <WhatsAppOnboardingPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="billing" element={can("billing.read") ? <BillingPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="settings" element={can("api.read") ? <SettingsPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="mobile-devices" element={can("inbox.read") ? <MobileDevicesPage /> : <Navigate to={firstTenantPath} replace />} />
+            <Route path="team" element={canManageTeam ? <TeamPage /> : <Navigate to={firstTenantPath} replace />} />
             <Route path="admin" element={isPlatformOwner ? <AdminPage /> : <Navigate to="/dashboard" replace />} />
             <Route path="platform-settings" element={isPlatformOwner ? <PlatformSettingsPage /> : <Navigate to="/dashboard" replace />} />
             <Route path="platform-branding" element={isPlatformOwner ? <PlatformBrandingPage /> : <Navigate to="/dashboard" replace />} />
