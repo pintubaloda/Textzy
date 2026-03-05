@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import {
   Table,
   TableBody,
@@ -17,12 +16,6 @@ import {
   Download,
   Check,
   Zap,
-  MessageSquare,
-  Users,
-  AlertTriangle,
-  Workflow,
-  Bot,
-  Activity,
 } from "lucide-react";
 import {
   changeBillingPlan,
@@ -116,6 +109,31 @@ const BillingPage = () => {
       apiCalls: { used: usageValues.apiCalls || 0, limit: limits.apiCalls || 0, percentage: pct(usageValues.apiCalls || 0, limits.apiCalls || 0) }
     };
   }, [currentPlan, usageValues]);
+  const usageGroups = useMemo(() => ([
+    {
+      key: "messaging",
+      title: "Messaging Usage",
+      subtitle: "WhatsApp and SMS consumption",
+      action: "Upgrade Plan",
+      items: [
+        { key: "whatsapp", label: "WhatsApp Messages", suffix: "messages" },
+        { key: "sms", label: "SMS Credits", suffix: "credits" },
+      ],
+    },
+    {
+      key: "platform",
+      title: "Platform Usage",
+      subtitle: "Team and automation resources",
+      action: "Contact Sales",
+      items: [
+        { key: "contacts", label: "Contacts", suffix: "contacts" },
+        { key: "team", label: "Team Members", suffix: "members" },
+        { key: "flows", label: "Flows", suffix: "flows" },
+        { key: "chatbots", label: "Chatbots", suffix: "bots" },
+        { key: "apiCalls", label: "API Calls", suffix: "calls" },
+      ],
+    },
+  ]), []);
 
   const dunningBadgeClass = useMemo(() => {
     const status = String(dunningStatus?.subscription?.status || "").toLowerCase();
@@ -416,40 +434,43 @@ const BillingPage = () => {
           <CardDescription>Your usage for this billing period</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[
-              { key: "whatsapp", label: "WhatsApp Messages", icon: MessageSquare, color: "text-green-600", suffix: "messages" },
-              { key: "sms", label: "SMS Credits", icon: MessageSquare, color: "text-orange-600", suffix: "credits" },
-              { key: "contacts", label: "Contacts", icon: Users, color: "text-blue-600", suffix: "contacts" },
-              { key: "team", label: "Team Members", icon: Users, color: "text-purple-600", suffix: "members" },
-              { key: "flows", label: "Flows", icon: Workflow, color: "text-indigo-600", suffix: "flows" },
-              { key: "chatbots", label: "Chatbots", icon: Bot, color: "text-pink-600", suffix: "bots" },
-              { key: "apiCalls", label: "API Calls", icon: Activity, color: "text-cyan-600", suffix: "calls" },
-            ].map((item) => {
-              const row = usage[item.key];
-              const Icon = item.icon;
-              return (
-                <div className="space-y-3" key={item.key}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Icon className={`w-4 h-4 ${item.color}`} />
-                      <span className="text-sm font-medium text-slate-700">{item.label}</span>
-                    </div>
-                    <span className="text-sm text-slate-600">{row.percentage}%</span>
-                  </div>
-                  <Progress value={row.percentage} className="h-2" />
-                  <p className="text-xs text-slate-500">
-                    {Number(row.used || 0).toLocaleString()} / {Number(row.limit || 0).toLocaleString()} {item.suffix}
-                  </p>
-                  {row.percentage > 80 ? (
-                    <div className="flex items-center gap-1 text-xs text-yellow-600">
-                      <AlertTriangle className="w-3 h-3" />
-                      Running low
-                    </div>
-                  ) : null}
+          <div className="grid md:grid-cols-2 gap-4">
+            {usageGroups.map((group) => (
+              <div key={group.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
+                <div className="mb-3">
+                  <h4 className="text-xl font-semibold text-slate-900">{group.title}</h4>
+                  <p className="text-sm text-slate-500">{group.subtitle}</p>
                 </div>
-              );
-            })}
+                <div className="space-y-4">
+                  {group.items.map((item) => {
+                    const row = usage[item.key];
+                    const used = Number(row?.used || 0);
+                    const limit = Number(row?.limit || 0);
+                    const ratio = Math.max(0, Math.min(100, Number(row?.percentage || 0)));
+                    const limitLabel = limit > 0 ? limit.toLocaleString() : "8";
+                    return (
+                      <div key={`${group.key}-${item.key}`}>
+                        <div className="flex items-end justify-between gap-3">
+                          <div className="text-[15px] leading-5 font-medium text-slate-800">{item.label}</div>
+                          <div className="text-right text-[22px] leading-6 font-semibold text-slate-900">
+                            {used.toLocaleString()} / {limitLabel}
+                          </div>
+                        </div>
+                        <div className="mt-2 h-2.5 rounded-full bg-slate-200 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-orange-500 transition-all duration-300"
+                            style={{ width: `${Math.max(2, ratio)}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <Button variant="outline" className="mt-5 w-full rounded-xl border-slate-300 bg-slate-100 hover:bg-slate-200">
+                  {group.action}
+                </Button>
+              </div>
+            ))}
           </div>
 
           <div className="mt-6 p-4 bg-orange-50 rounded-lg flex items-center justify-between">
@@ -595,3 +616,4 @@ const BillingPage = () => {
 };
 
 export default BillingPage;
+
