@@ -155,22 +155,6 @@ public class MessagingService(
             .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.IdempotencyKey == idempotencyKey, ct);
         if (existing is not null) return existing;
 
-        if (request.Channel == ChannelType.WhatsApp)
-        {
-            var c = await billingGuard.TryConsumeAsync(tenancy.TenantId, "whatsappMessages", 1, ct);
-            if (!c.Allowed) throw new InvalidOperationException(c.Message);
-        }
-        else if (request.Channel == ChannelType.Sms)
-        {
-            var optedOut = await db.SmsOptOuts.AsNoTracking()
-                .AnyAsync(x => x.TenantId == tenancy.TenantId && x.Phone == request.Recipient && x.IsActive, ct);
-            if (optedOut)
-                throw new InvalidOperationException("Recipient has opted out from SMS.");
-
-            var c = await billingGuard.TryConsumeAsync(tenancy.TenantId, "smsCredits", 1, ct);
-            if (!c.Allowed) throw new InvalidOperationException(c.Message);
-        }
-
         var messageBody = request.UseTemplate
             ? $"{request.TemplateName}|{string.Join(",", request.TemplateParameters)}|{request.TemplateLanguageCode}"
             : request.IsInteractive
@@ -190,6 +174,26 @@ public class MessagingService(
                 : request.IsMedia
                     ? $"media:{request.MediaType}"
                     : "session";
+
+        var smsSegmentInfo = request.Channel == ChannelType.Sms
+            ? EstimateSmsSegments(messageBody)
+            : new SmsSegmentInfo(1, false);
+
+        if (request.Channel == ChannelType.WhatsApp)
+        {
+            var c = await billingGuard.TryConsumeAsync(tenancy.TenantId, "whatsappMessages", 1, ct);
+            if (!c.Allowed) throw new InvalidOperationException(c.Message);
+        }
+        else if (request.Channel == ChannelType.Sms)
+        {
+            var optedOut = await db.SmsOptOuts.AsNoTracking()
+                .AnyAsync(x => x.TenantId == tenancy.TenantId && x.Phone == request.Recipient && x.IsActive, ct);
+            if (optedOut)
+                throw new InvalidOperationException("Recipient has opted out from SMS.");
+
+            var c = await billingGuard.TryConsumeAsync(tenancy.TenantId, "smsCredits", smsSegmentInfo.Segments, ct);
+            if (!c.Allowed) throw new InvalidOperationException(c.Message);
+        }
 
         var message = new Message
         {
@@ -249,7 +253,6 @@ public class MessagingService(
         if (request.Channel == ChannelType.Sms)
         {
             const decimal unitPrice = 1.00m; // Per-message charge model
-            var segments = EstimateSmsSegments(message.Body);
             db.SmsBillingLedgers.Add(new SmsBillingLedger
             {
                 Id = Guid.NewGuid(),
@@ -259,11 +262,13 @@ public class MessagingService(
                 ProviderMessageId = string.Empty,
                 Currency = "INR",
                 UnitPrice = unitPrice,
-                Segments = segments,
-                TotalAmount = decimal.Round(unitPrice * segments, 2),
+                Segments = smsSegmentInfo.Segments,
+                TotalAmount = decimal.Round(unitPrice * smsSegmentInfo.Segments, 2),
                 BillingState = "charged",
                 DeliveryState = "submitted",
-                Notes = "Charged at enqueue.",
+                Notes = smsSegmentInfo.IsUnicode
+                    ? "Charged at enqueue (Unicode SMS segmenting: 70/67)."
+                    : "Charged at enqueue (English SMS segmenting: 160/153).",
                 CreatedAtUtc = DateTime.UtcNow
             });
         }
@@ -334,10 +339,46 @@ public class MessagingService(
         return message;
     }
 
-    private static int EstimateSmsSegments(string text)
+    private readonly record struct SmsSegmentInfo(int Segments, bool IsUnicode);
+
+    private static SmsSegmentInfo EstimateSmsSegments(string text)
     {
         var body = text ?? string.Empty;
-        if (body.Length <= 160) return 1;
-        return Math.Max(1, (int)Math.Ceiling(body.Length / 153.0));
+        if (body.Length == 0) return new SmsSegmentInfo(1, false);
+
+        var isUnicode = ContainsNonGsm7(body);
+        var singleLimit = isUnicode ? 70 : 160;
+        var concatLimit = isUnicode ? 67 : 153;
+
+        if (body.Length <= singleLimit) return new SmsSegmentInfo(1, isUnicode);
+        var segments = Math.Max(1, (int)Math.Ceiling(body.Length / (double)concatLimit));
+        return new SmsSegmentInfo(segments, isUnicode);
     }
+
+    private static bool ContainsNonGsm7(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return false;
+
+        foreach (var ch in value)
+        {
+            if (Gsm7BasicChars.Contains(ch) || Gsm7ExtendedChars.Contains(ch))
+                continue;
+            return true;
+        }
+        return false;
+    }
+
+    private static readonly HashSet<char> Gsm7BasicChars =
+    [
+        '@', '£', '$', '¥', 'è', 'é', 'ù', 'ì', 'ò', 'Ç', '\n', 'Ø', 'ø', '\r', 'Å', 'å',
+        'Δ', '_', 'Φ', 'Γ', 'Λ', 'Ω', 'Π', 'Ψ', 'Σ', 'Θ', 'Ξ', 'Æ', 'æ', 'ß', 'É', ' ',
+        '!', '"', '#', '¤', '%', '&', '\'', '(', ')', '*', '+', ',', '-', '.', '/', '0',
+        '1', '2', '3', '4', '5', '6', '7', '8', '9', ':', ';', '<', '=', '>', '?', '¡',
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+        'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'Ä', 'Ö', 'Ñ', 'Ü', '§', '¿',
+        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',
+        'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'ä', 'ö', 'ñ', 'ü', 'à'
+    ];
+
+    private static readonly HashSet<char> Gsm7ExtendedChars = ['^', '{', '}', '\\', '[', '~', ']', '|', '€'];
 }
