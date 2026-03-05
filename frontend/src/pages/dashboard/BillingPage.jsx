@@ -25,10 +25,13 @@ import {
   changeBillingPlan,
   cancelBillingSubscription,
   createRazorpayOrder,
+  downloadAllBillingInvoices,
+  downloadBillingInvoice,
   getBillingInvoices,
   getBillingPaymentConfig,
   getBillingPlans,
   getBillingUsage,
+  getCompanySettings,
   getCurrentBillingPlan,
   verifyRazorpayPayment
 } from "@/lib/api";
@@ -41,6 +44,7 @@ const BillingPage = () => {
   const [usageValues, setUsageValues] = useState({});
   const [invoices, setInvoices] = useState([]);
   const [paymentConfig, setPaymentConfig] = useState(null);
+  const [company, setCompany] = useState(null);
   const [payingCode, setPayingCode] = useState("");
 
   useEffect(() => {
@@ -52,11 +56,13 @@ const BillingPage = () => {
           getBillingUsage(),
           getBillingInvoices()
         ]);
+        const companyCfg = await getCompanySettings().catch(() => null);
         const paymentCfg = await getBillingPaymentConfig().catch(() => null);
         setPlans(Array.isArray(p) ? p : []);
         setSub(c || null);
         setUsageValues(u?.values || {});
         setInvoices(Array.isArray(i) ? i : []);
+        setCompany(companyCfg || null);
         setPaymentConfig(paymentCfg);
       } catch (e) {
         toast.error(e.message || "Failed to load billing");
@@ -65,6 +71,10 @@ const BillingPage = () => {
   }, []);
 
   const currentPlan = sub?.plan || null;
+  const companyName = String(company?.companyName || "").trim() || "Your company";
+  const billingAddressText = String(company?.address || "").trim();
+  const billingEmail = String(company?.billingEmail || "").trim();
+  const billingPhone = String(company?.billingPhone || "").trim();
   const pct = (used, limit) => !limit ? 0 : Math.min(100, Math.round((used / limit) * 100));
   const usage = useMemo(() => {
     const limits = currentPlan?.limits || {};
@@ -152,6 +162,36 @@ const BillingPage = () => {
       toast.error(e?.message || "Payment failed");
     } finally {
       setPayingCode("");
+    }
+  };
+
+  const triggerBlobDownload = (blob, filename) => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadInvoice = async (invoice) => {
+    try {
+      const blob = await downloadBillingInvoice(invoice.id);
+      const name = `${invoice.invoiceNo || invoice.id || "invoice"}.html`;
+      triggerBlobDownload(blob, name);
+    } catch (e) {
+      toast.error(e?.message || "Failed to download invoice");
+    }
+  };
+
+  const handleDownloadAllInvoices = async () => {
+    try {
+      const blob = await downloadAllBillingInvoices();
+      triggerBlobDownload(blob, "textzy-invoices.csv");
+    } catch (e) {
+      toast.error(e?.message || "Failed to download invoices");
     }
   };
 
@@ -382,16 +422,21 @@ const BillingPage = () => {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="p-4 bg-slate-50 rounded-lg flex items-center gap-4">
-              <div className="w-12 h-8 bg-gradient-to-r from-blue-600 to-blue-800 rounded flex items-center justify-center text-white text-xs font-bold">
-                VISA
+              <div className="w-12 h-8 bg-gradient-to-r from-blue-600 to-blue-800 rounded flex items-center justify-center text-white text-xs font-bold uppercase">
+                {(paymentConfig?.provider || "na").slice(0, 4)}
               </div>
               <div>
-                <p className="font-medium text-slate-900">•••• •••• •••• 4242</p>
-                <p className="text-sm text-slate-500">Expires 12/26</p>
+                <p className="font-medium text-slate-900">
+                  {(paymentConfig?.provider || "Not configured").toUpperCase()}
+                  {paymentConfig?.razorpay?.keyId ? " | Key configured" : " | Key missing"}
+                </p>
+                <p className="text-sm text-slate-500">
+                  Mode: {(paymentConfig?.mode || "test").toUpperCase()}
+                </p>
               </div>
             </div>
-            <Button variant="outline" className="w-full" data-testid="update-payment-btn">
-              Update Payment Method
+            <Button variant="outline" className="w-full" data-testid="update-payment-btn" onClick={() => toast.info("Open Platform Settings -> Payment Gateway")}>
+              Open Payment Setup
             </Button>
           </CardContent>
         </Card>
@@ -404,18 +449,17 @@ const BillingPage = () => {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="text-sm text-slate-600 space-y-1">
-              <p className="font-medium text-slate-900">TechStart India Pvt. Ltd.</p>
-              <p>123 Business Park, Sector 5</p>
-              <p>Mumbai, Maharashtra 400001</p>
-              <p>India</p>
-              <p className="pt-2">GSTIN: 27XXXXX1234X1Z5</p>
+              <p className="font-medium text-slate-900">{companyName}</p>
+              <p>{billingAddressText || "Address not configured"}</p>
+              <p>{billingEmail || "Billing email not configured"}</p>
+              <p>{billingPhone || "Billing phone not configured"}</p>
+              <p className="pt-2">GSTIN: {company?.gstin || "-"}</p>
             </div>
-            <Button variant="outline" className="w-full" data-testid="update-address-btn">
-              Update Address
+            <Button variant="outline" className="w-full" data-testid="update-address-btn" onClick={() => toast.info("Open Dashboard Settings -> Company")}>
+              Open Company Settings
             </Button>
           </CardContent>
         </Card>
-
         {/* Quick Stats */}
         <Card className="border-slate-200">
           <CardHeader>
@@ -451,7 +495,7 @@ const BillingPage = () => {
               <CardTitle>Invoice History</CardTitle>
               <CardDescription>Download your past invoices</CardDescription>
             </div>
-            <Button variant="outline" className="gap-2" data-testid="download-all-invoices-btn">
+            <Button variant="outline" className="gap-2" data-testid="download-all-invoices-btn" onClick={handleDownloadAllInvoices}>
               <Download className="w-4 h-4" />
               Download All
             </Button>
@@ -480,7 +524,7 @@ const BillingPage = () => {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" className="gap-1" data-testid={`download-invoice-${invoice.invoiceNo || invoice.id}`}>
+                    <Button variant="ghost" size="sm" className="gap-1" data-testid={`download-invoice-${invoice.invoiceNo || invoice.id}`} onClick={() => handleDownloadInvoice(invoice)}>
                       <Download className="w-4 h-4" />
                       Download
                     </Button>

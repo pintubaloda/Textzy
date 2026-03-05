@@ -15,6 +15,7 @@ namespace Textzy.Api.Controllers;
 public class PaymentWebhookController(
     ControlDbContext db,
     SecretCryptoService crypto,
+    EmailService emailService,
     AuditLogService audit,
     SensitiveDataRedactor redactor,
     ILogger<PaymentWebhookController> logger) : ControllerBase
@@ -159,6 +160,17 @@ public class PaymentWebhookController(
                 attempt.RawResponse = raw;
                 attempt.UpdatedAtUtc = DateTime.UtcNow;
                 await db.SaveChangesAsync(ct);
+                await TrySendBillingEventAsync(
+                    attempt.TenantId,
+                    "Payment webhook validation failed",
+                    "Payment was received by webhook but status is not captured.",
+                    new Dictionary<string, string>
+                    {
+                        ["Order ID"] = orderId,
+                        ["Payment ID"] = paymentId,
+                        ["Reason"] = "Not captured"
+                    },
+                    ct);
                 return;
             }
             if (amountPaise != expectedPaise || !string.Equals(currency, attempt.Currency, StringComparison.OrdinalIgnoreCase))
@@ -168,6 +180,18 @@ public class PaymentWebhookController(
                 attempt.RawResponse = raw;
                 attempt.UpdatedAtUtc = DateTime.UtcNow;
                 await db.SaveChangesAsync(ct);
+                await TrySendBillingEventAsync(
+                    attempt.TenantId,
+                    "Payment amount mismatch",
+                    "Webhook payment amount/currency did not match the created order.",
+                    new Dictionary<string, string>
+                    {
+                        ["Order ID"] = orderId,
+                        ["Payment ID"] = paymentId,
+                        ["Expected"] = $"{expectedPaise} {attempt.Currency}",
+                        ["Received"] = $"{amountPaise} {currency}"
+                    },
+                    ct);
                 return;
             }
 
@@ -180,6 +204,17 @@ public class PaymentWebhookController(
             await ActivateSubscriptionFromPaymentAsync(attempt, ct);
             await db.SaveChangesAsync(ct);
             await audit.WriteAsync("billing.razorpay.webhook.paid", $"tenant={attempt.TenantId}; order={attempt.OrderId}", ct);
+            await TrySendBillingEventAsync(
+                attempt.TenantId,
+                "Payment successful",
+                "Your payment was confirmed by webhook and subscription is active.",
+                new Dictionary<string, string>
+                {
+                    ["Order ID"] = attempt.OrderId,
+                    ["Payment ID"] = attempt.PaymentId ?? paymentId,
+                    ["Amount"] = $"{attempt.Amount:0.00} {attempt.Currency}"
+                },
+                ct);
         }
         catch (Exception ex)
         {
@@ -352,6 +387,54 @@ public class PaymentWebhookController(
                 PdfUrl = string.Empty,
                 CreatedAtUtc = DateTime.UtcNow
             });
+            await TrySendBillingEventAsync(
+                attempt.TenantId,
+                "Invoice generated",
+                "A paid invoice has been generated for your subscription.",
+                new Dictionary<string, string>
+                {
+                    ["Invoice No"] = invoiceNo,
+                    ["Subtotal"] = $"{subtotal:0.00} {attempt.Currency}",
+                    ["Tax"] = $"{tax:0.00} {attempt.Currency}",
+                    ["Total"] = $"{subtotal + tax:0.00} {attempt.Currency}"
+                },
+                ct);
         }
+    }
+
+    private async Task TrySendBillingEventAsync(Guid tenantId, string title, string description, Dictionary<string, string> details, CancellationToken ct)
+    {
+        try
+        {
+            var recipient = await ResolveBillingRecipientAsync(tenantId, ct);
+            if (string.IsNullOrWhiteSpace(recipient.email)) return;
+            await emailService.SendBillingEventAsync(recipient.email, recipient.name, recipient.companyName, title, description, details, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Non-blocking payment webhook email failed tenant={TenantId}: {Error}", tenantId, redactor.RedactText(ex.Message));
+        }
+    }
+
+    private async Task<(string email, string name, string companyName)> ResolveBillingRecipientAsync(Guid tenantId, CancellationToken ct)
+    {
+        var profile = await db.TenantCompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, ct);
+        var tenant = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == tenantId, ct);
+        var companyName = string.IsNullOrWhiteSpace(profile?.CompanyName) ? (tenant?.Name ?? "Textzy Workspace") : profile!.CompanyName;
+        if (!string.IsNullOrWhiteSpace(profile?.BillingEmail))
+            return (profile.BillingEmail.Trim(), profile.CompanyName, companyName);
+
+        var ownerUserId = await db.TenantUsers.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.Role.ToLower() == "owner")
+            .OrderBy(x => x.CreatedAtUtc)
+            .Select(x => x.UserId)
+            .FirstOrDefaultAsync(ct);
+        if (ownerUserId != Guid.Empty)
+        {
+            var owner = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == ownerUserId, ct);
+            if (!string.IsNullOrWhiteSpace(owner?.Email))
+                return (owner.Email.Trim(), owner.FullName, companyName);
+        }
+        return (string.Empty, string.Empty, companyName);
     }
 }

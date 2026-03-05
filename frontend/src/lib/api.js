@@ -847,6 +847,14 @@ export async function verifyRazorpayPayment(payload) {
   return apiPost('/api/billing/razorpay/verify', payload)
 }
 
+export async function downloadBillingInvoice(invoiceId) {
+  return apiGetBlob(`/api/billing/invoices/${encodeURIComponent(invoiceId)}/download`)
+}
+
+export async function downloadAllBillingInvoices() {
+  return apiGetBlob('/api/billing/invoices/download-all')
+}
+
 export async function getPublicPlans() {
   const res = await fetch(`${API_BASE}/api/public/plans`)
   if (!res.ok) throw new Error(`GET /api/public/plans failed (${res.status})`)

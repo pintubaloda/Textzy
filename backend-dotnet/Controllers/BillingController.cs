@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -19,6 +20,7 @@ public class BillingController(
     TenancyContext tenancy,
     RbacService rbac,
     SecretCryptoService crypto,
+    EmailService emailService,
     SensitiveDataRedactor redactor,
     AuditLogService audit,
     ILogger<BillingController> logger) : ControllerBase
@@ -94,6 +96,55 @@ public class BillingController(
         }));
     }
 
+    [HttpGet("invoices/{invoiceId:guid}/download")]
+    public async Task<IActionResult> DownloadInvoice(Guid invoiceId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
+        if (!rbac.HasPermission(BillingRead)) return Forbid();
+
+        var inv = await db.BillingInvoices.FirstOrDefaultAsync(x => x.Id == invoiceId && x.TenantId == tenancy.TenantId, ct);
+        if (inv is null) return NotFound("Invoice not found.");
+
+        var tenant = await db.Tenants.FirstOrDefaultAsync(x => x.Id == tenancy.TenantId, ct);
+        var profile = await db.TenantCompanyProfiles.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId, ct);
+        var companyName = string.IsNullOrWhiteSpace(profile?.CompanyName) ? (tenant?.Name ?? "Textzy Workspace") : profile!.CompanyName;
+        var billingEmail = profile?.BillingEmail ?? string.Empty;
+
+        var html = BuildInvoiceHtml(inv, companyName, billingEmail);
+        var bytes = Encoding.UTF8.GetBytes(html);
+        var filename = $"{(string.IsNullOrWhiteSpace(inv.InvoiceNo) ? inv.Id.ToString("N") : inv.InvoiceNo)}.html";
+        return File(bytes, "text/html; charset=utf-8", filename);
+    }
+
+    [HttpGet("invoices/download-all")]
+    public async Task<IActionResult> DownloadAllInvoices(CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
+        if (!rbac.HasPermission(BillingRead)) return Forbid();
+
+        var rows = await db.BillingInvoices
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToListAsync(ct);
+
+        var sb = new StringBuilder();
+        sb.AppendLine("InvoiceNo,PeriodStartUtc,PeriodEndUtc,Subtotal,TaxAmount,Total,Status,PaidAtUtc,CreatedAtUtc");
+        foreach (var x in rows)
+        {
+            sb.AppendLine(string.Join(",",
+                Csv(x.InvoiceNo),
+                Csv(x.PeriodStartUtc.ToString("O")),
+                Csv(x.PeriodEndUtc.ToString("O")),
+                Csv(x.Subtotal.ToString("0.00")),
+                Csv(x.TaxAmount.ToString("0.00")),
+                Csv(x.Total.ToString("0.00")),
+                Csv(x.Status),
+                Csv(x.PaidAtUtc?.ToString("O") ?? ""),
+                Csv(x.CreatedAtUtc.ToString("O"))));
+        }
+        return File(Encoding.UTF8.GetBytes(sb.ToString()), "text/csv; charset=utf-8", "textzy-invoices.csv");
+    }
+
     [HttpPost("change-plan")]
     public async Task<IActionResult> ChangePlan([FromBody] ChangePlanRequest request, CancellationToken ct)
     {
@@ -115,6 +166,18 @@ public class BillingController(
         sub.UpdatedAtUtc = DateTime.UtcNow;
         sub.RenewAtUtc = sub.BillingCycle == "yearly" ? DateTime.UtcNow.AddYears(1) : DateTime.UtcNow.AddMonths(1);
         await db.SaveChangesAsync(ct);
+        await TrySendBillingEventAsync(
+            tenancy.TenantId,
+            "Plan changed",
+            "Your subscription plan has been updated successfully.",
+            new Dictionary<string, string>
+            {
+                ["Plan"] = plan.Name,
+                ["Code"] = plan.Code,
+                ["Billing Cycle"] = sub.BillingCycle,
+                ["Status"] = sub.Status
+            },
+            ct);
         return Ok(new { changed = true, planCode = plan.Code });
     }
 
@@ -222,6 +285,19 @@ public class BillingController(
         };
         db.BillingPaymentAttempts.Add(attempt);
         await db.SaveChangesAsync(ct);
+        await TrySendBillingEventAsync(
+            tenancy.TenantId,
+            "Payment initiated",
+            "A Razorpay order was created for your plan upgrade.",
+            new Dictionary<string, string>
+            {
+                ["Plan"] = plan.Name,
+                ["Billing Cycle"] = cycle,
+                ["Amount"] = FormatCurrency(amount, payload.currency),
+                ["Order ID"] = orderId,
+                ["Mode"] = mode
+            },
+            ct);
 
         return Ok(new
         {
@@ -271,6 +347,17 @@ public class BillingController(
             attempt.LastError = "Razorpay signature mismatch";
             attempt.UpdatedAtUtc = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
+            await TrySendBillingEventAsync(
+                tenancy.TenantId,
+                "Payment verification failed",
+                "We could not verify your payment signature.",
+                new Dictionary<string, string>
+                {
+                    ["Order ID"] = request.RazorpayOrderId,
+                    ["Payment ID"] = request.RazorpayPaymentId,
+                    ["Reason"] = "Signature mismatch"
+                },
+                ct);
             return BadRequest("Invalid payment signature.");
         }
 
@@ -292,6 +379,17 @@ public class BillingController(
             attempt.UpdatedAtUtc = DateTime.UtcNow;
             attempt.RawResponse = validation.raw ?? attempt.RawResponse;
             await db.SaveChangesAsync(ct);
+            await TrySendBillingEventAsync(
+                tenancy.TenantId,
+                "Payment validation failed",
+                "Payment did not pass final validation checks.",
+                new Dictionary<string, string>
+                {
+                    ["Order ID"] = request.RazorpayOrderId,
+                    ["Payment ID"] = request.RazorpayPaymentId,
+                    ["Reason"] = validation.error
+                },
+                ct);
             return BadRequest(validation.error);
         }
 
@@ -303,6 +401,18 @@ public class BillingController(
         await ActivateSubscriptionFromPaymentAsync(attempt, ct);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("billing.razorpay.verify.success", $"tenant={tenancy.TenantId}; order={attempt.OrderId}", ct);
+        await TrySendBillingEventAsync(
+            tenancy.TenantId,
+            "Payment successful",
+            "Your payment is verified and subscription is active.",
+            new Dictionary<string, string>
+            {
+                ["Order ID"] = attempt.OrderId,
+                ["Payment ID"] = attempt.PaymentId ?? request.RazorpayPaymentId,
+                ["Billing Cycle"] = attempt.BillingCycle,
+                ["Amount"] = FormatCurrency(attempt.Amount, attempt.Currency)
+            },
+            ct);
         return Ok(new { verified = true, planCode = request.PlanCode, billingCycle = attempt.BillingCycle });
     }
 
@@ -317,6 +427,16 @@ public class BillingController(
         sub.CancelledAtUtc = DateTime.UtcNow;
         sub.UpdatedAtUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await TrySendBillingEventAsync(
+            tenancy.TenantId,
+            "Subscription cancelled",
+            "Your subscription has been cancelled.",
+            new Dictionary<string, string>
+            {
+                ["Status"] = sub.Status,
+                ["Cancelled At"] = (sub.CancelledAtUtc ?? DateTime.UtcNow).ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
+            },
+            ct);
         return Ok(new { cancelled = true });
     }
 
@@ -456,8 +576,9 @@ public class BillingController(
 
         var periodStart = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         var periodEnd = sub.BillingCycle == "yearly" ? periodStart.AddYears(1).AddSeconds(-1) : periodStart.AddMonths(1).AddSeconds(-1);
+        var invoiceNo = $"INV-{start:yyyyMMdd}-{attempt.OrderId}";
         var existingInvoice = await db.BillingInvoices
-            .FirstOrDefaultAsync(x => x.TenantId == attempt.TenantId && x.InvoiceNo == $"INV-{start:yyyyMMdd}-{attempt.OrderId}", ct);
+            .FirstOrDefaultAsync(x => x.TenantId == attempt.TenantId && x.InvoiceNo == invoiceNo, ct);
         if (existingInvoice is null)
         {
             var subtotal = attempt.Amount;
@@ -465,7 +586,7 @@ public class BillingController(
             db.BillingInvoices.Add(new BillingInvoice
             {
                 Id = Guid.NewGuid(),
-                InvoiceNo = $"INV-{start:yyyyMMdd}-{attempt.OrderId}",
+                InvoiceNo = invoiceNo,
                 TenantId = attempt.TenantId,
                 PeriodStartUtc = periodStart,
                 PeriodEndUtc = periodEnd,
@@ -477,6 +598,122 @@ public class BillingController(
                 PdfUrl = string.Empty,
                 CreatedAtUtc = DateTime.UtcNow
             });
+            await TrySendBillingEventAsync(
+                attempt.TenantId,
+                "Invoice generated",
+                "A paid invoice has been generated for your subscription.",
+                new Dictionary<string, string>
+                {
+                    ["Invoice No"] = invoiceNo,
+                    ["Period"] = $"{periodStart:yyyy-MM-dd} to {periodEnd:yyyy-MM-dd}",
+                    ["Subtotal"] = FormatCurrency(subtotal, attempt.Currency),
+                    ["Tax"] = FormatCurrency(tax, attempt.Currency),
+                    ["Total"] = FormatCurrency(subtotal + tax, attempt.Currency)
+                },
+                ct);
         }
+    }
+
+    private async Task TrySendBillingEventAsync(Guid tenantId, string title, string description, Dictionary<string, string> details, CancellationToken ct)
+    {
+        try
+        {
+            var recipient = await ResolveBillingRecipientAsync(tenantId, ct);
+            if (string.IsNullOrWhiteSpace(recipient.email)) return;
+            await emailService.SendBillingEventAsync(recipient.email, recipient.name, recipient.companyName, title, description, details, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Non-blocking billing email failed tenant={TenantId}: {Error}", tenantId, redactor.RedactText(ex.Message));
+        }
+    }
+
+    private async Task<(string email, string name, string companyName)> ResolveBillingRecipientAsync(Guid tenantId, CancellationToken ct)
+    {
+        var profile = await db.TenantCompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, ct);
+        var tenant = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == tenantId, ct);
+        var companyName = string.IsNullOrWhiteSpace(profile?.CompanyName) ? (tenant?.Name ?? "Textzy Workspace") : profile!.CompanyName;
+
+        if (!string.IsNullOrWhiteSpace(profile?.BillingEmail))
+            return (profile.BillingEmail.Trim(), profile.CompanyName, companyName);
+
+        var ownerUserId = await db.TenantUsers.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.Role.ToLower() == "owner")
+            .OrderBy(x => x.CreatedAtUtc)
+            .Select(x => x.UserId)
+            .FirstOrDefaultAsync(ct);
+        if (ownerUserId != Guid.Empty)
+        {
+            var owner = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == ownerUserId, ct);
+            if (!string.IsNullOrWhiteSpace(owner?.Email))
+                return (owner.Email.Trim(), owner.FullName, companyName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(auth.Email))
+            return (auth.Email.Trim(), string.IsNullOrWhiteSpace(auth.FullName) ? auth.Email : auth.FullName, companyName);
+
+        return (string.Empty, string.Empty, companyName);
+    }
+
+    private static string FormatCurrency(decimal amount, string currency)
+    {
+        var code = string.IsNullOrWhiteSpace(currency) ? "INR" : currency.Trim().ToUpperInvariant();
+        return $"{(code == "INR" ? "INR " : code + " ")}{amount:0.00}";
+    }
+
+    private static string Csv(string value)
+    {
+        var v = (value ?? string.Empty).Replace("\"", "\"\"");
+        return $"\"{v}\"";
+    }
+
+    private static string BuildInvoiceHtml(BillingInvoice inv, string companyName, string billingEmail)
+    {
+        var safeInvoiceNo = WebUtility.HtmlEncode(inv.InvoiceNo);
+        var safeCompany = WebUtility.HtmlEncode(companyName);
+        var safeEmail = WebUtility.HtmlEncode(billingEmail);
+        return $$"""
+            <!doctype html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <title>{{safeInvoiceNo}}</title>
+              <style>
+                body { font-family: Segoe UI, Arial, sans-serif; margin: 24px; color: #0f172a; }
+                .header { display:flex; justify-content:space-between; margin-bottom:16px; }
+                .brand { font-size:24px; font-weight:700; color:#f97316; }
+                .muted { color:#64748b; font-size:13px; }
+                table { width:100%; border-collapse:collapse; margin-top:18px; }
+                th, td { border:1px solid #e2e8f0; padding:10px; text-align:left; }
+                th { background:#f8fafc; }
+                .right { text-align:right; }
+              </style>
+            </head>
+            <body>
+              <div class="header">
+                <div>
+                  <div class="brand">Textzy</div>
+                  <div class="muted">Powered by Moneyart Private Limited</div>
+                </div>
+                <div class="right">
+                  <div><b>Invoice:</b> {{safeInvoiceNo}}</div>
+                  <div class="muted">Created: {{inv.CreatedAtUtc:yyyy-MM-dd}}</div>
+                  <div class="muted">Paid: {{(inv.PaidAtUtc ?? inv.CreatedAtUtc):yyyy-MM-dd}}</div>
+                </div>
+              </div>
+              <div><b>Bill To:</b> {{safeCompany}}</div>
+              <div class="muted">{{safeEmail}}</div>
+              <div class="muted">Period: {{inv.PeriodStartUtc:yyyy-MM-dd}} to {{inv.PeriodEndUtc:yyyy-MM-dd}}</div>
+              <table>
+                <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
+                <tbody>
+                  <tr><td>Subscription Charges</td><td class="right">{{inv.Subtotal:0.00}}</td></tr>
+                  <tr><td>Tax</td><td class="right">{{inv.TaxAmount:0.00}}</td></tr>
+                  <tr><td><b>Total</b></td><td class="right"><b>{{inv.Total:0.00}}</b></td></tr>
+                </tbody>
+              </table>
+            </body>
+            </html>
+            """;
     }
 }
