@@ -17,6 +17,7 @@ public class TeamController(
     PasswordHasher hasher,
     EmailService emailService,
     BillingGuardService billingGuard,
+    SecretCryptoService crypto,
     IConfiguration config,
     AuditLogService audit) : ControllerBase
 {
@@ -170,7 +171,7 @@ public class TeamController(
         await db.SaveChangesAsync(ct);
         var memberCount = await db.TenantUsers.CountAsync(tu => tu.TenantId == tenancy.TenantId, ct);
         await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "teamMembers", memberCount, ct);
-        var inviteUrl = BuildInviteUrl(rawToken);
+        var inviteUrl = await BuildInviteUrlAsync(rawToken, ct);
         try
         {
             await emailService.SendInviteAsync(email, request.Name ?? string.Empty, inviteUrl, ct);
@@ -217,7 +218,7 @@ public class TeamController(
         invite.TokenHash = HashToken(rawToken);
         await db.SaveChangesAsync(ct);
 
-        var inviteUrl = BuildInviteUrl(rawToken);
+        var inviteUrl = await BuildInviteUrlAsync(rawToken, ct);
         try
         {
             await emailService.SendInviteAsync(invite.Email, invite.Name, inviteUrl, ct);
@@ -389,10 +390,62 @@ public class TeamController(
         };
     }
 
-    private string BuildInviteUrl(string token)
+    private async Task<string> BuildInviteUrlAsync(string token, CancellationToken ct)
     {
-        var baseUrl = config["Invite:AcceptBaseUrl"] ?? config["APP_BASE_URL"] ?? "https://textzy-frontend.onrender.com";
+        var baseUrl = await ResolveInviteBaseUrlAsync(ct);
         return $"{baseUrl.TrimEnd('/')}/accept-invite?token={Uri.EscapeDataString(token)}";
+    }
+
+    private async Task<string> ResolveInviteBaseUrlAsync(CancellationToken ct)
+    {
+        var rows = await db.PlatformSettings.AsNoTracking()
+            .Where(x =>
+                (x.Scope == "invite" && x.Key == "acceptBaseUrl") ||
+                (x.Scope == "mobile-app" && x.Key == "baseDomain") ||
+                (x.Scope == "platform-branding" && x.Key == "website"))
+            .ToListAsync(ct);
+
+        string? inviteScope = null;
+        string? appBaseDomain = null;
+        string? brandingWebsite = null;
+
+        foreach (var row in rows)
+        {
+            var value = crypto.Decrypt(row.ValueEncrypted);
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            if (row.Scope == "invite" && row.Key == "acceptBaseUrl") inviteScope = value;
+            else if (row.Scope == "mobile-app" && row.Key == "baseDomain") appBaseDomain = value;
+            else if (row.Scope == "platform-branding" && row.Key == "website") brandingWebsite = value;
+        }
+
+        return NormalizeBaseUrl(inviteScope)
+            ?? NormalizeBaseUrl(appBaseDomain)
+            ?? NormalizeBaseUrl(brandingWebsite)
+            ?? NormalizeBaseUrl(config["Invite:AcceptBaseUrl"])
+            ?? NormalizeBaseUrl(config["APP_BASE_URL"])
+            ?? "https://textzy-frontend-production.up.railway.app";
+    }
+
+    private static string? NormalizeBaseUrl(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var value = raw.Trim();
+        if (!value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            value = $"https://{value}";
+        }
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return null;
+        if (string.IsNullOrWhiteSpace(uri.Host)) return null;
+
+        var builder = new UriBuilder(uri)
+        {
+            Path = string.Empty,
+            Query = string.Empty,
+            Fragment = string.Empty
+        };
+        return builder.Uri.ToString().TrimEnd('/');
     }
 
     private static string CreateOpaqueToken()
