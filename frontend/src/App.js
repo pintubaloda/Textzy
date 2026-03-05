@@ -28,6 +28,7 @@ import SettingsPage from "@/pages/dashboard/SettingsPage";
 import AdminPage from "@/pages/dashboard/AdminPage";
 import TeamPage from "@/pages/dashboard/TeamPage";
 import PlatformSettingsPage from "@/pages/dashboard/PlatformSettingsPage";
+import PlatformBrandingPage from "@/pages/dashboard/PlatformBrandingPage";
 import SmsSetupPage from "@/pages/dashboard/SmsSetupPage";
 import MobileDevicesPage from "@/pages/dashboard/MobileDevicesPage";
 import WhatsAppOnboardingPage from "@/pages/dashboard/WhatsAppOnboardingPage";
@@ -68,6 +69,7 @@ function App() {
             <Route path="team" element={<TeamPage />} />
             <Route path="admin" element={isPlatformOwner ? <AdminPage /> : <Navigate to="/dashboard" replace />} />
             <Route path="platform-settings" element={isPlatformOwner ? <PlatformSettingsPage /> : <Navigate to="/dashboard" replace />} />
+            <Route path="platform-branding" element={isPlatformOwner ? <PlatformBrandingPage /> : <Navigate to="/dashboard" replace />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -31,6 +31,8 @@ import {
   getBillingPaymentConfig,
   getBillingPlans,
   getBillingUsage,
+  getPlatformSettings,
+  getSession,
   getCompanySettings,
   getCurrentBillingPlan,
   verifyRazorpayPayment
@@ -45,6 +47,7 @@ const BillingPage = () => {
   const [invoices, setInvoices] = useState([]);
   const [paymentConfig, setPaymentConfig] = useState(null);
   const [company, setCompany] = useState(null);
+  const [platformBranding, setPlatformBranding] = useState(null);
   const [payingCode, setPayingCode] = useState("");
 
   useEffect(() => {
@@ -58,12 +61,17 @@ const BillingPage = () => {
         ]);
         const companyCfg = await getCompanySettings().catch(() => null);
         const paymentCfg = await getBillingPaymentConfig().catch(() => null);
+        const role = String(getSession()?.role || "").toLowerCase();
+        const platformBrandingCfg = role === "super_admin"
+          ? await getPlatformSettings("platform-branding").catch(() => null)
+          : null;
         setPlans(Array.isArray(p) ? p : []);
         setSub(c || null);
         setUsageValues(u?.values || {});
         setInvoices(Array.isArray(i) ? i : []);
         setCompany(companyCfg || null);
         setPaymentConfig(paymentCfg);
+        setPlatformBranding(platformBrandingCfg?.values || null);
       } catch (e) {
         toast.error(e.message || "Failed to load billing");
       }
@@ -71,10 +79,23 @@ const BillingPage = () => {
   }, []);
 
   const currentPlan = sub?.plan || null;
-  const companyName = String(company?.companyName || "").trim() || "Your company";
-  const billingAddressText = String(company?.address || "").trim();
-  const billingEmail = String(company?.billingEmail || "").trim();
-  const billingPhone = String(company?.billingPhone || "").trim();
+  const companyName =
+    String(company?.companyName || "").trim() ||
+    String(platformBranding?.legalName || "").trim() ||
+    String(platformBranding?.platformName || "").trim() ||
+    "Your company";
+  const billingAddressText =
+    String(company?.address || "").trim() ||
+    String(platformBranding?.address || "").trim();
+  const billingEmail =
+    String(company?.billingEmail || "").trim() ||
+    String(platformBranding?.billingEmail || "").trim();
+  const billingPhone =
+    String(company?.billingPhone || "").trim() ||
+    String(platformBranding?.billingPhone || "").trim();
+  const gstin =
+    String(company?.gstin || "").trim() ||
+    String(platformBranding?.gstin || "").trim();
   const pct = (used, limit) => !limit ? 0 : Math.min(100, Math.round((used / limit) * 100));
   const usage = useMemo(() => {
     const limits = currentPlan?.limits || {};
@@ -453,7 +474,7 @@ const BillingPage = () => {
               <p>{billingAddressText || "Address not configured"}</p>
               <p>{billingEmail || "Billing email not configured"}</p>
               <p>{billingPhone || "Billing phone not configured"}</p>
-              <p className="pt-2">GSTIN: {company?.gstin || "-"}</p>
+              <p className="pt-2">GSTIN: {gstin || "-"}</p>
             </div>
             <Button variant="outline" className="w-full" data-testid="update-address-btn" onClick={() => toast.info("Open Dashboard Settings -> Company")}>
               Open Company Settings

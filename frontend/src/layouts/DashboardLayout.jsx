@@ -25,6 +25,7 @@ import {
   CreditCard,
   Settings,
   Shield,
+  Palette,
   ChevronDown,
   Search,
   Bell,
@@ -42,7 +43,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { apiGet, authProjects, clearSession, getSession, initializeMe, switchProject } from "@/lib/api";
+import { apiGet, authProjects, clearSession, getPlatformSettings, getSession, initializeMe, switchProject } from "@/lib/api";
 import { isNotificationAudioUnlocked, isNotificationSoundEnabled, unlockNotificationAudio } from "@/lib/notificationAudio";
 
 const DashboardLayout = () => {
@@ -68,12 +69,14 @@ const DashboardLayout = () => {
   const isPlatformOwner = role === "super_admin";
   const isPlatformView = isPlatformOwner && ownerMode === "platform";
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
+  const isBrandingPage = location.pathname.startsWith("/dashboard/platform-branding");
   const isTemplatesPage = location.pathname.startsWith("/dashboard/templates");
   const isSmsSetupPage = location.pathname.startsWith("/dashboard/sms-setup");
   const isAutomationsPage = location.pathname.startsWith("/dashboard/automations");
   const currentTemplatesTab = new URLSearchParams(location.search).get("tab") || "whatsapp";
   const currentSettingsTab = new URLSearchParams(location.search).get("tab") || "profile";
   const currentPlatformTab = new URLSearchParams(location.search).get("tab") || "waba-master";
+  const [platformBranding, setPlatformBranding] = useState({ platformName: "Textzy", logoUrl: "" });
   const settingsMenus = [
     { key: "profile", label: "Profile" },
     { key: "company", label: "Company" },
@@ -143,6 +146,27 @@ const DashboardLayout = () => {
       localStorage.setItem("textzy_owner_mode", ownerMode);
     } catch {}
   }, [isPlatformOwner, ownerMode]);
+  useEffect(() => {
+    let active = true;
+    if (!canAccessPlatformSettings) return;
+    (async () => {
+      try {
+        const res = await getPlatformSettings("platform-branding");
+        if (!active) return;
+        const values = res?.values || {};
+        setPlatformBranding({
+          platformName: String(values.platformName || "").trim() || "Textzy",
+          logoUrl: String(values.logoUrl || "").trim(),
+        });
+      } catch {
+        if (!active) return;
+        setPlatformBranding({ platformName: "Textzy", logoUrl: "" });
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [canAccessPlatformSettings]);
 
   const handleProjectSwitch = async (slug) => {
     if (!slug || slug === session.tenantSlug) return;
@@ -175,6 +199,7 @@ const DashboardLayout = () => {
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Admin", href: "/dashboard/admin", icon: Shield },
     { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
+    { name: "Branding", href: "/dashboard/platform-branding", icon: Palette },
   ];
 
   const navigation = isPlatformView ? platformNavigation : tenantNavigation;
@@ -212,10 +237,14 @@ const DashboardLayout = () => {
 
           {/* Logo */}
           <Link to="/dashboard" className="flex items-center gap-2" data-testid="dashboard-logo">
-            <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
-              <MessageSquare className="w-5 h-5 text-white" />
-            </div>
-            <span className="font-heading font-bold text-xl text-slate-900 hidden sm:block">Textzy</span>
+            {platformBranding.logoUrl ? (
+              <img src={platformBranding.logoUrl} alt={platformBranding.platformName || "Textzy"} className="w-8 h-8 rounded-lg object-cover" />
+            ) : (
+              <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
+                <MessageSquare className="w-5 h-5 text-white" />
+              </div>
+            )}
+            <span className="font-heading font-bold text-xl text-slate-900 hidden sm:block">{platformBranding.platformName || "Textzy"}</span>
           </Link>
 
           {/* Sidebar Toggle */}
@@ -512,6 +541,18 @@ const DashboardLayout = () => {
                 <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">
                   Platform Setting
                 </p>
+                <Link
+                  to="/dashboard/platform-branding"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    isBrandingPage
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Palette className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">Platform Branding</span>
+                </Link>
                 <Link
                   to="/dashboard/platform-settings?tab=waba-master"
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
