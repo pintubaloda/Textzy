@@ -74,6 +74,11 @@ public class WabaWebhookWorker(
         public string OrderSummary { get; init; } = string.Empty;
         public string ContactsSummary { get; init; } = string.Empty;
         public string UnsupportedSummary { get; init; } = string.Empty;
+        public string FlowEventType { get; init; } = string.Empty;
+        public string FlowId { get; init; } = string.Empty;
+        public string FlowToken { get; init; } = string.Empty;
+        public string FlowScreenId { get; init; } = string.Empty;
+        public string FlowPayloadJson { get; init; } = "{}";
         public string RawJson { get; init; } = "{}";
     }
 
@@ -221,6 +226,38 @@ public class WabaWebhookWorker(
                     if (msg is not null)
                     {
                         ApplyStatusTransition(msg, status, controlDb);
+                        if (!string.IsNullOrWhiteSpace(msg.MessageType) &&
+                            msg.MessageType.StartsWith("interactive:flow:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var metaFlowId = msg.MessageType["interactive:flow:".Length..];
+                            var normalized = MessageStateMachine.NormalizeWebhookStatus(status.Status);
+                            var flowEventType = normalized switch
+                            {
+                                "FailedPermanent" or "FailedRetryable" => "flow.error",
+                                "Delivered" => "flow.delivered",
+                                "Read" => "flow.read",
+                                _ => "flow.status"
+                            };
+                            tenantDb.FlowRuntimeEvents.Add(new FlowRuntimeEvent
+                            {
+                                Id = Guid.NewGuid(),
+                                TenantId = resolved.TenantId,
+                                FlowId = null,
+                                MetaFlowId = metaFlowId,
+                                ConversationExternalId = status.ConversationId ?? string.Empty,
+                                CustomerPhone = status.RecipientId ?? string.Empty,
+                                EventType = flowEventType,
+                                EventSource = "status_webhook",
+                                Success = !(normalized is "FailedPermanent" or "FailedRetryable"),
+                                StatusCode = 200,
+                                DurationMs = 0,
+                                ScreenId = string.Empty,
+                                ActionName = status.Status ?? string.Empty,
+                                PayloadJson = status.RawJson,
+                                ErrorDetail = $"{status.ErrorCode} {status.ErrorTitle} {status.ErrorDetail}".Trim(),
+                                CreatedAtUtc = status.AtUtc ?? DateTime.UtcNow
+                            });
+                        }
                     }
                     tenantDb.MessageEvents.Add(new MessageEvent
                     {
@@ -415,6 +452,29 @@ public class WabaWebhookWorker(
                         RawPayloadJson = inbound.RawJson,
                         CreatedAtUtc = DateTime.UtcNow
                     });
+
+                    if (!string.IsNullOrWhiteSpace(inbound.FlowEventType))
+                    {
+                        tenantDb.FlowRuntimeEvents.Add(new FlowRuntimeEvent
+                        {
+                            Id = Guid.NewGuid(),
+                            TenantId = resolved.TenantId,
+                            FlowId = null,
+                            MetaFlowId = inbound.FlowId ?? string.Empty,
+                            ConversationExternalId = convo.Id.ToString("N"),
+                            CustomerPhone = inbound.From ?? string.Empty,
+                            EventType = inbound.FlowEventType,
+                            EventSource = "webhook",
+                            Success = true,
+                            StatusCode = 200,
+                            DurationMs = 0,
+                            ScreenId = inbound.FlowScreenId ?? string.Empty,
+                            ActionName = inbound.InteractiveType ?? string.Empty,
+                            PayloadJson = string.IsNullOrWhiteSpace(inbound.FlowPayloadJson) ? "{}" : inbound.FlowPayloadJson,
+                            ErrorDetail = string.Empty,
+                            CreatedAtUtc = inbound.AtUtc ?? DateTime.UtcNow
+                        });
+                    }
 
                     if (triggerInbound is not null)
                     {
@@ -1677,6 +1737,11 @@ public class WabaWebhookWorker(
                         var interactiveType = string.Empty;
                         var listReplyId = string.Empty;
                         var listReplyTitle = string.Empty;
+                        var flowEventType = string.Empty;
+                        var flowId = string.Empty;
+                        var flowToken = string.Empty;
+                        var flowScreenId = string.Empty;
+                        var flowPayloadJson = "{}";
                         if (msg.TryGetProperty("interactive", out var interNode))
                         {
                             interactiveType = interNode.TryGetProperty("type", out var iTypeNode) ? iTypeNode.GetString() ?? string.Empty : string.Empty;
@@ -1691,6 +1756,39 @@ public class WabaWebhookWorker(
                                     listReplyId = buttonReply.TryGetProperty("id", out var brId) ? brId.GetString() ?? string.Empty : string.Empty;
                                 if (string.IsNullOrWhiteSpace(listReplyTitle))
                                     listReplyTitle = buttonReply.TryGetProperty("title", out var brTitle) ? brTitle.GetString() ?? string.Empty : string.Empty;
+                            }
+                            if (interNode.TryGetProperty("nfm_reply", out var nfmReply) && nfmReply.ValueKind == JsonValueKind.Object)
+                            {
+                                flowEventType = "flow.submission";
+                                flowId = nfmReply.TryGetProperty("flow_id", out var fIdNode) ? fIdNode.GetString() ?? string.Empty : string.Empty;
+                                flowToken = nfmReply.TryGetProperty("flow_token", out var fTokNode) ? fTokNode.GetString() ?? string.Empty : string.Empty;
+                                flowScreenId = nfmReply.TryGetProperty("screen", out var fScreenNode) ? fScreenNode.GetString() ?? string.Empty : string.Empty;
+                                if (nfmReply.TryGetProperty("response_json", out var respNode))
+                                {
+                                    flowPayloadJson = respNode.GetRawText();
+                                    var completed = false;
+                                    if (respNode.ValueKind == JsonValueKind.Object)
+                                    {
+                                        if (respNode.TryGetProperty("completed", out var compNode) && compNode.ValueKind == JsonValueKind.True)
+                                            completed = true;
+                                        if (respNode.TryGetProperty("flow_status", out var statusNode) &&
+                                            string.Equals(statusNode.GetString(), "completed", StringComparison.OrdinalIgnoreCase))
+                                            completed = true;
+                                    }
+                                    if (completed) flowEventType = "flow.completion";
+                                }
+                            }
+                            if (interNode.TryGetProperty("flow_reply", out var flowReply) && flowReply.ValueKind == JsonValueKind.Object)
+                            {
+                                if (string.IsNullOrWhiteSpace(flowEventType)) flowEventType = "flow.submission";
+                                if (string.IsNullOrWhiteSpace(flowId))
+                                    flowId = flowReply.TryGetProperty("flow_id", out var ffIdNode) ? ffIdNode.GetString() ?? string.Empty : string.Empty;
+                                if (string.IsNullOrWhiteSpace(flowToken))
+                                    flowToken = flowReply.TryGetProperty("flow_token", out var ffTokNode) ? ffTokNode.GetString() ?? string.Empty : string.Empty;
+                                if (string.IsNullOrWhiteSpace(flowScreenId))
+                                    flowScreenId = flowReply.TryGetProperty("screen", out var ffScreenNode) ? ffScreenNode.GetString() ?? string.Empty : string.Empty;
+                                if (flowReply.TryGetProperty("response_json", out var frNode))
+                                    flowPayloadJson = frNode.GetRawText();
                             }
                         }
                         var locationSummary = string.Empty;
@@ -1776,6 +1874,11 @@ public class WabaWebhookWorker(
                             OrderSummary = orderSummary,
                             ContactsSummary = contactsSummary,
                             UnsupportedSummary = unsupportedSummary,
+                            FlowEventType = flowEventType,
+                            FlowId = flowId,
+                            FlowToken = flowToken,
+                            FlowScreenId = flowScreenId,
+                            FlowPayloadJson = flowPayloadJson,
                             RawJson = msg.GetRawText()
                         });
                     }

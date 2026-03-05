@@ -18,6 +18,13 @@ public class SendMessageRequest
     public string MediaId { get; set; } = string.Empty;
     public string MediaCaption { get; set; } = string.Empty;
     public bool IsInteractive { get; set; }
-    public string InteractiveType { get; set; } = string.Empty; // button
+    public string InteractiveType { get; set; } = string.Empty; // button | flow
     public List<string> InteractiveButtons { get; set; } = [];
+    public string InteractiveFlowId { get; set; } = string.Empty;
+    public string InteractiveFlowCta { get; set; } = string.Empty;
+    public string InteractiveFlowToken { get; set; } = string.Empty;
+    public string InteractiveFlowAction { get; set; } = string.Empty; // navigate | data_exchange
+    public string InteractiveFlowScreen { get; set; } = string.Empty;
+    public string InteractiveFlowDataJson { get; set; } = "{}";
+    public int InteractiveFlowMessageVersion { get; set; } = 3;
 }

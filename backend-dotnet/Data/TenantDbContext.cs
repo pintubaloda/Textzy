@@ -35,4 +35,5 @@ public class TenantDbContext(DbContextOptions<TenantDbContext> options) : DbCont
     public DbSet<OutboundDeadLetter> OutboundDeadLetters => Set<OutboundDeadLetter>();
     public DbSet<TriggerEvaluationAuditRecord> TriggerEvaluationAudit => Set<TriggerEvaluationAuditRecord>();
     public DbSet<WorkflowScheduledMessage> WorkflowScheduledMessages => Set<WorkflowScheduledMessage>();
+    public DbSet<FlowRuntimeEvent> FlowRuntimeEvents => Set<FlowRuntimeEvent>();
 }

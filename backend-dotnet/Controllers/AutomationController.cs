@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Net;
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
@@ -13,11 +15,16 @@ namespace Textzy.Api.Controllers;
 [Route("api/automation")]
 public class AutomationController(
     TenantDbContext db,
+    ControlDbContext controlDb,
     TenancyContext tenancy,
     AuthContext auth,
     RbacService rbac,
     MessagingService messaging,
+    WhatsAppCloudService whatsapp,
     BillingGuardService billingGuard,
+    SecretCryptoService crypto,
+    IHttpClientFactory httpClientFactory,
+    IConfiguration configuration,
     SensitiveDataRedactor redactor,
     ILogger<AutomationController> logger) : ControllerBase
 {
@@ -81,6 +88,9 @@ public class AutomationController(
 
         db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "AutomationUsageCounters" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "BucketDateUtc" timestamp with time zone NOT NULL DEFAULT now(), "RunCount" integer NOT NULL DEFAULT 0, "ApiCallCount" integer NOT NULL DEFAULT 0, "ActiveFlowCount" integer NOT NULL DEFAULT 0, "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
         db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AutomationUsageCounters_Tenant_Bucket" ON "AutomationUsageCounters" ("TenantId","BucketDateUtc");""");
+        db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "FlowRuntimeEvents" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "FlowId" uuid NULL, "MetaFlowId" text NOT NULL DEFAULT '', "ConversationExternalId" text NOT NULL DEFAULT '', "CustomerPhone" text NOT NULL DEFAULT '', "EventType" text NOT NULL DEFAULT '', "EventSource" text NOT NULL DEFAULT '', "Success" boolean NOT NULL DEFAULT true, "StatusCode" integer NOT NULL DEFAULT 0, "DurationMs" integer NOT NULL DEFAULT 0, "ScreenId" text NOT NULL DEFAULT '', "ActionName" text NOT NULL DEFAULT '', "PayloadJson" text NOT NULL DEFAULT '{}', "ErrorDetail" text NOT NULL DEFAULT '', "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_FlowRuntimeEvents_Tenant_CreatedAt" ON "FlowRuntimeEvents" ("TenantId","CreatedAtUtc");""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_FlowRuntimeEvents_MetaFlowId" ON "FlowRuntimeEvents" ("MetaFlowId");""");
         db.Database.ExecuteSqlRaw("""CREATE TABLE IF NOT EXISTS "FaqKnowledgeItems" ("Id" uuid PRIMARY KEY, "TenantId" uuid NOT NULL, "Question" text NOT NULL DEFAULT '', "Answer" text NOT NULL DEFAULT '', "Category" text NOT NULL DEFAULT '', "IsActive" boolean NOT NULL DEFAULT true, "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(), "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now());""");
         db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_FaqKnowledgeItems_Tenant_Active" ON "FaqKnowledgeItems" ("TenantId","IsActive");""");
         db.Database.ExecuteSqlRaw("""
@@ -489,6 +499,331 @@ public class AutomationController(
         return Ok(versions);
     }
 
+    [HttpGet("flow-json-schema")]
+    public IActionResult FlowJsonSchema()
+    {
+        if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        return Ok(new
+        {
+            schemaVersion = 1,
+            required = new[] { "version", "screens", "routing" },
+            model = new
+            {
+                version = "1.0.0",
+                screens = new object[]
+                {
+                    new
+                    {
+                        id = "welcome",
+                        title = "Welcome",
+                        components = new object[]
+                        {
+                            new { id = "name", type = "input", label = "Name", required = true },
+                            new { id = "next", type = "button", text = "Continue", nextScreen = "summary" }
+                        }
+                    }
+                },
+                routing = new
+                {
+                    startScreen = "welcome",
+                    edges = new object[]
+                    {
+                        new { from = "welcome", to = "summary", when = "name != ''" }
+                    }
+                },
+                validations = new object[]
+                {
+                    new { field = "name", rule = "required", message = "Name is required." }
+                },
+                dynamicDataSources = new
+                {
+                    customer_lookup = new { url = "https://api.example.com/customer/lookup", method = "POST", headers = new { } }
+                }
+            }
+        });
+    }
+
+    [HttpPost("flows/validate-definition")]
+    public IActionResult ValidateDefinition([FromBody] ValidateFlowDefinitionRequest req)
+    {
+        if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
+        var report = ValidateDefinitionInternal(req.DefinitionJson);
+        return Ok(report);
+    }
+
+    [HttpPost("flows/{flowId:guid}/versions/{versionId:guid}/validate")]
+    public async Task<IActionResult> ValidateVersion(Guid flowId, Guid versionId, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        EnsureAutomationSchema();
+        var version = await db.AutomationFlowVersions
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId && x.Id == versionId, ct);
+        if (version is null) return NotFound();
+        var report = ValidateDefinitionInternal(version.DefinitionJson);
+        return Ok(report);
+    }
+
+    [HttpGet("meta/flows")]
+    public async Task<IActionResult> ListMetaFlows(CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        EnsureAutomationSchema();
+        try
+        {
+            var raw = await whatsapp.ListMetaFlowsAsync(ct);
+            var list = new List<object>();
+            if (raw.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in data.EnumerateArray())
+                {
+                    list.Add(new
+                    {
+                        id = item.TryGetProperty("id", out var id) ? id.GetString() ?? string.Empty : string.Empty,
+                        name = item.TryGetProperty("name", out var name) ? name.GetString() ?? string.Empty : string.Empty,
+                        status = item.TryGetProperty("status", out var status) ? status.GetString() ?? string.Empty : string.Empty,
+                        categories = item.TryGetProperty("categories", out var categories) ? categories : default,
+                        jsonVersion = item.TryGetProperty("json_version", out var jsonVersion) ? jsonVersion.ToString() : string.Empty,
+                        dataApiVersion = item.TryGetProperty("data_api_version", out var dataApiVersion) ? dataApiVersion.ToString() : string.Empty,
+                        updatedTime = item.TryGetProperty("updated_time", out var updatedTime) ? updatedTime.ToString() : string.Empty
+                    });
+                }
+            }
+            return Ok(new
+            {
+                ok = true,
+                count = list.Count,
+                data = list,
+                raw
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = "meta_flow_list_failed", message = ex.Message });
+        }
+    }
+
+    [HttpPost("meta/flows")]
+    public async Task<IActionResult> CreateMetaFlow([FromBody] CreateMetaFlowRequest req, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
+        try
+        {
+            var outJson = await whatsapp.CreateMetaFlowAsync(
+                req.Name,
+                req.CategoriesJson,
+                req.EndpointUri,
+                req.DataApiVersion,
+                req.JsonVersion,
+                req.FlowJson,
+                ct);
+            return Ok(new { ok = true, result = outJson });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = "meta_flow_create_failed", message = ex.Message });
+        }
+    }
+
+    [HttpGet("meta/flows/{metaFlowId}")]
+    public async Task<IActionResult> GetMetaFlow(string metaFlowId, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        EnsureAutomationSchema();
+        try
+        {
+            var raw = await whatsapp.GetMetaFlowAsync(metaFlowId, ct);
+            var flowSchema = TryExtractMetaFlowSchema(raw);
+            var screensCount = flowSchema.HasValue && flowSchema.Value.TryGetProperty("screens", out var screens) && screens.ValueKind == JsonValueKind.Array
+                ? screens.GetArrayLength()
+                : 0;
+            return Ok(new
+            {
+                ok = true,
+                id = raw.TryGetProperty("id", out var id) ? id.GetString() : string.Empty,
+                name = raw.TryGetProperty("name", out var name) ? name.GetString() : string.Empty,
+                status = raw.TryGetProperty("status", out var status) ? status.GetString() : string.Empty,
+                screensCount,
+                flowSchema = flowSchema,
+                raw
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = "meta_flow_fetch_failed", message = ex.Message });
+        }
+    }
+
+    [HttpPut("meta/flows/{metaFlowId}")]
+    public async Task<IActionResult> UpdateMetaFlow(string metaFlowId, [FromBody] UpdateMetaFlowRequest req, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
+
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(req.Name)) fields["name"] = req.Name.Trim();
+        if (!string.IsNullOrWhiteSpace(req.EndpointUri)) fields["endpoint_uri"] = req.EndpointUri.Trim();
+        if (!string.IsNullOrWhiteSpace(req.CategoriesJson)) fields["categories"] = req.CategoriesJson.Trim();
+        if (!string.IsNullOrWhiteSpace(req.DataApiVersion)) fields["data_api_version"] = req.DataApiVersion.Trim();
+        if (!string.IsNullOrWhiteSpace(req.JsonVersion)) fields["json_version"] = req.JsonVersion.Trim();
+        if (!string.IsNullOrWhiteSpace(req.FlowJson)) fields["flow_json"] = req.FlowJson.Trim();
+        if (!string.IsNullOrWhiteSpace(req.Status)) fields["status"] = req.Status.Trim();
+
+        if (fields.Count == 0)
+            return BadRequest("At least one update field is required.");
+
+        try
+        {
+            var outJson = await whatsapp.UpdateMetaFlowAsync(metaFlowId, fields, ct);
+            return Ok(new
+            {
+                ok = true,
+                metaFlowId,
+                updatedFields = fields.Keys.ToArray(),
+                result = outJson
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = "meta_flow_update_failed", message = ex.Message });
+        }
+    }
+
+    [HttpDelete("meta/flows/{metaFlowId}")]
+    public async Task<IActionResult> DeleteMetaFlow(string metaFlowId, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
+        try
+        {
+            var outJson = await whatsapp.DeleteMetaFlowAsync(metaFlowId, ct);
+            return Ok(new
+            {
+                ok = true,
+                metaFlowId,
+                result = outJson
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = "meta_flow_delete_failed", message = ex.Message });
+        }
+    }
+
+    [HttpPost("meta/flows/{metaFlowId}/publish")]
+    public async Task<IActionResult> PublishMetaFlow(string metaFlowId, [FromBody] PublishMetaFlowRequest req, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
+        try
+        {
+            var outJson = await whatsapp.PublishMetaFlowAsync(metaFlowId, req.FlowJson ?? string.Empty, ct);
+            return Ok(new
+            {
+                ok = true,
+                metaFlowId,
+                result = outJson
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = "meta_flow_publish_failed", message = ex.Message });
+        }
+    }
+
+    [HttpPost("flows/{flowId:guid}/import-meta")]
+    public async Task<IActionResult> ImportMetaFlow(Guid flowId, [FromBody] ImportMetaFlowRequest req, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
+        if (string.IsNullOrWhiteSpace(req.MetaFlowId)) return BadRequest("MetaFlowId is required.");
+
+        var flow = await db.AutomationFlows.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
+        if (flow is null) return NotFound();
+
+        JsonElement raw;
+        try
+        {
+            raw = await whatsapp.GetMetaFlowAsync(req.MetaFlowId, ct);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = "meta_flow_fetch_failed", message = ex.Message });
+        }
+
+        if (!TryBuildDefinitionFromMetaFlow(raw, out var definitionJson, out var importedMetaName, out var importWarning))
+            return BadRequest(new { error = "meta_flow_schema_not_supported", message = "Unable to parse flow schema/screens from Meta payload." });
+
+        AutomationFlowVersion? updatedVersion;
+        if (req.CreateNewVersion)
+        {
+            var latest = await db.AutomationFlowVersions
+                .Where(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId)
+                .OrderByDescending(x => x.VersionNumber)
+                .FirstOrDefaultAsync(ct);
+
+            updatedVersion = new AutomationFlowVersion
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenancy.TenantId,
+                FlowId = flowId,
+                VersionNumber = (latest?.VersionNumber ?? 0) + 1,
+                Status = "draft",
+                DefinitionJson = definitionJson,
+                ChangeNote = string.IsNullOrWhiteSpace(req.ChangeNote)
+                    ? $"Imported from Meta Flow {req.MetaFlowId}"
+                    : req.ChangeNote.Trim()
+            };
+            db.AutomationFlowVersions.Add(updatedVersion);
+            flow.CurrentVersionId = updatedVersion.Id;
+        }
+        else
+        {
+            updatedVersion = await ResolveVersion(flow, null, ct);
+            if (updatedVersion is null)
+            {
+                updatedVersion = new AutomationFlowVersion
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenancy.TenantId,
+                    FlowId = flowId,
+                    VersionNumber = 1,
+                    Status = "draft",
+                    DefinitionJson = definitionJson,
+                    ChangeNote = "Imported from Meta Flow"
+                };
+                db.AutomationFlowVersions.Add(updatedVersion);
+                flow.CurrentVersionId = updatedVersion.Id;
+            }
+            else
+            {
+                updatedVersion.DefinitionJson = definitionJson;
+                updatedVersion.ChangeNote = string.IsNullOrWhiteSpace(req.ChangeNote)
+                    ? $"Updated from Meta Flow {req.MetaFlowId}"
+                    : req.ChangeNote.Trim();
+                updatedVersion.Status = "draft";
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(importedMetaName))
+            flow.Name = flow.Name.Trim().Length == 0 ? importedMetaName : flow.Name;
+        flow.UpdatedAtUtc = DateTime.UtcNow;
+        flow.LifecycleStatus = "draft";
+        await db.SaveChangesAsync(ct);
+
+        return Ok(new
+        {
+            ok = true,
+            flowId = flowId,
+            versionId = updatedVersion?.Id,
+            metaFlowId = req.MetaFlowId,
+            metaFlowName = importedMetaName,
+            warning = importWarning
+        });
+    }
+
     [HttpPost("flows/{flowId:guid}/versions")]
     public async Task<IActionResult> CreateVersion(Guid flowId, [FromBody] CreateFlowVersionRequest req, CancellationToken ct)
     {
@@ -547,6 +882,17 @@ public class AutomationController(
         var version = await db.AutomationFlowVersions.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId && x.Id == versionId, ct);
         if (version is null) return NotFound();
 
+        var validation = ValidateDefinitionInternal(version.DefinitionJson);
+        if (!validation.IsValid)
+        {
+            return BadRequest(new
+            {
+                error = "flow_definition_invalid",
+                message = "Flow definition failed schema validation.",
+                details = validation
+            });
+        }
+
         var unsupported = GetUnsupportedNodeTypes(version.DefinitionJson);
         if (unsupported.Count > 0)
         {
@@ -583,6 +929,238 @@ public class AutomationController(
         await db.SaveChangesAsync(ct);
         await SyncAutomationUsageAsync(ct);
         return Ok(new { flowId, versionId, status = "published" });
+    }
+
+    [HttpPost("flows/{flowId:guid}/send-flow")]
+    public async Task<IActionResult> SendFlowToUser(Guid flowId, [FromBody] SendFlowToUserRequest req, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
+
+        var flow = await db.AutomationFlows
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
+        if (flow is null) return NotFound();
+
+        var version = await ResolveVersion(flow, req.VersionId, ct);
+        if (version is null) return BadRequest("Flow version not found.");
+
+        var validation = ValidateDefinitionInternal(version.DefinitionJson);
+        if (!validation.IsValid)
+            return BadRequest(new { error = "flow_definition_invalid", details = validation });
+
+        var flowRef = string.IsNullOrWhiteSpace(req.FlowId) ? flowId.ToString("N") : req.FlowId.Trim();
+        var idempotency = $"flow-send:{flowId}:{Guid.NewGuid():N}";
+        try
+        {
+            var message = await messaging.EnqueueAsync(new SendMessageRequest
+            {
+                IdempotencyKey = idempotency,
+                Channel = ChannelType.WhatsApp,
+                Recipient = req.Recipient,
+                Body = string.IsNullOrWhiteSpace(req.Body) ? "Please continue to the next step." : req.Body.Trim(),
+                IsInteractive = true,
+                InteractiveType = "flow",
+                InteractiveFlowId = flowRef,
+                InteractiveFlowCta = string.IsNullOrWhiteSpace(req.FlowCta) ? "Open" : req.FlowCta.Trim(),
+                InteractiveFlowToken = req.FlowToken?.Trim() ?? string.Empty,
+                InteractiveFlowAction = string.IsNullOrWhiteSpace(req.FlowAction) ? "navigate" : req.FlowAction.Trim().ToLowerInvariant(),
+                InteractiveFlowScreen = req.FlowScreen?.Trim() ?? string.Empty,
+                InteractiveFlowDataJson = string.IsNullOrWhiteSpace(req.FlowDataJson) ? "{}" : req.FlowDataJson,
+                InteractiveFlowMessageVersion = req.FlowMessageVersion
+            }, ct);
+
+            return Ok(new
+            {
+                ok = true,
+                messageId = message.Id,
+                messageStatus = message.Status,
+                flowId = flowId,
+                flowReference = flowRef
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    [HttpPost("flows/{flowId:guid}/data-exchange")]
+    public async Task<IActionResult> FlowDataExchange(Guid flowId, [FromBody] FlowDataExchangeRequest req, CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationWrite)) return Forbid();
+        EnsureAutomationSchema();
+
+        var flow = await db.AutomationFlows
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
+        if (flow is null) return NotFound();
+
+        var version = await ResolveVersion(flow, req.VersionId, ct);
+        if (version is null) return BadRequest("Flow version not found.");
+
+        var validation = ValidateDefinitionInternal(version.DefinitionJson);
+        if (!validation.IsValid)
+            return BadRequest(new { error = "flow_definition_invalid", details = validation });
+
+        if (string.IsNullOrWhiteSpace(req.Action))
+            return BadRequest("Action is required.");
+
+        if (!TryResolveDynamicDataSource(version.DefinitionJson, req.ScreenId, req.Action, out var endpoint, out var method, out var headers))
+            return BadRequest("Dynamic data source not found for requested action.");
+
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            return BadRequest("Dynamic endpoint must be absolute HTTPS.");
+        if (string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase) || uri.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase))
+            return BadRequest("Dynamic endpoint host is not allowed.");
+        if (IPAddress.TryParse(uri.Host, out var ip) && IsPrivateOrLoopback(ip))
+            return BadRequest("Dynamic endpoint private/loopback IP is not allowed.");
+        await EnforceDynamicHostAllowListAsync(uri.Host, ct);
+
+        var payloadJson = string.IsNullOrWhiteSpace(req.PayloadJson) ? "{}" : req.PayloadJson;
+        try { using var _ = JsonDocument.Parse(payloadJson); } catch { return BadRequest("PayloadJson must be valid JSON."); }
+        var bodyJson = JsonSerializer.Serialize(new
+        {
+            tenantId = tenancy.TenantId,
+            flowId,
+            versionId = version.Id,
+            screenId = req.ScreenId,
+            action = req.Action,
+            payload = JsonSerializer.Deserialize<object>(payloadJson)
+        }, JsonOptions);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using var reqMsg = new HttpRequestMessage(new HttpMethod(string.IsNullOrWhiteSpace(method) ? "POST" : method.ToUpperInvariant()), uri);
+        reqMsg.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
+        reqMsg.Headers.TryAddWithoutValidation("X-Textzy-FlowId", flowId.ToString());
+        reqMsg.Headers.TryAddWithoutValidation("X-Textzy-TenantId", tenancy.TenantId.ToString());
+        foreach (var h in headers)
+        {
+            if (!reqMsg.Headers.TryAddWithoutValidation(h.Key, h.Value))
+                reqMsg.Content.Headers.TryAddWithoutValidation(h.Key, h.Value);
+        }
+
+        using var client = httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
+        using var res = await client.SendAsync(reqMsg, ct);
+        var responseText = await res.Content.ReadAsStringAsync(ct);
+        sw.Stop();
+        db.FlowRuntimeEvents.Add(new FlowRuntimeEvent
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenancy.TenantId,
+            FlowId = flowId,
+            EventType = "endpoint.exchange",
+            EventSource = "automation_api",
+            Success = res.IsSuccessStatusCode,
+            StatusCode = (int)res.StatusCode,
+            DurationMs = (int)sw.ElapsedMilliseconds,
+            ScreenId = req.ScreenId ?? string.Empty,
+            ActionName = req.Action ?? string.Empty,
+            PayloadJson = payloadJson,
+            ErrorDetail = res.IsSuccessStatusCode ? string.Empty : responseText,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync(ct);
+        return Ok(new
+        {
+            ok = res.IsSuccessStatusCode,
+            statusCode = (int)res.StatusCode,
+            endpoint = uri.ToString(),
+            action = req.Action,
+            response = TryParseJsonOrText(responseText)
+        });
+    }
+
+    [HttpGet("metrics/flows")]
+    public async Task<IActionResult> FlowMetrics([FromQuery] int days = 7, [FromQuery] string metaFlowId = "", CancellationToken ct = default)
+    {
+        if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        EnsureAutomationSchema();
+        var safeDays = Math.Clamp(days, 1, 90);
+        var fromUtc = DateTime.UtcNow.AddDays(-safeDays);
+
+        var q = db.FlowRuntimeEvents.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId && x.CreatedAtUtc >= fromUtc);
+        if (!string.IsNullOrWhiteSpace(metaFlowId))
+            q = q.Where(x => x.MetaFlowId == metaFlowId.Trim());
+
+        var rows = await q.OrderByDescending(x => x.CreatedAtUtc).Take(2000).ToListAsync(ct);
+        var total = rows.Count;
+        var opened = rows.Count(x => x.EventType == "flow.open");
+        var submitted = rows.Count(x => x.EventType == "flow.submission");
+        var completed = rows.Count(x => x.EventType == "flow.completion");
+        var errors = rows.Count(x => x.EventType == "flow.error" || !x.Success);
+        var exchange = rows.Where(x => x.EventType == "endpoint.exchange").ToList();
+        var avgLatencyMs = exchange.Count == 0 ? 0 : (int)Math.Round(exchange.Average(x => x.DurationMs));
+        var p95LatencyMs = exchange.Count == 0 ? 0 : exchange.OrderBy(x => x.DurationMs).ElementAt((int)Math.Floor(exchange.Count * 0.95)).DurationMs;
+
+        var byFlow = rows
+            .GroupBy(x => x.MetaFlowId ?? string.Empty)
+            .Select(g => new
+            {
+                metaFlowId = g.Key,
+                total = g.Count(),
+                opened = g.Count(x => x.EventType == "flow.open"),
+                submitted = g.Count(x => x.EventType == "flow.submission"),
+                completed = g.Count(x => x.EventType == "flow.completion"),
+                errors = g.Count(x => x.EventType == "flow.error" || !x.Success)
+            })
+            .OrderByDescending(x => x.total)
+            .Take(50)
+            .ToList();
+
+        return Ok(new
+        {
+            windowDays = safeDays,
+            total,
+            opened,
+            submitted,
+            completed,
+            errors,
+            completionRate = opened == 0 ? 0d : Math.Round((double)completed * 100d / opened, 2),
+            submitRate = opened == 0 ? 0d : Math.Round((double)submitted * 100d / opened, 2),
+            avgEndpointLatencyMs = avgLatencyMs,
+            p95EndpointLatencyMs = p95LatencyMs,
+            byFlow
+        });
+    }
+
+    [HttpGet("metrics/flows/events")]
+    public async Task<IActionResult> FlowMetricEvents(
+        [FromQuery] int take = 100,
+        [FromQuery] int days = 7,
+        [FromQuery] string metaFlowId = "",
+        [FromQuery] string eventType = "",
+        CancellationToken ct = default)
+    {
+        if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        EnsureAutomationSchema();
+        var safeTake = Math.Clamp(take, 1, 500);
+        var safeDays = Math.Clamp(days, 1, 90);
+        var fromUtc = DateTime.UtcNow.AddDays(-safeDays);
+        var q = db.FlowRuntimeEvents.AsNoTracking().Where(x => x.TenantId == tenancy.TenantId && x.CreatedAtUtc >= fromUtc);
+        if (!string.IsNullOrWhiteSpace(metaFlowId)) q = q.Where(x => x.MetaFlowId == metaFlowId.Trim());
+        if (!string.IsNullOrWhiteSpace(eventType)) q = q.Where(x => x.EventType == eventType.Trim());
+
+        var rows = await q.OrderByDescending(x => x.CreatedAtUtc).Take(safeTake).Select(x => new
+        {
+            x.Id,
+            x.FlowId,
+            x.MetaFlowId,
+            x.EventType,
+            x.EventSource,
+            x.Success,
+            x.StatusCode,
+            x.DurationMs,
+            x.ScreenId,
+            x.ActionName,
+            x.CustomerPhone,
+            x.ConversationExternalId,
+            x.ErrorDetail,
+            x.CreatedAtUtc
+        }).ToListAsync(ct);
+        return Ok(rows);
     }
 
     [HttpPost("flows/{flowId:guid}/versions/{versionId:guid}/rollback")]
@@ -1099,6 +1677,521 @@ public class AutomationController(
         }
     }
 
+    private FlowValidationReport ValidateDefinitionInternal(string definitionJson)
+    {
+        var report = new FlowValidationReport();
+        var raw = string.IsNullOrWhiteSpace(definitionJson) ? "{}" : definitionJson;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            report.Version = root.TryGetProperty("version", out var versionNode)
+                ? (versionNode.GetString() ?? string.Empty)
+                : string.Empty;
+
+            if (root.TryGetProperty("screens", out var screensNode) && screensNode.ValueKind == JsonValueKind.Array)
+            {
+                ValidateScreenFlow(root, screensNode, report);
+            }
+            else
+            {
+                ValidateNodeFlow(root, report);
+            }
+        }
+        catch (JsonException ex)
+        {
+            report.Errors.Add($"Invalid JSON: {ex.Message}");
+        }
+
+        report.IsValid = report.Errors.Count == 0;
+        return report;
+    }
+
+    private static void ValidateNodeFlow(JsonElement root, FlowValidationReport report)
+    {
+        if (!root.TryGetProperty("nodes", out var nodes) || nodes.ValueKind != JsonValueKind.Array)
+        {
+            report.Errors.Add("Definition must include a nodes array or screens array.");
+            return;
+        }
+
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in nodes.EnumerateArray())
+        {
+            report.NodeCount += 1;
+            var id = node.TryGetProperty("id", out var idNode) ? (idNode.GetString() ?? string.Empty).Trim() : string.Empty;
+            var type = node.TryGetProperty("type", out var typeNode) ? (typeNode.GetString() ?? string.Empty).Trim() : string.Empty;
+            if (string.IsNullOrWhiteSpace(id)) report.Errors.Add("Each node must have id.");
+            else if (!ids.Add(id)) report.Errors.Add($"Duplicate node id '{id}'.");
+            if (string.IsNullOrWhiteSpace(type)) report.Errors.Add($"Node '{id}' type is required.");
+        }
+        if (report.NodeCount == 0) report.Errors.Add("Flow has no nodes.");
+        var hasStart = nodes.EnumerateArray().Any(x => x.TryGetProperty("type", out var t) && string.Equals(t.GetString(), "start", StringComparison.OrdinalIgnoreCase));
+        var hasEnd = nodes.EnumerateArray().Any(x => x.TryGetProperty("type", out var t) && string.Equals(t.GetString(), "end", StringComparison.OrdinalIgnoreCase));
+        if (!hasStart) report.Warnings.Add("No start node found.");
+        if (!hasEnd) report.Warnings.Add("No end node found.");
+    }
+
+    private static void ValidateScreenFlow(JsonElement root, JsonElement screensNode, FlowValidationReport report)
+    {
+        if (string.IsNullOrWhiteSpace(report.Version))
+            report.Errors.Add("Screen flow must include version.");
+
+        var screenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var screen in screensNode.EnumerateArray())
+        {
+            report.ScreenCount += 1;
+            var id = screen.TryGetProperty("id", out var idNode) ? (idNode.GetString() ?? string.Empty).Trim() : string.Empty;
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                report.Errors.Add("Each screen must have id.");
+                continue;
+            }
+            if (!screenIds.Add(id)) report.Errors.Add($"Duplicate screen id '{id}'.");
+
+            if (!screen.TryGetProperty("components", out var components) || components.ValueKind != JsonValueKind.Array)
+            {
+                report.Errors.Add($"Screen '{id}' must define components array.");
+                continue;
+            }
+
+            var compIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var comp in components.EnumerateArray())
+            {
+                report.ComponentCount += 1;
+                var cid = comp.TryGetProperty("id", out var cIdNode) ? (cIdNode.GetString() ?? string.Empty).Trim() : string.Empty;
+                var cType = comp.TryGetProperty("type", out var cTypeNode) ? (cTypeNode.GetString() ?? string.Empty).Trim() : string.Empty;
+                if (string.IsNullOrWhiteSpace(cid)) report.Errors.Add($"Screen '{id}' component missing id.");
+                else if (!compIds.Add(cid)) report.Errors.Add($"Screen '{id}' duplicate component id '{cid}'.");
+                if (string.IsNullOrWhiteSpace(cType)) report.Errors.Add($"Screen '{id}' component '{cid}' missing type.");
+                if (comp.TryGetProperty("nextScreen", out var nextScreen) && !string.IsNullOrWhiteSpace(nextScreen.GetString()))
+                    report.RouteCount += 1;
+            }
+        }
+
+        if (!root.TryGetProperty("routing", out var routing) || routing.ValueKind != JsonValueKind.Object)
+        {
+            report.Errors.Add("Screen flow must include routing object.");
+            return;
+        }
+        var start = routing.TryGetProperty("startScreen", out var startScreen) ? (startScreen.GetString() ?? string.Empty).Trim() : string.Empty;
+        if (string.IsNullOrWhiteSpace(start)) report.Errors.Add("routing.startScreen is required.");
+        else if (!screenIds.Contains(start)) report.Errors.Add($"routing.startScreen '{start}' does not exist.");
+        if (routing.TryGetProperty("edges", out var edges) && edges.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var edge in edges.EnumerateArray())
+            {
+                report.RouteCount += 1;
+                var from = edge.TryGetProperty("from", out var fromNode) ? (fromNode.GetString() ?? string.Empty).Trim() : string.Empty;
+                var to = edge.TryGetProperty("to", out var toNode) ? (toNode.GetString() ?? string.Empty).Trim() : string.Empty;
+                if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to))
+                {
+                    report.Errors.Add("Each routing edge must have from and to.");
+                    continue;
+                }
+                if (!screenIds.Contains(from)) report.Errors.Add($"Routing edge from '{from}' does not exist.");
+                if (!screenIds.Contains(to)) report.Errors.Add($"Routing edge to '{to}' does not exist.");
+            }
+        }
+    }
+
+    private static object TryParseJsonOrText(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(value);
+            return doc.RootElement.Clone();
+        }
+        catch
+        {
+            return value;
+        }
+    }
+
+    private static bool TryResolveDynamicDataSource(
+        string definitionJson,
+        string? screenId,
+        string action,
+        out string endpoint,
+        out string method,
+        out Dictionary<string, string> headers)
+    {
+        endpoint = string.Empty;
+        method = "POST";
+        headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (string.IsNullOrWhiteSpace(definitionJson) || string.IsNullOrWhiteSpace(action)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(definitionJson);
+            var root = doc.RootElement;
+            var normalizedAction = action.Trim();
+
+            if (root.TryGetProperty("dynamicDataSources", out var sources) &&
+                sources.ValueKind == JsonValueKind.Object &&
+                sources.TryGetProperty(normalizedAction, out var sourceObj) &&
+                sourceObj.ValueKind == JsonValueKind.Object)
+            {
+                endpoint = sourceObj.TryGetProperty("url", out var u) ? (u.GetString() ?? string.Empty).Trim() : string.Empty;
+                method = sourceObj.TryGetProperty("method", out var m) ? (m.GetString() ?? "POST").Trim() : "POST";
+                if (sourceObj.TryGetProperty("headers", out var hs) && hs.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var h in hs.EnumerateObject())
+                    {
+                        var v = h.Value.ToString();
+                        if (!string.IsNullOrWhiteSpace(h.Name) && !string.IsNullOrWhiteSpace(v))
+                            headers[h.Name] = v;
+                    }
+                }
+                if (!string.IsNullOrWhiteSpace(endpoint)) return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(screenId) &&
+                root.TryGetProperty("screens", out var screens) &&
+                screens.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var screen in screens.EnumerateArray())
+                {
+                    var sid = screen.TryGetProperty("id", out var sidNode) ? (sidNode.GetString() ?? string.Empty).Trim() : string.Empty;
+                    if (!string.Equals(sid, screenId.Trim(), StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!screen.TryGetProperty("dataSources", out var ds) || ds.ValueKind != JsonValueKind.Object) continue;
+                    if (!ds.TryGetProperty(normalizedAction, out var dsObj) || dsObj.ValueKind != JsonValueKind.Object) continue;
+                    endpoint = dsObj.TryGetProperty("url", out var u) ? (u.GetString() ?? string.Empty).Trim() : string.Empty;
+                    method = dsObj.TryGetProperty("method", out var m) ? (m.GetString() ?? "POST").Trim() : "POST";
+                    if (dsObj.TryGetProperty("headers", out var hs) && hs.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var h in hs.EnumerateObject())
+                        {
+                            var v = h.Value.ToString();
+                            if (!string.IsNullOrWhiteSpace(h.Name) && !string.IsNullOrWhiteSpace(v))
+                                headers[h.Name] = v;
+                        }
+                    }
+                    if (!string.IsNullOrWhiteSpace(endpoint)) return true;
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+        return false;
+    }
+
+    private async Task EnforceDynamicHostAllowListAsync(string host, CancellationToken ct)
+    {
+        var entry = await controlDb.PlatformSettings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Scope == "mobile-app" && x.Key == "webhookAllowedHosts", ct);
+        if (entry is null || string.IsNullOrWhiteSpace(entry.ValueEncrypted)) return;
+
+        var raw = crypto.Decrypt(entry.ValueEncrypted);
+        if (string.IsNullOrWhiteSpace(raw)) return;
+
+        var allowed = ParseStringArray(raw);
+        if (allowed.Count == 0) return;
+
+        var normalizedHost = host.Trim().ToLowerInvariant();
+        var matched = allowed.Any(a =>
+        {
+            var x = (a ?? string.Empty).Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(x)) return false;
+            return normalizedHost == x || normalizedHost.EndsWith("." + x, StringComparison.OrdinalIgnoreCase);
+        });
+
+        if (!matched)
+            throw new InvalidOperationException($"Dynamic data host '{host}' is not in allow-list.");
+    }
+
+    private static bool IsPrivateOrLoopback(IPAddress ip)
+    {
+        if (IPAddress.IsLoopback(ip)) return true;
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var b = ip.GetAddressBytes();
+            return b[0] == 10
+                   || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
+                   || (b[0] == 192 && b[1] == 168)
+                   || (b[0] == 169 && b[1] == 254);
+        }
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            return ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast;
+        }
+        return false;
+    }
+
+    private static List<string> ParseStringArray(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return [];
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                return doc.RootElement.EnumerateArray()
+                    .Select(x => x.ToString())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .ToList();
+            }
+        }
+        catch
+        {
+            // fall through
+        }
+        return raw
+            .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static JsonElement? TryExtractMetaFlowSchema(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return null;
+
+        if (root.TryGetProperty("flow_json", out var flowJson) && flowJson.ValueKind == JsonValueKind.Object)
+            return flowJson.Clone();
+
+        if (root.TryGetProperty("json", out var json))
+        {
+            if (json.ValueKind == JsonValueKind.Object) return json.Clone();
+            if (json.ValueKind == JsonValueKind.String)
+            {
+                var payload = json.GetString();
+                if (!string.IsNullOrWhiteSpace(payload))
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                            return doc.RootElement.Clone();
+                    }
+                    catch
+                    {
+                        // ignore invalid embedded JSON
+                    }
+                }
+            }
+        }
+
+        if (root.TryGetProperty("screens", out var screens) && screens.ValueKind == JsonValueKind.Array)
+            return root.Clone();
+
+        return null;
+    }
+
+    private static bool TryBuildDefinitionFromMetaFlow(
+        JsonElement metaRoot,
+        out string definitionJson,
+        out string metaFlowName,
+        out string warning)
+    {
+        definitionJson = "{}";
+        metaFlowName = metaRoot.TryGetProperty("name", out var name) ? (name.GetString() ?? string.Empty) : string.Empty;
+        warning = string.Empty;
+
+        var maybeSchema = TryExtractMetaFlowSchema(metaRoot);
+        if (!maybeSchema.HasValue) return false;
+
+        var schema = maybeSchema.Value;
+        if (!schema.TryGetProperty("screens", out var screens) || screens.ValueKind != JsonValueKind.Array || screens.GetArrayLength() == 0)
+            return false;
+
+        var nodes = new List<object>();
+        var screenNodeById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var screenOrder = new List<string>();
+        var routeHints = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var screen in screens.EnumerateArray())
+        {
+            if (screen.ValueKind != JsonValueKind.Object) continue;
+            var screenId = screen.TryGetProperty("id", out var sid) ? (sid.GetString() ?? string.Empty) : string.Empty;
+            if (string.IsNullOrWhiteSpace(screenId)) screenId = $"screen_{screenOrder.Count + 1}";
+            var title = screen.TryGetProperty("title", out var st) ? (st.GetString() ?? screenId) : screenId;
+
+            var components = CollectMetaComponents(screen);
+
+            var formFields = new List<object>();
+            foreach (var comp in components)
+            {
+                if (comp.ValueKind != JsonValueKind.Object) continue;
+                var compType = comp.TryGetProperty("type", out var ctype) ? (ctype.GetString() ?? string.Empty).ToLowerInvariant() : string.Empty;
+                if (compType is "input" or "text_input" or "dropdown" or "select" or "radio" or "checkbox" or "date" or "phone")
+                {
+                    var fieldKey = comp.TryGetProperty("id", out var cid) ? (cid.GetString() ?? $"field_{formFields.Count + 1}") : $"field_{formFields.Count + 1}";
+                    var fieldLabel = comp.TryGetProperty("label", out var cl) ? (cl.GetString() ?? fieldKey) : fieldKey;
+                    var required = comp.TryGetProperty("required", out var cr) && cr.ValueKind == JsonValueKind.True;
+                    formFields.Add(new
+                    {
+                        key = fieldKey,
+                        label = fieldLabel,
+                        type = string.IsNullOrWhiteSpace(compType) ? "text" : compType,
+                        required
+                    });
+                }
+
+                if (comp.TryGetProperty("nextScreen", out var nextScreenProp))
+                {
+                    var nextScreen = nextScreenProp.GetString() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(nextScreen) && !routeHints.ContainsKey(screenId))
+                        routeHints[screenId] = nextScreen;
+                }
+            }
+
+            var nodeType = formFields.Count > 0 ? "form" : "text";
+            var nodeId = $"meta_{screenId}";
+            screenNodeById[screenId] = nodeId;
+            screenOrder.Add(screenId);
+            nodes.Add(new
+            {
+                id = nodeId,
+                type = nodeType,
+                name = title,
+                x = 360 + (screenOrder.Count - 1) * 260,
+                y = 220,
+                next = "",
+                onTrue = "",
+                onFalse = "",
+                config = nodeType == "form"
+                    ? new { title = title, fields = formFields }
+                    : (object)new { body = title }
+            });
+        }
+
+        var startNodeId = "meta_start";
+        var endNodeId = "meta_end";
+        nodes.Insert(0, new
+        {
+            id = startNodeId,
+            type = "start",
+            name = "Start",
+            x = 120,
+            y = 220,
+            next = screenOrder.Count > 0 ? screenNodeById[screenOrder[0]] : endNodeId,
+            onTrue = "",
+            onFalse = "",
+            config = new { source = "meta_import" }
+        });
+        nodes.Add(new
+        {
+            id = endNodeId,
+            type = "end",
+            name = "End",
+            x = 360 + Math.Max(1, screenOrder.Count) * 260,
+            y = 220,
+            next = "",
+            onTrue = "",
+            onFalse = "",
+            config = new { }
+        });
+
+        var defaultNextByScreen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var routeStartScreenId = string.Empty;
+        if (routeHints.Count > 0)
+        {
+            foreach (var pair in routeHints) defaultNextByScreen[pair.Key] = pair.Value;
+        }
+        if (schema.TryGetProperty("routing", out var routing) && routing.ValueKind == JsonValueKind.Object &&
+            routing.TryGetProperty("edges", out var edges) && edges.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var edge in edges.EnumerateArray())
+            {
+                if (edge.ValueKind != JsonValueKind.Object) continue;
+                var from = edge.TryGetProperty("from", out var fromProp) ? (fromProp.GetString() ?? string.Empty) : string.Empty;
+                var to = edge.TryGetProperty("to", out var toProp) ? (toProp.GetString() ?? string.Empty) : string.Empty;
+                if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to)) continue;
+                if (!defaultNextByScreen.ContainsKey(from))
+                    defaultNextByScreen[from] = to;
+            }
+
+            if (routing.TryGetProperty("startScreen", out var ss) && ss.ValueKind == JsonValueKind.String)
+            {
+                var s = ss.GetString() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(s) && screenNodeById.ContainsKey(s))
+                    routeStartScreenId = s;
+            }
+            else if (routing.TryGetProperty("start_screen", out var ss2) && ss2.ValueKind == JsonValueKind.String)
+            {
+                var s = ss2.GetString() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(s) && screenNodeById.ContainsKey(s))
+                    routeStartScreenId = s;
+            }
+        }
+
+        if (defaultNextByScreen.Count == 0)
+        {
+            for (var i = 0; i < screenOrder.Count - 1; i++)
+                defaultNextByScreen[screenOrder[i]] = screenOrder[i + 1];
+        }
+
+        var materialized = nodes
+            .Select(x => JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(x), JsonOptions)!)
+            .ToList();
+        foreach (var node in materialized)
+        {
+            var nodeId = node.TryGetValue("id", out var idObj) ? idObj?.ToString() ?? string.Empty : string.Empty;
+            if (nodeId == startNodeId)
+            {
+                if (!string.IsNullOrWhiteSpace(routeStartScreenId) && screenNodeById.TryGetValue(routeStartScreenId, out var routedStartNode))
+                    node["next"] = routedStartNode;
+                continue;
+            }
+            if (!nodeId.StartsWith("meta_", StringComparison.OrdinalIgnoreCase) || nodeId is "meta_start" or "meta_end")
+                continue;
+            var screenId = nodeId["meta_".Length..];
+            if (defaultNextByScreen.TryGetValue(screenId, out var nextScreen) && screenNodeById.TryGetValue(nextScreen, out var nextNodeId))
+                node["next"] = nextNodeId;
+            else
+                node["next"] = endNodeId;
+        }
+
+        definitionJson = JsonSerializer.Serialize(new
+        {
+            trigger = new { type = "keyword", keywords = new[] { "hi", "hello" } },
+            source = "meta",
+            meta = new
+            {
+                flowId = metaRoot.TryGetProperty("id", out var id) ? id.GetString() ?? string.Empty : string.Empty,
+                flowName = metaFlowName,
+                importedAtUtc = DateTime.UtcNow,
+                schema
+            },
+            startNodeId = startNodeId,
+            nodes = materialized
+        }, JsonOptions);
+
+        if (screenOrder.Count < 2) warning = "Imported flow has single screen; routing is minimal.";
+        return true;
+    }
+
+    private static List<JsonElement> CollectMetaComponents(JsonElement screen)
+    {
+        var result = new List<JsonElement>();
+
+        void Traverse(JsonElement node)
+        {
+            if (node.ValueKind != JsonValueKind.Object) return;
+            if (node.TryGetProperty("type", out _)) result.Add(node.Clone());
+            if (node.TryGetProperty("components", out var components) && components.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var c in components.EnumerateArray()) Traverse(c);
+            }
+            if (node.TryGetProperty("children", out var children) && children.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var c in children.EnumerateArray()) Traverse(c);
+            }
+            if (node.TryGetProperty("layout", out var layout) && layout.ValueKind == JsonValueKind.Object)
+            {
+                Traverse(layout);
+            }
+        }
+
+        Traverse(screen);
+        return result;
+    }
+
     private static List<string> GetUnsupportedNodeTypes(string definitionJson)
     {
         var unsupported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1268,5 +2361,17 @@ public class AutomationController(
         public string onSuccess { get; set; } = string.Empty;
         public string onFailure { get; set; } = string.Empty;
         public Dictionary<string, object?> config { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed class FlowValidationReport
+    {
+        public bool IsValid { get; set; }
+        public string Version { get; set; } = string.Empty;
+        public int NodeCount { get; set; }
+        public int ScreenCount { get; set; }
+        public int ComponentCount { get; set; }
+        public int RouteCount { get; set; }
+        public List<string> Errors { get; set; } = [];
+        public List<string> Warnings { get; set; } = [];
     }
 }

@@ -117,17 +117,40 @@ public class OutboundMessageWorker(
                         else if (message.MessageType.StartsWith("interactive:", StringComparison.OrdinalIgnoreCase))
                         {
                             var interactive = ParseInteractivePayload(message.MessageType, message.Body);
-                            if (interactive.buttons.Count == 0)
-                                throw new InvalidOperationException("Interactive message has no buttons.");
-                            providerId = await SendWhatsAppInteractiveButtonsAsync(
-                                httpClientFactory,
-                                waOptions,
-                                wabaCfg.PhoneNumberId,
-                                accessToken,
-                                message.Recipient,
-                                interactive.body,
-                                interactive.buttons,
-                                stoppingToken);
+                            if (string.Equals(interactive.kind, "flow", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (string.IsNullOrWhiteSpace(interactive.flowId))
+                                    throw new InvalidOperationException("Interactive flow message missing flow id.");
+                                providerId = await SendWhatsAppInteractiveFlowAsync(
+                                    httpClientFactory,
+                                    waOptions,
+                                    wabaCfg.PhoneNumberId,
+                                    accessToken,
+                                    message.Recipient,
+                                    interactive.body,
+                                    interactive.flowId,
+                                    interactive.flowCta,
+                                    interactive.flowToken,
+                                    interactive.flowAction,
+                                    interactive.flowScreen,
+                                    interactive.flowMessageVersion,
+                                    interactive.flowData,
+                                    stoppingToken);
+                            }
+                            else
+                            {
+                                if (interactive.buttons.Count == 0)
+                                    throw new InvalidOperationException("Interactive message has no buttons.");
+                                providerId = await SendWhatsAppInteractiveButtonsAsync(
+                                    httpClientFactory,
+                                    waOptions,
+                                    wabaCfg.PhoneNumberId,
+                                    accessToken,
+                                    message.Recipient,
+                                    interactive.body,
+                                    interactive.buttons,
+                                    stoppingToken);
+                            }
                         }
                         else
                         {
@@ -375,28 +398,74 @@ public class OutboundMessageWorker(
         }
     }
 
-    private static (string body, List<string> buttons) ParseInteractivePayload(string messageType, string body)
+    private static (string kind, string body, List<string> buttons, string flowId, string flowCta, string flowToken, string flowAction, string flowScreen, int flowMessageVersion, JsonElement? flowData) ParseInteractivePayload(string messageType, string body)
     {
+        var kind = "button";
+        var flowId = string.Empty;
+        var flowCta = "Open";
+        var flowToken = string.Empty;
+        var flowAction = "navigate";
+        var flowScreen = string.Empty;
+        var flowMessageVersion = 3;
+        JsonElement? flowData = null;
         var buttons = new List<string>();
         try
         {
-            // Format: interactive:button:Support~Sales~Accounts
+            // Format button: interactive:button:Support~Sales~Accounts
+            // Format flow: interactive:flow:<flowId>
             var parts = (messageType ?? string.Empty).Split(':', 3, StringSplitOptions.TrimEntries);
-            if (parts.Length >= 3 && !string.IsNullOrWhiteSpace(parts[2]))
+            kind = parts.Length >= 2 ? parts[1].Trim().ToLowerInvariant() : "button";
+            if (kind == "flow")
+            {
+                flowId = parts.Length >= 3 ? (parts[2] ?? string.Empty).Trim() : string.Empty;
+                if (!string.IsNullOrWhiteSpace(body))
+                {
+                    using var doc = JsonDocument.Parse(body);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("body", out var txt))
+                        body = txt.GetString() ?? string.Empty;
+                    if (root.TryGetProperty("flowId", out var fid) && !string.IsNullOrWhiteSpace(fid.GetString()))
+                        flowId = fid.GetString() ?? flowId;
+                    if (root.TryGetProperty("flowCta", out var cta))
+                        flowCta = string.IsNullOrWhiteSpace(cta.GetString()) ? flowCta : cta.GetString()!;
+                    if (root.TryGetProperty("flowToken", out var token))
+                        flowToken = token.GetString() ?? string.Empty;
+                    if (root.TryGetProperty("flowAction", out var action))
+                        flowAction = string.IsNullOrWhiteSpace(action.GetString()) ? flowAction : action.GetString()!;
+                    if (root.TryGetProperty("flowScreen", out var screen))
+                        flowScreen = screen.GetString() ?? string.Empty;
+                    if (root.TryGetProperty("flowMessageVersion", out var mv) && mv.ValueKind == JsonValueKind.Number && mv.TryGetInt32(out var parsed))
+                        flowMessageVersion = parsed;
+                    if (root.TryGetProperty("flowData", out var data))
+                        flowData = data.Clone();
+                }
+            }
+            else if (parts.Length >= 3 && !string.IsNullOrWhiteSpace(parts[2]))
             {
                 buttons = parts[2]
-                    .Split('~', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Where(x => !string.IsNullOrWhiteSpace(x))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Take(3)
-                    .ToList();
+                        .Split('~', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(3)
+                        .ToList();
             }
         }
         catch
         {
             buttons = [];
         }
-        return (body ?? string.Empty, buttons);
+        return (
+            string.IsNullOrWhiteSpace(kind) ? "button" : kind,
+            body ?? string.Empty,
+            buttons,
+            flowId,
+            flowCta,
+            flowToken,
+            flowAction,
+            flowScreen,
+            flowMessageVersion is < 1 or > 9 ? 3 : flowMessageVersion,
+            flowData
+        );
     }
 
     private static async Task<string> SendWhatsAppSessionAsync(
@@ -462,6 +531,71 @@ public class OutboundMessageWorker(
         using var resp = await http.SendAsync(req, ct);
         var responseBody = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode) throw new InvalidOperationException($"WhatsApp interactive send failed ({(int)resp.StatusCode}): {responseBody}");
+        using var doc = JsonDocument.Parse(responseBody);
+        var id = doc.RootElement.GetProperty("messages")[0].GetProperty("id").GetString();
+        return id ?? string.Empty;
+    }
+
+    private static async Task<string> SendWhatsAppInteractiveFlowAsync(
+        IHttpClientFactory httpClientFactory,
+        WhatsAppOptions options,
+        string phoneNumberId,
+        string accessToken,
+        string recipient,
+        string body,
+        string flowId,
+        string flowCta,
+        string flowToken,
+        string flowAction,
+        string flowScreen,
+        int flowMessageVersion,
+        JsonElement? flowData,
+        CancellationToken ct)
+    {
+        var url = $"{options.GraphApiBase}/{options.ApiVersion}/{phoneNumberId}/messages";
+        object? flowActionPayload = null;
+        var hasScreen = !string.IsNullOrWhiteSpace(flowScreen);
+        var hasData = flowData.HasValue && flowData.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array;
+        if (hasScreen || hasData)
+        {
+            flowActionPayload = new
+            {
+                screen = hasScreen ? flowScreen : null,
+                data = hasData ? flowData!.Value : (JsonElement?)null
+            };
+        }
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            messaging_product = "whatsapp",
+            to = recipient,
+            type = "interactive",
+            interactive = new
+            {
+                type = "flow",
+                body = new { text = string.IsNullOrWhiteSpace(body) ? "Please continue:" : body },
+                action = new
+                {
+                    name = "flow",
+                    parameters = new
+                    {
+                        flow_message_version = flowMessageVersion.ToString(),
+                        flow_id = flowId,
+                        flow_cta = string.IsNullOrWhiteSpace(flowCta) ? "Open" : flowCta,
+                        flow_token = string.IsNullOrWhiteSpace(flowToken) ? null : flowToken,
+                        flow_action = string.IsNullOrWhiteSpace(flowAction) ? "navigate" : flowAction,
+                        flow_action_payload = flowActionPayload
+                    }
+                }
+            }
+        });
+        var http = httpClientFactory.CreateClient();
+        using var req = new HttpRequestMessage(HttpMethod.Post, url);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        req.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var resp = await http.SendAsync(req, ct);
+        var responseBody = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode) throw new InvalidOperationException($"WhatsApp interactive flow send failed ({(int)resp.StatusCode}): {responseBody}");
         using var doc = JsonDocument.Parse(responseBody);
         var id = doc.RootElement.GetProperty("messages")[0].GetProperty("id").GetString();
         return id ?? string.Empty;

@@ -44,18 +44,48 @@ public class MessagingService(
             if (request.Channel != ChannelType.WhatsApp)
                 throw new InvalidOperationException("Interactive messages are supported only for WhatsApp.");
             var interactiveType = (request.InteractiveType ?? string.Empty).Trim().ToLowerInvariant();
-            if (interactiveType != "button")
-                throw new InvalidOperationException("Only WhatsApp button interactive type is supported.");
+            if (interactiveType is not ("button" or "flow"))
+                throw new InvalidOperationException("Interactive type must be button or flow.");
             request.Body = InputGuardService.RequireTrimmed(request.Body, "Message body", 1024);
-            var buttons = (request.InteractiveButtons ?? [])
-                .Select(x => (x ?? string.Empty).Trim())
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(3)
-                .ToList();
-            if (buttons.Count == 0)
-                throw new InvalidOperationException("At least one interactive button is required.");
-            request.InteractiveButtons = buttons;
+            if (interactiveType == "button")
+            {
+                var buttons = (request.InteractiveButtons ?? [])
+                    .Select(x => (x ?? string.Empty).Trim())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(3)
+                    .ToList();
+                if (buttons.Count == 0)
+                    throw new InvalidOperationException("At least one interactive button is required.");
+                request.InteractiveButtons = buttons;
+            }
+            else
+            {
+                request.InteractiveFlowId = InputGuardService.RequireTrimmed(request.InteractiveFlowId, "Flow id", 120);
+                request.InteractiveFlowCta = InputGuardService.RequireTrimmed(
+                    string.IsNullOrWhiteSpace(request.InteractiveFlowCta) ? "Open" : request.InteractiveFlowCta,
+                    "Flow CTA",
+                    30);
+                request.InteractiveFlowToken = (request.InteractiveFlowToken ?? string.Empty).Trim();
+                request.InteractiveFlowAction = (request.InteractiveFlowAction ?? "navigate").Trim().ToLowerInvariant();
+                if (request.InteractiveFlowAction is not ("navigate" or "data_exchange"))
+                    throw new InvalidOperationException("Flow action must be navigate or data_exchange.");
+                request.InteractiveFlowScreen = (request.InteractiveFlowScreen ?? string.Empty).Trim();
+                request.InteractiveFlowDataJson = string.IsNullOrWhiteSpace(request.InteractiveFlowDataJson)
+                    ? "{}"
+                    : request.InteractiveFlowDataJson.Trim();
+                try
+                {
+                    using var _ = JsonDocument.Parse(request.InteractiveFlowDataJson);
+                }
+                catch
+                {
+                    throw new InvalidOperationException("Interactive flow data must be valid JSON.");
+                }
+
+                if (request.InteractiveFlowMessageVersion < 1 || request.InteractiveFlowMessageVersion > 9)
+                    throw new InvalidOperationException("Interactive flow message version must be between 1 and 9.");
+            }
             request.InteractiveType = interactiveType;
         }
         else if (!request.UseTemplate)
@@ -158,7 +188,19 @@ public class MessagingService(
         var messageBody = request.UseTemplate
             ? $"{request.TemplateName}|{string.Join(",", request.TemplateParameters)}|{request.TemplateLanguageCode}"
             : request.IsInteractive
-                ? request.Body
+                ? request.InteractiveType == "flow"
+                    ? JsonSerializer.Serialize(new
+                    {
+                        body = request.Body,
+                        flowId = request.InteractiveFlowId,
+                        flowCta = request.InteractiveFlowCta,
+                        flowToken = request.InteractiveFlowToken,
+                        flowAction = request.InteractiveFlowAction,
+                        flowScreen = request.InteractiveFlowScreen,
+                        flowMessageVersion = request.InteractiveFlowMessageVersion,
+                        flowData = ParseFlowDataObject(request.InteractiveFlowDataJson)
+                    })
+                    : request.Body
             : request.IsMedia
                 ? JsonSerializer.Serialize(new
                 {
@@ -170,7 +212,9 @@ public class MessagingService(
         var messageType = request.UseTemplate
             ? "template"
             : request.IsInteractive
-                ? $"interactive:{request.InteractiveType}:{string.Join("~", request.InteractiveButtons.Select(x => x.Replace("~", " "))).Trim()}"
+                ? request.InteractiveType == "flow"
+                    ? $"interactive:flow:{request.InteractiveFlowId}"
+                    : $"interactive:button:{string.Join("~", request.InteractiveButtons.Select(x => x.Replace("~", " "))).Trim()}"
                 : request.IsMedia
                     ? $"media:{request.MediaType}"
                     : "session";
@@ -381,4 +425,17 @@ public class MessagingService(
     ];
 
     private static readonly HashSet<char> Gsm7ExtendedChars = ['^', '{', '}', '\\', '[', '~', ']', '|', '€'];
+
+    private static object ParseFlowDataObject(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+            return doc.RootElement.Clone();
+        }
+        catch
+        {
+            return new { };
+        }
+    }
 }

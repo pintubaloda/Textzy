@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
 using Textzy.Api.DTOs;
@@ -19,6 +20,7 @@ public class WhatsAppCloudService(
     SensitiveDataRedactor redactor,
     ILogger<WhatsAppCloudService> logger)
 {
+    private static readonly ConcurrentDictionary<Guid, TenantMetaFlowLimiter> MetaFlowLimiters = new();
     private readonly WhatsAppOptions _options = configuration.GetSection("WhatsApp").Get<WhatsAppOptions>() ?? new WhatsAppOptions();
 
     private sealed class DiscoveredWabaAsset
@@ -1743,6 +1745,285 @@ public class WhatsAppCloudService(
 
         using var doc = JsonDocument.Parse(responseBody);
         return doc.RootElement.GetProperty("messages")[0].GetProperty("id").GetString() ?? $"wa_{Guid.NewGuid():N}";
+    }
+
+    public async Task<JsonElement> ListMetaFlowsAsync(CancellationToken ct = default)
+    {
+        var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
+        if (string.IsNullOrWhiteSpace(cfg.WabaId)) throw new InvalidOperationException("WABA id missing.");
+        var token = UnprotectToken(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("WABA access token missing.");
+
+        await WaitForMetaFlowRateLimitAsync(ct);
+        var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{cfg.WabaId}/flows?fields=id,name,status,categories,json_version,data_api_version,validation_errors,updated_time&limit=200";
+        var raw = await GraphGetWithMetaRetriesAsync(url, token, ct);
+        if (!raw.Ok)
+            throw new InvalidOperationException($"Meta flow list failed ({raw.StatusCode}): {raw.Body}");
+        if (string.IsNullOrWhiteSpace(raw.Body))
+            return JsonDocument.Parse("{\"data\":[]}").RootElement.Clone();
+        using var doc = JsonDocument.Parse(raw.Body);
+        return doc.RootElement.Clone();
+    }
+
+    public async Task<JsonElement> GetMetaFlowAsync(string metaFlowId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(metaFlowId)) throw new InvalidOperationException("Meta flow id is required.");
+        var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
+        var token = UnprotectToken(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("WABA access token missing.");
+
+        await WaitForMetaFlowRateLimitAsync(ct);
+        var flowId = Uri.EscapeDataString(metaFlowId.Trim());
+        var fields =
+            "id,name,status,categories,json_version,data_api_version,endpoint_uri,validation_errors,updated_time,preview,flow_json,json";
+        var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{flowId}?fields={fields}";
+        var raw = await GraphGetWithMetaRetriesAsync(url, token, ct);
+        if (!raw.Ok)
+            throw new InvalidOperationException($"Meta flow fetch failed ({raw.StatusCode}): {raw.Body}");
+        if (string.IsNullOrWhiteSpace(raw.Body))
+            throw new InvalidOperationException("Meta flow payload is empty.");
+        using var doc = JsonDocument.Parse(raw.Body);
+        return doc.RootElement.Clone();
+    }
+
+    public async Task<JsonElement> UpdateMetaFlowAsync(string metaFlowId, Dictionary<string, string> fields, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(metaFlowId)) throw new InvalidOperationException("Meta flow id is required.");
+        var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
+        var token = UnprotectToken(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("WABA access token missing.");
+        if (fields.Count == 0) throw new InvalidOperationException("At least one field is required for update.");
+
+        await WaitForMetaFlowRateLimitAsync(ct);
+        var flowId = Uri.EscapeDataString(metaFlowId.Trim());
+        var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{flowId}";
+
+        var payload = string.Join("&", fields.Select(kv =>
+            $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value ?? string.Empty)}"));
+        var raw = await GraphPostWithMetaRetriesAsync(url, token, payload, "application/x-www-form-urlencoded", ct);
+        if (!raw.Ok)
+            throw new InvalidOperationException($"Meta flow update failed ({raw.StatusCode}): {raw.Body}");
+
+        if (string.IsNullOrWhiteSpace(raw.Body))
+            return JsonDocument.Parse("{\"success\":true}").RootElement.Clone();
+        using var doc = JsonDocument.Parse(raw.Body);
+        return doc.RootElement.Clone();
+    }
+
+    public async Task<JsonElement> CreateMetaFlowAsync(
+        string name,
+        string categoriesJson,
+        string endpointUri,
+        string dataApiVersion,
+        string jsonVersion,
+        string flowJson,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("Flow name is required.");
+        var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
+        if (string.IsNullOrWhiteSpace(cfg.WabaId)) throw new InvalidOperationException("WABA id missing.");
+        var token = UnprotectToken(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("WABA access token missing.");
+
+        await WaitForMetaFlowRateLimitAsync(ct);
+        var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{cfg.WabaId}/flows";
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["name"] = name.Trim()
+        };
+        if (!string.IsNullOrWhiteSpace(categoriesJson)) fields["categories"] = categoriesJson.Trim();
+        if (!string.IsNullOrWhiteSpace(endpointUri)) fields["endpoint_uri"] = endpointUri.Trim();
+        if (!string.IsNullOrWhiteSpace(dataApiVersion)) fields["data_api_version"] = dataApiVersion.Trim();
+        if (!string.IsNullOrWhiteSpace(jsonVersion)) fields["json_version"] = jsonVersion.Trim();
+        if (!string.IsNullOrWhiteSpace(flowJson)) fields["flow_json"] = flowJson.Trim();
+
+        var payload = string.Join("&", fields.Select(kv =>
+            $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value ?? string.Empty)}"));
+        var raw = await GraphPostWithMetaRetriesAsync(url, token, payload, "application/x-www-form-urlencoded", ct);
+        if (!raw.Ok)
+            throw new InvalidOperationException($"Meta flow create failed ({raw.StatusCode}): {raw.Body}");
+
+        if (string.IsNullOrWhiteSpace(raw.Body))
+            return JsonDocument.Parse("{\"success\":true}").RootElement.Clone();
+        using var doc = JsonDocument.Parse(raw.Body);
+        return doc.RootElement.Clone();
+    }
+
+    public async Task<JsonElement> PublishMetaFlowAsync(string metaFlowId, string flowJson, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(metaFlowId)) throw new InvalidOperationException("Meta flow id is required.");
+        var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
+        var token = UnprotectToken(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("WABA access token missing.");
+
+        await WaitForMetaFlowRateLimitAsync(ct);
+        var flowId = Uri.EscapeDataString(metaFlowId.Trim());
+        var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{flowId}/publish";
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(flowJson)) fields["flow_json"] = flowJson.Trim();
+        var payload = string.Join("&", fields.Select(kv =>
+            $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value ?? string.Empty)}"));
+
+        var raw = await GraphPostWithMetaRetriesAsync(url, token, payload, "application/x-www-form-urlencoded", ct);
+        if (!raw.Ok)
+            throw new InvalidOperationException($"Meta flow publish failed ({raw.StatusCode}): {raw.Body}");
+
+        if (string.IsNullOrWhiteSpace(raw.Body))
+            return JsonDocument.Parse("{\"success\":true}").RootElement.Clone();
+        using var doc = JsonDocument.Parse(raw.Body);
+        return doc.RootElement.Clone();
+    }
+
+    public async Task<JsonElement> DeleteMetaFlowAsync(string metaFlowId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(metaFlowId)) throw new InvalidOperationException("Meta flow id is required.");
+        var cfg = await GetTenantConfigAsync(ct) ?? throw new InvalidOperationException("WABA config not connected.");
+        var token = UnprotectToken(cfg.AccessToken);
+        if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("WABA access token missing.");
+
+        await WaitForMetaFlowRateLimitAsync(ct);
+        var flowId = Uri.EscapeDataString(metaFlowId.Trim());
+        var url = $"{_options.GraphApiBase}/{_options.ApiVersion}/{flowId}";
+        var raw = await GraphDeleteWithMetaRetriesAsync(url, token, ct);
+        if (!raw.Ok)
+            throw new InvalidOperationException($"Meta flow delete failed ({raw.StatusCode}): {raw.Body}");
+
+        if (string.IsNullOrWhiteSpace(raw.Body))
+            return JsonDocument.Parse("{\"success\":true}").RootElement.Clone();
+        using var doc = JsonDocument.Parse(raw.Body);
+        return doc.RootElement.Clone();
+    }
+
+    private async Task WaitForMetaFlowRateLimitAsync(CancellationToken ct)
+    {
+        var maxPerMinute = Math.Clamp(configuration.GetValue("WhatsApp:FlowApiMaxRequestsPerMinute", 30), 5, 120);
+        var limiter = MetaFlowLimiters.GetOrAdd(tenancy.TenantId, _ => new TenantMetaFlowLimiter(maxPerMinute));
+        limiter.MaxPerMinute = maxPerMinute;
+        await limiter.WaitAsync(ct);
+    }
+
+    private async Task<(bool Ok, int StatusCode, string Body)> GraphGetWithMetaRetriesAsync(string url, string token, CancellationToken ct)
+    {
+        var maxAttempts = Math.Clamp(configuration.GetValue("WhatsApp:FlowApiMaxRetries", 3), 1, 5);
+        var delayMs = Math.Clamp(configuration.GetValue("WhatsApp:FlowApiRetryDelayMs", 1200), 500, 10000);
+
+        (bool Ok, int StatusCode, string Body) last = (false, 0, string.Empty);
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            last = await GraphGetRawAsync(url, token, ct);
+            if (last.Ok) return last;
+
+            var retryable = last.StatusCode == 429 || last.StatusCode == 408 || last.StatusCode >= 500;
+            if (!retryable || attempt == maxAttempts) break;
+
+            var wait = delayMs * (int)Math.Pow(2, attempt - 1);
+            await Task.Delay(wait, ct);
+        }
+
+        return last;
+    }
+
+    private async Task<(bool Ok, int StatusCode, string Body)> GraphPostWithMetaRetriesAsync(
+        string url,
+        string token,
+        string payload,
+        string contentType,
+        CancellationToken ct)
+    {
+        var maxAttempts = Math.Clamp(configuration.GetValue("WhatsApp:FlowApiMaxRetries", 3), 1, 5);
+        var delayMs = Math.Clamp(configuration.GetValue("WhatsApp:FlowApiRetryDelayMs", 1200), 500, 10000);
+
+        (bool Ok, int StatusCode, string Body) last = (false, 0, string.Empty);
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            last = await GraphPostRawWithContentTypeAsync(url, token, payload, contentType, ct);
+            if (last.Ok) return last;
+
+            var retryable = last.StatusCode == 429 || last.StatusCode == 408 || last.StatusCode >= 500;
+            if (!retryable || attempt == maxAttempts) break;
+
+            var wait = delayMs * (int)Math.Pow(2, attempt - 1);
+            await Task.Delay(wait, ct);
+        }
+
+        return last;
+    }
+
+    private async Task<(bool Ok, int StatusCode, string Body)> GraphDeleteWithMetaRetriesAsync(string url, string token, CancellationToken ct)
+    {
+        var maxAttempts = Math.Clamp(configuration.GetValue("WhatsApp:FlowApiMaxRetries", 3), 1, 5);
+        var delayMs = Math.Clamp(configuration.GetValue("WhatsApp:FlowApiRetryDelayMs", 1200), 500, 10000);
+
+        (bool Ok, int StatusCode, string Body) last = (false, 0, string.Empty);
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            last = await GraphDeleteRawAsync(url, token, ct);
+            if (last.Ok) return last;
+
+            var retryable = last.StatusCode == 429 || last.StatusCode == 408 || last.StatusCode >= 500;
+            if (!retryable || attempt == maxAttempts) break;
+
+            var wait = delayMs * (int)Math.Pow(2, attempt - 1);
+            await Task.Delay(wait, ct);
+        }
+
+        return last;
+    }
+
+    private async Task<(bool Ok, int StatusCode, string Body)> GraphPostRawWithContentTypeAsync(
+        string url,
+        string accessToken,
+        string payload,
+        string contentType,
+        CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient();
+        using var req = new HttpRequestMessage(HttpMethod.Post, url);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        req.Content = new StringContent(payload ?? string.Empty, Encoding.UTF8, contentType);
+        var resp = await client.SendAsync(req, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode)
+            logger.LogWarning("Graph POST failed: {Url} status={Status} body={Body}", url, (int)resp.StatusCode, redactor.RedactText(body));
+        return (resp.IsSuccessStatusCode, (int)resp.StatusCode, body);
+    }
+
+    private sealed class TenantMetaFlowLimiter
+    {
+        private readonly Queue<DateTime> _hits = new();
+        private readonly object _gate = new();
+        public int MaxPerMinute { get; set; }
+
+        public TenantMetaFlowLimiter(int maxPerMinute)
+        {
+            MaxPerMinute = maxPerMinute;
+        }
+
+        public async Task WaitAsync(CancellationToken ct)
+        {
+            while (true)
+            {
+                TimeSpan? delay = null;
+                lock (_gate)
+                {
+                    var now = DateTime.UtcNow;
+                    while (_hits.Count > 0 && (now - _hits.Peek()) > TimeSpan.FromMinutes(1))
+                        _hits.Dequeue();
+
+                    if (_hits.Count < MaxPerMinute)
+                    {
+                        _hits.Enqueue(now);
+                        return;
+                    }
+
+                    var oldest = _hits.Peek();
+                    var waitUntil = oldest.AddMinutes(1);
+                    delay = waitUntil > now ? (waitUntil - now) : TimeSpan.FromMilliseconds(250);
+                }
+
+                await Task.Delay(delay!.Value, ct);
+            }
+        }
     }
 
     public async Task<string> SendTemplateMessageAsync(WabaSendTemplateRequest request, CancellationToken ct = default)

@@ -17,7 +17,7 @@ import {
   List, Type, GitBranch, Timer, CornerUpRight, UserCheck, Tags, Webhook, OctagonX, MapPin,
   Link as LinkIcon, ZoomIn, ZoomOut, Maximize2, ChevronRight, ChevronDown, Search,
   Settings2, Eye, Play, MoreVertical, Copy, Lock, Unlock, ArrowRight, X, CheckCircle2,
-  AlertTriangle, Info, Zap, MousePointer2, Layers, BarChart3, Clock, CheckSquare, Activity
+  AlertTriangle, Info, Zap, MousePointer2, Layers, BarChart3, Clock, CheckSquare, Activity, Send
 } from "lucide-react";
 
 /* ─── THEME TOKENS ─────────────────────────────────────────────────────────── */
@@ -1832,6 +1832,8 @@ export default function AutomationsPage() {
             canUndo={canUndo} canRedo={canRedo} undoNodes={undoNodes} redoNodes={redoNodes}
             isDirty={isDirty} lastSaved={lastSaved} validation={validation}
             resetNodes={resetNodes}
+            loadAll={loadAll}
+            loadFlowDetails={loadFlowDetails}
             showEditFlow={showEditFlow} setShowEditFlow={setShowEditFlow}
             editFlowForm={editFlowForm} setEditFlowForm={setEditFlowForm}
             updateSelectedFlow={updateSelectedFlow} deleteFlow={deleteFlow}
@@ -1996,8 +1998,208 @@ function WorkflowCanvas({
   duplicateNode, disconnectNode,
   saveDraft, publish, saveTriggerKeywords, setZoom, fitToScreen, canPublishBot,
   canUndo, canRedo, undoNodes, redoNodes, isDirty, lastSaved, validation, resetNodes,
+  loadAll, loadFlowDetails,
   showEditFlow, setShowEditFlow, editFlowForm, setEditFlowForm, updateSelectedFlow, deleteFlow
 }) {
+  const [showImportMetaDialog, setShowImportMetaDialog] = useState(false);
+  const [metaFlowBusy, setMetaFlowBusy] = useState(false);
+  const [metaFlowImportBusy, setMetaFlowImportBusy] = useState(false);
+  const [metaFlowActionBusy, setMetaFlowActionBusy] = useState(false);
+  const [metaFlows, setMetaFlows] = useState([]);
+  const [selectedMetaFlowId, setSelectedMetaFlowId] = useState("");
+  const [newMetaFlowName, setNewMetaFlowName] = useState("");
+  const [renameMetaFlowName, setRenameMetaFlowName] = useState("");
+
+  const [showSendFlowDialog, setShowSendFlowDialog] = useState(false);
+  const [sendFlowBusy, setSendFlowBusy] = useState(false);
+  const [sendFlowForm, setSendFlowForm] = useState({
+    recipient: "",
+    body: "Please continue to next step.",
+    flowRef: "",
+    cta: "Open",
+    screen: "",
+    dataJson: "{}",
+  });
+  const [showExchangeDialog, setShowExchangeDialog] = useState(false);
+  const [exchangeBusy, setExchangeBusy] = useState(false);
+  const [exchangeForm, setExchangeForm] = useState({
+    action: "customer_lookup",
+    screenId: "",
+    payloadJson: "{}",
+  });
+  const currentDefinitionJson = useMemo(() => JSON.stringify({
+    trigger: { type: "keyword" },
+    startNodeId: nodes.find((n) => n.type === "start")?.id || nodes[0]?.id || "",
+    nodes, edges,
+  }), [nodes, edges]);
+
+  const validateServerSchema = async () => {
+    try {
+      const report = await apiPost("/api/automation/flows/validate-definition", { definitionJson: currentDefinitionJson });
+      if (report?.isValid) toast.success("Flow schema valid");
+      else toast.error(`Schema errors: ${(report?.errors || []).length || 0}`);
+    } catch (e) {
+      toast.error(e?.message || "Schema validation failed");
+    }
+  };
+
+  const sendFlowMessage = async () => {
+    if (!selectedFlowId) return;
+    if (!sendFlowForm.recipient.trim()) return toast.error("Recipient is required");
+    setSendFlowBusy(true);
+    try {
+      await apiPost(`/api/automation/flows/${selectedFlowId}/send-flow`, {
+        recipient: sendFlowForm.recipient.trim(),
+        body: sendFlowForm.body,
+        flowId: sendFlowForm.flowRef.trim(),
+        flowCta: sendFlowForm.cta.trim(),
+        flowScreen: sendFlowForm.screen.trim(),
+        flowDataJson: sendFlowForm.dataJson,
+      });
+      toast.success("Flow sent to user");
+      setShowSendFlowDialog(false);
+    } catch (e) {
+      toast.error(e?.message || "Failed to send flow");
+    } finally {
+      setSendFlowBusy(false);
+    }
+  };
+
+  const runDataExchange = async () => {
+    if (!selectedFlowId) return;
+    if (!exchangeForm.action.trim()) return toast.error("Action is required");
+    setExchangeBusy(true);
+    try {
+      const out = await apiPost(`/api/automation/flows/${selectedFlowId}/data-exchange`, {
+        action: exchangeForm.action.trim(),
+        screenId: exchangeForm.screenId.trim(),
+        payloadJson: exchangeForm.payloadJson,
+      });
+      toast.success(`Data exchange: HTTP ${out?.statusCode || 200}`);
+      setShowExchangeDialog(false);
+    } catch (e) {
+      toast.error(e?.message || "Data exchange failed");
+    } finally {
+      setExchangeBusy(false);
+    }
+  };
+
+  const openMetaImport = async () => {
+    setShowImportMetaDialog(true);
+    setMetaFlowBusy(true);
+    try {
+      const res = await apiGet("/api/automation/meta/flows");
+      const items = Array.isArray(res?.data) ? res.data : [];
+      setMetaFlows(items);
+      if (items.length) {
+        const id = String(items[0]?.id || "");
+        setSelectedMetaFlowId(id);
+        setRenameMetaFlowName(items[0]?.name || "");
+      }
+    } catch (e) {
+      toast.error(e?.message || "Failed to load Meta flows");
+    } finally {
+      setMetaFlowBusy(false);
+    }
+  };
+
+  const importFromMeta = async () => {
+    if (!selectedFlowId) return;
+    if (!selectedMetaFlowId) return toast.error("Select a Meta flow first");
+    setMetaFlowImportBusy(true);
+    try {
+      const out = await apiPost(`/api/automation/flows/${selectedFlowId}/import-meta`, {
+        metaFlowId: selectedMetaFlowId,
+        createNewVersion: true,
+        changeNote: "Imported from Meta"
+      });
+      await loadFlowDetails(selectedFlowId);
+      await loadAll();
+      setShowImportMetaDialog(false);
+      toast.success(out?.warning ? `Imported with warning: ${out.warning}` : "Meta flow imported");
+    } catch (e) {
+      toast.error(e?.message || "Meta flow import failed");
+    } finally {
+      setMetaFlowImportBusy(false);
+    }
+  };
+
+  const onMetaSelect = (id) => {
+    setSelectedMetaFlowId(id);
+    const found = metaFlows.find((x) => String(x.id) === String(id));
+    setRenameMetaFlowName(found?.name || "");
+  };
+
+  const createMetaFlow = async () => {
+    if (!newMetaFlowName.trim()) return toast.error("Meta flow name is required");
+    setMetaFlowActionBusy(true);
+    try {
+      await apiPost("/api/automation/meta/flows", {
+        name: newMetaFlowName.trim(),
+        categoriesJson: "[\"OTHER\"]",
+        jsonVersion: "3.0",
+        flowJson: JSON.stringify({
+          version: "3.0",
+          screens: [{ id: "welcome", title: newMetaFlowName.trim(), components: [] }],
+          routing: { startScreen: "welcome", edges: [] }
+        })
+      });
+      toast.success("Meta flow created");
+      setNewMetaFlowName("");
+      await openMetaImport();
+    } catch (e) {
+      toast.error(e?.message || "Create meta flow failed");
+    } finally {
+      setMetaFlowActionBusy(false);
+    }
+  };
+
+  const updateMetaFlowName = async () => {
+    if (!selectedMetaFlowId) return;
+    if (!renameMetaFlowName.trim()) return toast.error("Flow name is required");
+    setMetaFlowActionBusy(true);
+    try {
+      await apiPut(`/api/automation/meta/flows/${selectedMetaFlowId}`, { name: renameMetaFlowName.trim() });
+      toast.success("Meta flow updated");
+      await openMetaImport();
+    } catch (e) {
+      toast.error(e?.message || "Update meta flow failed");
+    } finally {
+      setMetaFlowActionBusy(false);
+    }
+  };
+
+  const publishMetaFlow = async () => {
+    if (!selectedMetaFlowId) return;
+    setMetaFlowActionBusy(true);
+    try {
+      await apiPost(`/api/automation/meta/flows/${selectedMetaFlowId}/publish`, { flowJson: "" });
+      toast.success("Meta flow published");
+      await openMetaImport();
+    } catch (e) {
+      toast.error(e?.message || "Publish meta flow failed");
+    } finally {
+      setMetaFlowActionBusy(false);
+    }
+  };
+
+  const deleteMetaFlow = async () => {
+    if (!selectedMetaFlowId) return;
+    if (!window.confirm("Delete selected Meta flow?")) return;
+    setMetaFlowActionBusy(true);
+    try {
+      await apiDelete(`/api/automation/meta/flows/${selectedMetaFlowId}`);
+      toast.success("Meta flow deleted");
+      setSelectedMetaFlowId("");
+      setRenameMetaFlowName("");
+      await openMetaImport();
+    } catch (e) {
+      toast.error(e?.message || "Delete meta flow failed");
+    } finally {
+      setMetaFlowActionBusy(false);
+    }
+  };
+
   if (!selectedFlowId) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -2195,6 +2397,149 @@ function WorkflowCanvas({
               <Save size={12} />Save
               <kbd className="ml-1 text-[9px] bg-slate-100 rounded px-1 text-slate-400">⌘S</kbd>
             </Button>
+            <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={validateServerSchema}>
+              <CheckSquare size={12} />Validate Schema
+            </Button>
+            <Dialog open={showImportMetaDialog} onOpenChange={setShowImportMetaDialog}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={openMetaImport}>
+                  <UploadCloud size={12} />Import Meta
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Import From Meta Flow Builder</DialogTitle>
+                  <DialogDescription>Keep Textzy UI components and map Meta screens/routing into this workflow.</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3 pt-2">
+                  {metaFlowBusy ? (
+                    <div className="text-sm text-slate-500">Loading Meta flows...</div>
+                  ) : (
+                    <>
+                      <div>
+                        <Label className="text-xs font-semibold">Meta Flow</Label>
+                        <Select value={selectedMetaFlowId} onValueChange={onMetaSelect}>
+                          <SelectTrigger className="mt-1 h-9 text-xs">
+                            <SelectValue placeholder="Select Meta flow" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {metaFlows.map((f) => (
+                              <SelectItem key={f.id} value={String(f.id)} className="text-xs">
+                                {f.name || f.id} {f.status ? `(${f.status})` : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="col-span-2">
+                          <Label className="text-xs font-semibold">Create Meta Flow</Label>
+                          <Input className="mt-1" value={newMetaFlowName} onChange={(e) => setNewMetaFlowName(e.target.value)} placeholder="New flow name" />
+                        </div>
+                        <Button variant="outline" onClick={createMetaFlow} disabled={metaFlowActionBusy} className="text-xs">
+                          Create
+                        </Button>
+                        <Button variant="outline" onClick={openMetaImport} disabled={metaFlowBusy || metaFlowActionBusy} className="text-xs">
+                          Refresh
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="col-span-2">
+                          <Label className="text-xs font-semibold">Rename Selected Meta Flow</Label>
+                          <Input className="mt-1" value={renameMetaFlowName} onChange={(e) => setRenameMetaFlowName(e.target.value)} placeholder="Flow name" />
+                        </div>
+                        <Button variant="outline" onClick={updateMetaFlowName} disabled={metaFlowActionBusy || !selectedMetaFlowId} className="text-xs">
+                          Update
+                        </Button>
+                        <Button variant="outline" onClick={publishMetaFlow} disabled={metaFlowActionBusy || !selectedMetaFlowId} className="text-xs">
+                          Publish
+                        </Button>
+                        <Button variant="destructive" onClick={deleteMetaFlow} disabled={metaFlowActionBusy || !selectedMetaFlowId} className="col-span-2 text-xs">
+                          Delete
+                        </Button>
+                      </div>
+                      <Button className="w-full text-white" style={{ background: T.orange }} onClick={importFromMeta} disabled={metaFlowImportBusy || !selectedMetaFlowId}>
+                        {metaFlowImportBusy ? "Importing..." : "Import into current flow"}
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
+            <Dialog open={showSendFlowDialog} onOpenChange={setShowSendFlowDialog}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
+                  <Send size={12} />Send Flow
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Send Flow To User</DialogTitle>
+                  <DialogDescription>Send WhatsApp interactive flow from this builder.</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3 pt-2">
+                  <div>
+                    <Label className="text-xs font-semibold">Recipient</Label>
+                    <Input className="mt-1" value={sendFlowForm.recipient} onChange={(e) => setSendFlowForm((p) => ({ ...p, recipient: e.target.value }))} placeholder="9198XXXXXXXX" />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-semibold">Message</Label>
+                    <Input className="mt-1" value={sendFlowForm.body} onChange={(e) => setSendFlowForm((p) => ({ ...p, body: e.target.value }))} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs font-semibold">Flow Ref</Label>
+                      <Input className="mt-1" value={sendFlowForm.flowRef} onChange={(e) => setSendFlowForm((p) => ({ ...p, flowRef: e.target.value }))} placeholder="meta_flow_id" />
+                    </div>
+                    <div>
+                      <Label className="text-xs font-semibold">CTA</Label>
+                      <Input className="mt-1" value={sendFlowForm.cta} onChange={(e) => setSendFlowForm((p) => ({ ...p, cta: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-xs font-semibold">First Screen (optional)</Label>
+                    <Input className="mt-1" value={sendFlowForm.screen} onChange={(e) => setSendFlowForm((p) => ({ ...p, screen: e.target.value }))} placeholder="welcome" />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-semibold">Data JSON</Label>
+                    <Textarea rows={3} className="mt-1 font-mono text-xs" value={sendFlowForm.dataJson} onChange={(e) => setSendFlowForm((p) => ({ ...p, dataJson: e.target.value }))} />
+                  </div>
+                  <Button className="w-full text-white" style={{ background: T.orange }} onClick={sendFlowMessage} disabled={sendFlowBusy}>
+                    {sendFlowBusy ? "Sending..." : "Send Flow"}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+            <Dialog open={showExchangeDialog} onOpenChange={setShowExchangeDialog}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
+                  <Webhook size={12} />Dynamic Data
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Dynamic Data Exchange</DialogTitle>
+                  <DialogDescription>Test data source action configured in flow JSON.</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3 pt-2">
+                  <div>
+                    <Label className="text-xs font-semibold">Action</Label>
+                    <Input className="mt-1" value={exchangeForm.action} onChange={(e) => setExchangeForm((p) => ({ ...p, action: e.target.value }))} placeholder="customer_lookup" />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-semibold">Screen Id (optional)</Label>
+                    <Input className="mt-1" value={exchangeForm.screenId} onChange={(e) => setExchangeForm((p) => ({ ...p, screenId: e.target.value }))} placeholder="welcome" />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-semibold">Payload JSON</Label>
+                    <Textarea rows={4} className="mt-1 font-mono text-xs" value={exchangeForm.payloadJson} onChange={(e) => setExchangeForm((p) => ({ ...p, payloadJson: e.target.value }))} />
+                  </div>
+                  <Button className="w-full text-white" style={{ background: T.orange }} onClick={runDataExchange} disabled={exchangeBusy}>
+                    {exchangeBusy ? "Running..." : "Run Exchange"}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
             <Dialog open={showEditFlow} onOpenChange={setShowEditFlow}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
