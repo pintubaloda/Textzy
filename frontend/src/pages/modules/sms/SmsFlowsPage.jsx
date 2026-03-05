@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { apiGet, apiPost, apiRequest } from '../../../api/client'
+import { apiGet, apiPost, apiRequest, hasPermission } from '../../../api/client'
 import { useAuth } from '../../../auth/AuthProvider'
 import { useToast } from '../../../feedback/ToastProvider'
 import SmsShell from '../../../components/sms/SmsShell'
@@ -7,7 +7,7 @@ import SmsShell from '../../../components/sms/SmsShell'
 export default function SmsFlowsPage() {
   const { session } = useAuth()
   const toast = useToast()
-  const canWrite = useMemo(() => ['owner', 'admin'].includes((session.role || '').toLowerCase()), [session.role])
+  const canWrite = useMemo(() => hasPermission('automation.write', session), [session])
   const [flows, setFlows] = useState([])
   const [name, setName] = useState('')
   const [editingId, setEditingId] = useState('')

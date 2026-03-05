@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { apiGet, apiRequest } from '../../../api/client'
+import { apiGet, apiRequest, hasPermission } from '../../../api/client'
 import { useAuth } from '../../../auth/AuthProvider'
 import { useToast } from '../../../feedback/ToastProvider'
 import WabaShell from '../../../components/waba/WabaShell'
@@ -7,7 +7,7 @@ import WabaShell from '../../../components/waba/WabaShell'
 export default function WabaChatbotPage() {
   const { session } = useAuth()
   const toast = useToast()
-  const canWrite = useMemo(() => ['owner', 'admin'].includes((session.role || '').toLowerCase()), [session.role])
+  const canWrite = useMemo(() => hasPermission('automation.write', session), [session])
   const [config, setConfig] = useState({ greeting: '', fallback: '', handoffEnabled: true })
 
   useEffect(() => { apiGet('/api/chatbot-config').then(setConfig).catch(() => toast.error('Load chatbot config failed')) }, [])

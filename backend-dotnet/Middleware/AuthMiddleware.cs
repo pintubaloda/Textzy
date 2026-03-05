@@ -39,7 +39,7 @@ public class AuthMiddleware(RequestDelegate next)
         var isWabaWebhookPath = path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase);
         var isPaymentWebhookPath = path.StartsWith("/api/payments/webhook", StringComparison.OrdinalIgnoreCase);
         var isEmailWebhookPath = path.StartsWith("/api/email/webhook", StringComparison.OrdinalIgnoreCase);
-        var isCsrfExemptPath = isAuthPath || isAuthRefreshPath || isPublicTenantPath || isSwaggerPath || isHubPath || isWabaWebhookPath || isPaymentWebhookPath || isEmailWebhookPath;
+        var isCsrfExemptPath = isAuthPath || isAuthRefreshPath || isProjectPath || isPublicTenantPath || isSwaggerPath || isHubPath || isWabaWebhookPath || isPaymentWebhookPath || isEmailWebhookPath;
 
         if (isAuthPath || isPublicTenantPath || isSwaggerPath || isWabaWebhookPath || isPaymentWebhookPath || isEmailWebhookPath)
         {

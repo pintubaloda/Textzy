@@ -423,7 +423,11 @@ public class AuthController(
         user.PasswordHash = hash;
         user.PasswordSalt = salt;
         user.IsActive = true;
-        if (!string.IsNullOrWhiteSpace(fullName)) user.FullName = fullName;
+        if (!string.IsNullOrWhiteSpace(fullName))
+            user.FullName = fullName;
+        else if (string.IsNullOrWhiteSpace(user.FullName) && !string.IsNullOrWhiteSpace(invite.Name))
+            user.FullName = invite.Name.Trim();
+        if (user.EmailVerifiedAtUtc is null) user.EmailVerifiedAtUtc = DateTime.UtcNow;
 
         invite.Status = "accepted";
         invite.AcceptedAtUtc = DateTime.UtcNow;
@@ -791,7 +795,8 @@ public class AuthController(
         authCookie.SetToken(HttpContext, token);
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(token);
-        return Ok(new { tenant.Id, tenant.Name, tenant.Slug, role = "owner", accessToken = token });
+        var ownerPermissions = await BuildEffectivePermissionsAsync(auth.UserId, tenant.Id, RolePermissionCatalog.Owner, ct);
+        return Ok(new { tenant.Id, tenant.Name, tenant.Slug, role = "owner", permissions = ownerPermissions, accessToken = token });
     }
 
     [HttpPost("switch-project")]
@@ -813,7 +818,8 @@ public class AuthController(
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(token);
         var role = membership.Role;
-        return Ok(new { accessToken = token, tenantSlug = tenant.Slug, projectName = tenant.Name, role });
+        var permissions = await BuildEffectivePermissionsAsync(auth.UserId, tenant.Id, role, ct);
+        return Ok(new { accessToken = token, tenantSlug = tenant.Slug, projectName = tenant.Name, role, permissions });
     }
 
     private void WriteAuthHeaders(string token)
@@ -1128,6 +1134,22 @@ public class AuthController(
             "device-binding" => "device-binding",
             _ => "login"
         };
+    }
+
+    private async Task<string[]> BuildEffectivePermissionsAsync(Guid userId, Guid tenantId, string role, CancellationToken ct)
+    {
+        var effective = RolePermissionCatalog.GetPermissions(role).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var overrides = await db.TenantUserPermissionOverrides
+            .Where(x => x.TenantId == tenantId && x.UserId == userId)
+            .ToListAsync(ct);
+
+        foreach (var ov in overrides)
+        {
+            if (ov.IsAllowed) effective.Add(ov.Permission);
+            else effective.Remove(ov.Permission);
+        }
+
+        return effective.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private static string BuildVerificationHtml(

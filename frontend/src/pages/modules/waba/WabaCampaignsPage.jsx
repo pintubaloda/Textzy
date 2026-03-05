@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { apiGet, apiPost, apiRequest } from '../../../api/client'
+import { apiGet, apiPost, apiRequest, hasPermission } from '../../../api/client'
 import { useAuth } from '../../../auth/AuthProvider'
 import { useToast } from '../../../feedback/ToastProvider'
 import WabaShell from '../../../components/waba/WabaShell'
@@ -7,7 +7,7 @@ import WabaShell from '../../../components/waba/WabaShell'
 export default function WabaCampaignsPage() {
   const { session } = useAuth()
   const toast = useToast()
-  const canWrite = useMemo(() => ['owner', 'admin'].includes((session.role || '').toLowerCase()), [session.role])
+  const canWrite = useMemo(() => hasPermission('campaigns.write', session), [session])
   const [items, setItems] = useState([])
   const [draft, setDraft] = useState({ name: '', channel: 2, templateText: '' })
   const [editingId, setEditingId] = useState('')

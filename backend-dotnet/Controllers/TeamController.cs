@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Linq;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
@@ -32,7 +33,7 @@ public class TeamController(
             .GroupBy(i => (i.Email ?? string.Empty).ToLowerInvariant())
             .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.SentAtUtc).First());
 
-        var rows = db.TenantUsers
+        var memberRows = db.TenantUsers
             .Where(tu => tu.TenantId == tenancy.TenantId)
             .Join(db.Users, tu => tu.UserId, u => u.Id, (tu, u) => new
             {
@@ -59,9 +60,38 @@ public class TeamController(
                     invitationSentAtUtc = inv?.SentAtUtc,
                     invitationExpiresAtUtc = inv?.ExpiresAtUtc,
                     invitationSendCount = inv?.SendCount ?? 0,
-                    x.joinedAtUtc
+                    joinedAtUtc = (DateTime?)x.joinedAtUtc,
+                    inviteOnly = false
                 };
             })
+            .ToList();
+
+        var memberEmails = memberRows
+            .Select(x => (x.email ?? string.Empty).ToLowerInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var inviteOnlyRows = pendingInvites.Values
+            .Where(inv => !memberEmails.Contains((inv.Email ?? string.Empty).ToLowerInvariant()))
+            .Select(inv => new
+            {
+                id = inv.Id,
+                name = string.IsNullOrWhiteSpace(inv.Name) ? inv.Email : inv.Name.Trim(),
+                email = inv.Email,
+                role = inv.Role,
+                status = "pending",
+                invitationStatus = inv.Status,
+                invitationSentAtUtc = (DateTime?)inv.SentAtUtc,
+                invitationExpiresAtUtc = (DateTime?)inv.ExpiresAtUtc,
+                invitationSendCount = inv.SendCount,
+                joinedAtUtc = (DateTime?)null,
+                inviteOnly = true
+            })
+            .ToList();
+
+        var rows = memberRows
+            .Concat(inviteOnlyRows)
+            .OrderBy(x => x.name)
+            .ThenBy(x => x.email)
             .ToList();
 
         return Ok(rows);

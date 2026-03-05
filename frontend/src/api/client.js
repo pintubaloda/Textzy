@@ -4,6 +4,7 @@ import {
   apiPost as libApiPost,
   apiPostForm as libApiPostForm,
   authLogin as libAuthLogin,
+  hasPermission as libHasPermission,
   wabaGetOnboardingStatus,
   wabaExchangeCode,
   wabaGetEmbeddedConfig
@@ -17,6 +18,7 @@ export const apiGet = libApiGet
 export const apiPost = libApiPost
 export const apiPostForm = libApiPostForm
 export const authLogin = libAuthLogin
+export const hasPermission = libHasPermission
 
 export async function getWabaStatus() {
   return wabaGetOnboardingStatus({ force: true })

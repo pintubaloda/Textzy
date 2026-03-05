@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as signalR from '@microsoft/signalr'
-import { apiGet, apiPost } from '../../../api/client'
+import { apiGet, apiPost, hasPermission } from '../../../api/client'
 import { useAuth } from '../../../auth/AuthProvider'
 import { useToast } from '../../../feedback/ToastProvider'
 import WabaShell from '../../../components/waba/WabaShell'
@@ -8,7 +8,7 @@ import WabaShell from '../../../components/waba/WabaShell'
 export default function WabaLiveChatPage() {
   const { session } = useAuth()
   const toast = useToast()
-  const canSend = useMemo(() => ['owner', 'admin', 'support', 'manager', 'super_admin'].includes((session.role || '').toLowerCase()), [session.role])
+  const canSend = useMemo(() => hasPermission('inbox.write', session), [session])
   const [conversations, setConversations] = useState([])
   const [activeId, setActiveId] = useState('')
   const [notes, setNotes] = useState([])

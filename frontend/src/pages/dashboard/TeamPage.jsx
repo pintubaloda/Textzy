@@ -292,18 +292,18 @@ export default function TeamPage() {
                       </TableCell>
                       <TableCell>{roleBadge(member.role)}</TableCell>
                       <TableCell><Badge className={member.status === "pending" ? "bg-amber-100 text-amber-700 hover:bg-amber-100" : member.status === "active" ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-slate-100 text-slate-700 hover:bg-slate-100"}>{member.status || "active"}</Badge></TableCell>
-                      <TableCell className="text-slate-500">{member.joinedAtUtc ? new Date(member.joinedAtUtc).toLocaleString() : "-"}</TableCell>
+                      <TableCell className="text-slate-500">{member.joinedAtUtc ? new Date(member.joinedAtUtc).toLocaleString() : (member.invitationSentAtUtc ? `Invited ${new Date(member.invitationSentAtUtc).toLocaleString()}` : "-")}</TableCell>
                       <TableCell>
                         {canManage && !self && (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button></DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => openEditRole(member)}><Edit className="w-4 h-4 mr-2" />Edit Role</DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => openPermissions(member)}><Shield className="w-4 h-4 mr-2" />Role & Permissions</DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => openActivity(member)}><MessageSquare className="w-4 h-4 mr-2" />View Activity</DropdownMenuItem>
+                              {!member.inviteOnly && <DropdownMenuItem onClick={() => openEditRole(member)}><Edit className="w-4 h-4 mr-2" />Edit Role</DropdownMenuItem>}
+                              {!member.inviteOnly && <DropdownMenuItem onClick={() => openPermissions(member)}><Shield className="w-4 h-4 mr-2" />Role & Permissions</DropdownMenuItem>}
+                              {!member.inviteOnly && <DropdownMenuItem onClick={() => openActivity(member)}><MessageSquare className="w-4 h-4 mr-2" />View Activity</DropdownMenuItem>}
                               {member.invitationStatus === "pending" && <DropdownMenuItem onClick={() => resendInvite(member)}><UserPlus className="w-4 h-4 mr-2" />Resend Invitation</DropdownMenuItem>}
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-red-600" onClick={() => removeMember(member)}><Trash2 className="w-4 h-4 mr-2" />Remove</DropdownMenuItem>
+                              {!member.inviteOnly && <DropdownMenuSeparator />}
+                              {!member.inviteOnly && <DropdownMenuItem className="text-red-600" onClick={() => removeMember(member)}><Trash2 className="w-4 h-4 mr-2" />Remove</DropdownMenuItem>}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         )}

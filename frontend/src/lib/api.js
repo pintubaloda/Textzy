@@ -50,23 +50,30 @@ function persistCsrfFromResponse(res) {
 export function getSession() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { tenantSlug: '', role: '', email: '' }
+    if (!raw) return { tenantSlug: '', role: '', email: '', permissions: [] }
     const p = JSON.parse(raw)
+    const permissions = Array.isArray(p.permissions)
+      ? p.permissions.filter((x) => typeof x === 'string' && x.trim())
+      : []
     return {
       tenantSlug: p.tenantSlug || p.slug || '',
       projectName: p.projectName || '',
       role: p.role || '',
       email: p.email || '',
-      accessToken: p.accessToken || ''
+      accessToken: p.accessToken || '',
+      permissions
     }
   } catch {
-    return { tenantSlug: '', projectName: '', role: '', email: '', accessToken: '' }
+    return { tenantSlug: '', projectName: '', role: '', email: '', accessToken: '', permissions: [] }
   }
 }
 
 export function setSession(next) {
   const current = getSession()
   const merged = { ...current, ...next }
+  merged.permissions = Array.isArray(merged.permissions)
+    ? merged.permissions.filter((x) => typeof x === 'string' && x.trim())
+    : []
   localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
   return merged
 }
@@ -74,6 +81,41 @@ export function setSession(next) {
 export function clearSession() {
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(CSRF_STORAGE_KEY)
+}
+
+const ROLE_PERMISSION_FALLBACK = {
+  owner: [
+    'contacts.read', 'contacts.write', 'campaigns.read', 'campaigns.write', 'templates.read', 'templates.write',
+    'automation.read', 'automation.write', 'inbox.read', 'inbox.write', 'billing.read', 'billing.write',
+    'api.read', 'api.write', 'platform.tenants.manage', 'platform.settings.read', 'platform.settings.write'
+  ],
+  admin: [
+    'contacts.read', 'contacts.write', 'campaigns.read', 'campaigns.write', 'templates.read', 'templates.write',
+    'automation.read', 'automation.write', 'inbox.read', 'inbox.write', 'billing.read', 'billing.write', 'api.read', 'api.write'
+  ],
+  manager: [
+    'contacts.read', 'contacts.write', 'campaigns.read', 'campaigns.write', 'templates.read',
+    'automation.read', 'automation.write', 'inbox.read', 'inbox.write', 'billing.read', 'api.read'
+  ],
+  support: ['inbox.read', 'inbox.write', 'contacts.read', 'templates.read', 'api.read'],
+  marketing: ['campaigns.read', 'campaigns.write', 'templates.read', 'templates.write', 'contacts.read', 'api.read'],
+  finance: ['billing.read', 'billing.write', 'campaigns.read', 'api.read'],
+  super_admin: [
+    'contacts.read', 'contacts.write', 'campaigns.read', 'campaigns.write', 'templates.read', 'templates.write',
+    'automation.read', 'automation.write', 'inbox.read', 'inbox.write', 'billing.read', 'billing.write',
+    'api.read', 'api.write', 'platform.tenants.manage', 'platform.settings.read', 'platform.settings.write'
+  ]
+}
+
+export function hasPermission(permission, session = getSession()) {
+  const target = String(permission || '').trim().toLowerCase()
+  if (!target) return false
+  const explicit = Array.isArray(session?.permissions) ? session.permissions : []
+  if (explicit.length > 0) {
+    return explicit.some((x) => String(x || '').toLowerCase() === target)
+  }
+  const role = String(session?.role || '').toLowerCase()
+  return (ROLE_PERMISSION_FALLBACK[role] || []).includes(target)
 }
 
 function getWabaStatusCacheKey() {
@@ -426,7 +468,8 @@ export async function initializeMe() {
     setSession({
       role: me.role || '',
       email: me.email || '',
-      tenantSlug: current.tenantSlug || me.tenantSlug || ''
+      tenantSlug: current.tenantSlug || me.tenantSlug || '',
+      permissions: Array.isArray(me.permissions) ? me.permissions : []
     })
     return me
   } catch {
@@ -460,6 +503,7 @@ export async function createProject(name) {
     tenantSlug: data?.slug || '',
     projectName: data?.name || '',
     role: data?.role || 'owner',
+    permissions: Array.isArray(data?.permissions) ? data.permissions : [],
     accessToken: data?.accessToken || getSession().accessToken || ''
   })
   invalidateWabaStatusCache()
@@ -472,6 +516,7 @@ export async function switchProject(slug) {
     tenantSlug: data?.tenantSlug || slug,
     projectName: data?.projectName || '',
     role: data?.role || '',
+    permissions: Array.isArray(data?.permissions) ? data.permissions : [],
     accessToken: data?.accessToken || getSession().accessToken || ''
   })
   invalidateWabaStatusCache()

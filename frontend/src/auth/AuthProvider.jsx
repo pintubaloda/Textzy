@@ -7,17 +7,18 @@ const SESSION_KEY = 'textzy.session'
 
 function readSession() {
   const raw = localStorage.getItem(SESSION_KEY)
-  if (!raw) return { tenantSlug: '', role: '', email: '', accessToken: '' }
+  if (!raw) return { tenantSlug: '', role: '', email: '', accessToken: '', permissions: [] }
   try {
     const parsed = JSON.parse(raw)
     return {
       tenantSlug: parsed.tenantSlug || '',
       role: parsed.role || '',
       email: parsed.email || '',
-      accessToken: parsed.accessToken || ''
+      accessToken: parsed.accessToken || '',
+      permissions: Array.isArray(parsed.permissions) ? parsed.permissions : []
     }
   } catch {
-    return { tenantSlug: '', role: '', email: '', accessToken: '' }
+    return { tenantSlug: '', role: '', email: '', accessToken: '', permissions: [] }
   }
 }
 
@@ -33,7 +34,7 @@ export function AuthProvider({ children }) {
   }
 
   function clearSession() {
-    const empty = { tenantSlug: '', role: '', email: '', accessToken: '' }
+    const empty = { tenantSlug: '', role: '', email: '', accessToken: '', permissions: [] }
     setSession(empty)
     clearApiSession()
   }
@@ -46,6 +47,7 @@ export function AuthProvider({ children }) {
     persist({
       role: me.role || '',
       email: me.email || '',
+      permissions: Array.isArray(me.permissions) ? me.permissions : [],
       tenantSlug: existing.tenantSlug || me.tenantSlug || '',
       accessToken: getApiSession().accessToken || existing.accessToken || ''
     })
