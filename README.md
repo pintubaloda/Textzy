@@ -1,5 +1,10 @@
 # Textzy - Multi-tenant WhatsApp + SMS SaaS
 
+## Integration docs
+- Simple API guide (SMS + WhatsApp + sandbox): `API_INTEGRATION_SIMPLE_GUIDE.md`
+- Postman collection: `Textzy_API_Integration_Postman_Collection.json`
+- Postman environment: `Textzy_API_Integration_Postman_Environment.json`
+
 ## Architecture status
 
 Implemented now:
