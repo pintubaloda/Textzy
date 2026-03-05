@@ -126,7 +126,7 @@ const PlatformSettingsPage = () => {
     allowedApiPrefixes: "/api/auth\n/api/inbox\n/api/messages\n/hubs/inbox",
     apiCatalog: "/api/auth/login\n/api/auth/refresh\n/api/auth/logout\n/api/auth/me\n/api/auth/projects\n/api/auth/switch-project\n/api/auth/app-bootstrap\n/api/inbox/conversations\n/api/inbox/conversations/{id}/messages\n/api/inbox/conversations/{id}/assign\n/api/inbox/conversations/{id}/transfer\n/api/inbox/conversations/{id}/labels\n/api/inbox/conversations/{id}/notes\n/api/inbox/typing\n/api/inbox/sla\n/api/messages/send\n/api/messages/media/{mediaId}\n/hubs/inbox",
   });
-  const [payment, setPayment] = useState({ provider: "razorpay", merchantId: "", keyId: "", keySecret: "", webhookSecret: "" });
+  const [payment, setPayment] = useState({ provider: "razorpay", mode: "test", merchantId: "", keyId: "", keySecret: "", webhookSecret: "" });
   const [smtp, setSmtp] = useState({
     provider: "smtp",
     host: "smtppro.zoho.in",
@@ -315,6 +315,7 @@ const PlatformSettingsPage = () => {
           setGateway(p);
           setPayment({
             provider: p,
+            mode: (values.mode || "test").toLowerCase() === "live" ? "live" : "test",
             merchantId: values.merchantId || "",
             keyId: values.keyId || "",
             keySecret: values.keySecret || "",
@@ -659,6 +660,18 @@ const PlatformSettingsPage = () => {
             <div className="space-y-2">
               <Label htmlFor="merchant-id">Merchant ID</Label>
               <Input id="merchant-id" placeholder="Enter merchant id" value={payment.merchantId} onChange={(e) => setPayment((p) => ({ ...p, merchantId: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Mode</Label>
+              <Select value={(payment.mode || "test")} onValueChange={(v) => setPayment((p) => ({ ...p, mode: v }))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="test">Test Mode</SelectItem>
+                  <SelectItem value="live">Live Mode</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="key-id">Key ID</Label>

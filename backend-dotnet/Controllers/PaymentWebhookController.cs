@@ -92,6 +92,9 @@ public class PaymentWebhookController(
 
             var orderId = paymentEntity.TryGetProperty("order_id", out var ordEl) ? ordEl.GetString() ?? string.Empty : string.Empty;
             var paymentId = paymentEntity.TryGetProperty("id", out var pidEl) ? pidEl.GetString() ?? string.Empty : string.Empty;
+            var amountPaise = paymentEntity.TryGetProperty("amount", out var amtEl) && amtEl.TryGetInt32(out var amt) ? amt : -1;
+            var currency = paymentEntity.TryGetProperty("currency", out var curEl) ? curEl.GetString() ?? string.Empty : string.Empty;
+            var paymentStatus = paymentEntity.TryGetProperty("status", out var stEl) ? stEl.GetString() ?? string.Empty : string.Empty;
             if (string.IsNullOrWhiteSpace(orderId)) return;
 
             var attempt = await db.BillingPaymentAttempts
@@ -101,6 +104,25 @@ public class PaymentWebhookController(
             if (attempt is null) return;
 
             if (attempt.Status == "paid") return;
+            var expectedPaise = (int)Math.Round(attempt.Amount * 100m, MidpointRounding.AwayFromZero);
+            if (!string.Equals(paymentStatus, "captured", StringComparison.OrdinalIgnoreCase))
+            {
+                attempt.Status = "payment_validation_failed";
+                attempt.LastError = "Webhook payment not captured.";
+                attempt.RawResponse = raw;
+                attempt.UpdatedAtUtc = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+                return;
+            }
+            if (amountPaise != expectedPaise || !string.Equals(currency, attempt.Currency, StringComparison.OrdinalIgnoreCase))
+            {
+                attempt.Status = "amount_mismatch";
+                attempt.LastError = $"Expected {expectedPaise} {attempt.Currency}, got {amountPaise} {currency}";
+                attempt.RawResponse = raw;
+                attempt.UpdatedAtUtc = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+                return;
+            }
 
             attempt.PaymentId = string.IsNullOrWhiteSpace(paymentId) ? attempt.PaymentId : paymentId;
             attempt.Status = "paid";

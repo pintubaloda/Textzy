@@ -126,11 +126,13 @@ public class BillingController(
 
         var cfg = await ReadPaymentSettingsAsync(ct);
         var provider = (cfg.TryGetValue("provider", out var p) ? p : "razorpay").Trim().ToLowerInvariant();
+        var mode = NormalizeRazorpayMode(cfg.TryGetValue("mode", out var m) ? m : "test");
         var keyId = cfg.TryGetValue("keyId", out var kid) ? kid : string.Empty;
 
         return Ok(new
         {
             provider,
+            mode,
             razorpay = new
             {
                 enabled = provider == "razorpay" && !string.IsNullOrWhiteSpace(keyId),
@@ -155,10 +157,13 @@ public class BillingController(
         var cfg = await ReadPaymentSettingsAsync(ct);
         var provider = (cfg.TryGetValue("provider", out var p) ? p : "razorpay").Trim().ToLowerInvariant();
         if (provider != "razorpay") return BadRequest("Configured payment provider is not Razorpay.");
+        var mode = NormalizeRazorpayMode(cfg.TryGetValue("mode", out var m) ? m : "test");
         var keyId = cfg.TryGetValue("keyId", out var kid) ? kid : string.Empty;
         var keySecret = cfg.TryGetValue("keySecret", out var ks) ? ks : string.Empty;
         if (string.IsNullOrWhiteSpace(keyId) || string.IsNullOrWhiteSpace(keySecret))
             return BadRequest("Razorpay keyId/keySecret not configured in platform settings.");
+        if (!IsRazorpayKeyModeValid(keyId, mode))
+            return BadRequest($"Razorpay keyId does not match configured mode '{mode}'.");
 
         var amount = cycle == "yearly" ? plan.PriceYearly : plan.PriceMonthly;
         var amountPaise = (int)Math.Round(amount * 100m, MidpointRounding.AwayFromZero);
@@ -170,7 +175,8 @@ public class BillingController(
             ["tenantId"] = tenancy.TenantId.ToString(),
             ["planId"] = plan.Id.ToString(),
             ["planCode"] = plan.Code,
-            ["billingCycle"] = cycle
+            ["billingCycle"] = cycle,
+            ["mode"] = mode
         };
 
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
@@ -220,6 +226,7 @@ public class BillingController(
         return Ok(new
         {
             provider = "razorpay",
+            mode,
             keyId,
             orderId,
             amount = amountPaise,
@@ -241,8 +248,12 @@ public class BillingController(
             return BadRequest("Missing Razorpay payment fields.");
 
         var cfg = await ReadPaymentSettingsAsync(ct);
+        var mode = NormalizeRazorpayMode(cfg.TryGetValue("mode", out var m) ? m : "test");
+        var keyId = cfg.TryGetValue("keyId", out var kid) ? kid : string.Empty;
         var keySecret = cfg.TryGetValue("keySecret", out var ks) ? ks : string.Empty;
-        if (string.IsNullOrWhiteSpace(keySecret)) return BadRequest("Razorpay keySecret not configured.");
+        if (string.IsNullOrWhiteSpace(keySecret) || string.IsNullOrWhiteSpace(keyId)) return BadRequest("Razorpay keyId/keySecret not configured.");
+        if (!IsRazorpayKeyModeValid(keyId, mode))
+            return BadRequest($"Razorpay keyId does not match configured mode '{mode}'.");
 
         var attempt = await db.BillingPaymentAttempts
             .Where(x => x.Provider == "razorpay" && x.OrderId == request.RazorpayOrderId && x.TenantId == tenancy.TenantId)
@@ -265,9 +276,29 @@ public class BillingController(
 
         attempt.PaymentId = request.RazorpayPaymentId;
         attempt.Signature = request.RazorpaySignature;
+
+        var validation = await ValidateRazorpayPaymentAsync(
+            keyId,
+            keySecret,
+            request.RazorpayPaymentId,
+            request.RazorpayOrderId,
+            attempt.Amount,
+            attempt.Currency,
+            ct);
+        if (!validation.ok)
+        {
+            attempt.Status = "payment_validation_failed";
+            attempt.LastError = validation.error;
+            attempt.UpdatedAtUtc = DateTime.UtcNow;
+            attempt.RawResponse = validation.raw ?? attempt.RawResponse;
+            await db.SaveChangesAsync(ct);
+            return BadRequest(validation.error);
+        }
+
         attempt.Status = "paid";
         attempt.PaidAtUtc = DateTime.UtcNow;
         attempt.UpdatedAtUtc = DateTime.UtcNow;
+        attempt.RawResponse = validation.raw ?? attempt.RawResponse;
 
         await ActivateSubscriptionFromPaymentAsync(attempt, ct);
         await db.SaveChangesAsync(ct);
@@ -340,6 +371,57 @@ public class BillingController(
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
         var expected = Convert.ToHexString(hash).ToLowerInvariant();
         return string.Equals(expected, signature.Trim().ToLowerInvariant(), StringComparison.Ordinal);
+    }
+
+    private static string NormalizeRazorpayMode(string? mode)
+    {
+        var normalized = (mode ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized == "live" ? "live" : "test";
+    }
+
+    private static bool IsRazorpayKeyModeValid(string keyId, string mode)
+    {
+        var key = (keyId ?? string.Empty).Trim().ToLowerInvariant();
+        if (mode == "live") return key.StartsWith("rzp_live_");
+        return key.StartsWith("rzp_test_");
+    }
+
+    private static async Task<(bool ok, string error, string raw)> ValidateRazorpayPaymentAsync(
+        string keyId,
+        string keySecret,
+        string paymentId,
+        string expectedOrderId,
+        decimal expectedAmount,
+        string expectedCurrency,
+        CancellationToken ct)
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        var authBytes = Encoding.UTF8.GetBytes($"{keyId}:{keySecret}");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+        using var resp = await client.GetAsync($"https://api.razorpay.com/v1/payments/{Uri.EscapeDataString(paymentId)}", ct);
+        var raw = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode)
+            return (false, "Could not validate payment with Razorpay API.", raw);
+
+        using var doc = JsonDocument.Parse(raw);
+        var root = doc.RootElement;
+
+        var status = root.TryGetProperty("status", out var st) ? (st.GetString() ?? string.Empty).Trim().ToLowerInvariant() : string.Empty;
+        var orderId = root.TryGetProperty("order_id", out var ord) ? (ord.GetString() ?? string.Empty) : string.Empty;
+        var amountPaise = root.TryGetProperty("amount", out var amt) && amt.TryGetInt32(out var vAmt) ? vAmt : -1;
+        var currency = root.TryGetProperty("currency", out var cur) ? (cur.GetString() ?? string.Empty) : string.Empty;
+
+        var expectedPaise = (int)Math.Round(expectedAmount * 100m, MidpointRounding.AwayFromZero);
+        if (!string.Equals(status, "captured", StringComparison.OrdinalIgnoreCase))
+            return (false, "Payment is not captured.", raw);
+        if (!string.Equals(orderId, expectedOrderId, StringComparison.Ordinal))
+            return (false, "Payment order mismatch.", raw);
+        if (amountPaise != expectedPaise)
+            return (false, "Payment amount mismatch.", raw);
+        if (!string.Equals(currency, expectedCurrency, StringComparison.OrdinalIgnoreCase))
+            return (false, "Payment currency mismatch.", raw);
+
+        return (true, string.Empty, raw);
     }
 
     private async Task ActivateSubscriptionFromPaymentAsync(BillingPaymentAttempt attempt, CancellationToken ct)
