@@ -43,7 +43,18 @@ import {
   Smartphone,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { apiGet, authProjects, clearSession, getPlatformSettings, getSession, hasPermission, initializeMe, switchProject } from "@/lib/api";
+import {
+  apiGet,
+  authProjects,
+  clearSession,
+  getBillingUsage,
+  getCurrentBillingPlan,
+  getPlatformSettings,
+  getSession,
+  hasPermission,
+  initializeMe,
+  switchProject,
+} from "@/lib/api";
 import { isNotificationAudioUnlocked, isNotificationSoundEnabled, unlockNotificationAudio } from "@/lib/notificationAudio";
 
 const DashboardLayout = () => {
@@ -63,6 +74,12 @@ const DashboardLayout = () => {
     }
   });
   const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
+  const [sidebarUsage, setSidebarUsage] = useState({
+    whatsappUsed: 0,
+    whatsappLimit: 0,
+    smsUsed: 0,
+    smsLimit: 0,
+  });
   const session = getSession();
   const role = (session.role || "").toLowerCase();
   const canAccessPlatformSettings = role === "super_admin";
@@ -178,6 +195,45 @@ const DashboardLayout = () => {
       active = false;
     };
   }, [canAccessPlatformSettings]);
+  useEffect(() => {
+    let active = true;
+    if (!canViewBilling) return;
+    (async () => {
+      try {
+        const [usageRes, planRes] = await Promise.all([
+          getBillingUsage().catch(() => ({ values: {} })),
+          getCurrentBillingPlan().catch(() => ({ plan: { limits: {} } })),
+        ]);
+        if (!active) return;
+        const values = usageRes?.values || {};
+        const limits = planRes?.plan?.limits || {};
+        setSidebarUsage({
+          whatsappUsed: Number(values.whatsappMessages || 0),
+          whatsappLimit: Number(limits.whatsappMessages || 0),
+          smsUsed: Number(values.smsCredits || 0),
+          smsLimit: Number(limits.smsCredits || 0),
+        });
+      } catch {
+        if (!active) return;
+        setSidebarUsage({
+          whatsappUsed: 0,
+          whatsappLimit: 0,
+          smsUsed: 0,
+          smsLimit: 0,
+        });
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [canViewBilling, session.tenantSlug]);
+
+  const sidebarPct = (used, limit) => {
+    const u = Number(used || 0);
+    const l = Number(limit || 0);
+    if (!l) return 0;
+    return Math.max(0, Math.min(100, Math.round((u / l) * 100)));
+  };
 
   const handleProjectSwitch = async (slug) => {
     if (!slug || slug === session.tenantSlug) return;
@@ -723,19 +779,23 @@ const DashboardLayout = () => {
                 <div>
                   <div className="flex justify-between text-xs mb-1">
                     <span className="text-slate-600">WhatsApp Messages</span>
-                    <span className="text-slate-900 font-medium">7,234 / 10,000</span>
+                    <span className="text-slate-900 font-medium">
+                      {sidebarUsage.whatsappUsed.toLocaleString()} / {sidebarUsage.whatsappLimit > 0 ? sidebarUsage.whatsappLimit.toLocaleString() : "∞"}
+                    </span>
                   </div>
                   <div className="progress-bar">
-                    <div className="progress-fill" style={{ width: "72%" }}></div>
+                    <div className="progress-fill" style={{ width: `${sidebarPct(sidebarUsage.whatsappUsed, sidebarUsage.whatsappLimit)}%` }}></div>
                   </div>
                 </div>
                 <div>
                   <div className="flex justify-between text-xs mb-1">
                     <span className="text-slate-600">SMS Credits</span>
-                    <span className="text-slate-900 font-medium">32,100 / 50,000</span>
+                    <span className="text-slate-900 font-medium">
+                      {sidebarUsage.smsUsed.toLocaleString()} / {sidebarUsage.smsLimit > 0 ? sidebarUsage.smsLimit.toLocaleString() : "∞"}
+                    </span>
                   </div>
                   <div className="progress-bar">
-                    <div className="progress-fill" style={{ width: "64%" }}></div>
+                    <div className="progress-fill" style={{ width: `${sidebarPct(sidebarUsage.smsUsed, sidebarUsage.smsLimit)}%` }}></div>
                   </div>
                 </div>
               </div>
