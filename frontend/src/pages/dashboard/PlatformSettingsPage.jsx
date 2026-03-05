@@ -823,14 +823,50 @@ const PlatformSettingsPage = () => {
       )}
 
       {tab === "app-settings" && (
-        <Card className="border-slate-200">
-          <CardHeader>
-            <CardTitle>Native App Runtime Config</CardTitle>
-            <CardDescription>
-              Configure non-secret app runtime settings. Mobile apps read these from <code>/api/auth/app-bootstrap</code> after user login.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-4">
+          <Card className="border-slate-200 bg-gradient-to-r from-orange-50 via-white to-slate-50">
+            <CardHeader>
+              <CardTitle>Mobile App Base Settings</CardTitle>
+              <CardDescription>
+                Central runtime configuration consumed from <code>/api/auth/app-bootstrap</code>.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-xl border bg-white p-3">
+                <p className="text-xs uppercase tracking-wide text-slate-500">Configured Endpoints</p>
+                <p className="mt-1 text-2xl font-semibold text-slate-900">
+                  {[appConfig.apiBaseUrl, appConfig.hubPath, appConfig.supportUrl, appConfig.termsUrl, appConfig.privacyUrl].filter(Boolean).length}
+                </p>
+              </div>
+              <div className="rounded-xl border bg-white p-3">
+                <p className="text-xs uppercase tracking-wide text-slate-500">Push Readiness</p>
+                <p className={`mt-1 text-2xl font-semibold ${appConfig.firebaseApiKey && appConfig.firebaseProjectId && appConfig.firebaseMessagingSenderId && appConfig.firebaseAppId ? "text-green-600" : "text-amber-600"}`}>
+                  {appConfig.firebaseApiKey && appConfig.firebaseProjectId && appConfig.firebaseMessagingSenderId && appConfig.firebaseAppId ? "Ready" : "Partial"}
+                </p>
+              </div>
+              <div className="rounded-xl border bg-white p-3">
+                <p className="text-xs uppercase tracking-wide text-slate-500">Allow-list Entries</p>
+                <p className="mt-1 text-2xl font-semibold text-slate-900">
+                  {String(appConfig.allowedApiPrefixes || "").split(/[\n,]+/).map((x) => x.trim()).filter(Boolean).length}
+                </p>
+              </div>
+              <div className="rounded-xl border bg-white p-3">
+                <p className="text-xs uppercase tracking-wide text-slate-500">Release Channels</p>
+                <p className="mt-1 text-2xl font-semibold text-slate-900">
+                  {[appConfig.androidApkUrl, appConfig.iosStoreUrl || appConfig.iosDownloadUrl, appConfig.windowsDownloadUrl, appConfig.macosDownloadUrl, appConfig.webUrl].filter(Boolean).length}/5
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200">
+            <CardHeader>
+              <CardTitle>Runtime Configuration Details</CardTitle>
+              <CardDescription>
+                Professional grouped layout with all existing settings preserved.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="max-h-[70vh] overflow-y-auto pr-2 grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label>App Name</Label>
               <Input value={appConfig.appName} onChange={(e) => setAppConfig((p) => ({ ...p, appName: e.target.value }))} />
@@ -1206,6 +1242,7 @@ const PlatformSettingsPage = () => {
             </div>
           </CardContent>
         </Card>
+        </div>
       )}
 
       {tab === "smtp-settings" && (
