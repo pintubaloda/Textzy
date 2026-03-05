@@ -16,6 +16,9 @@ public class TenantCompanyProfile
     public string Address { get; set; } = string.Empty;
     public string BillingEmail { get; set; } = string.Empty;
     public string BillingPhone { get; set; } = string.Empty;
+    public decimal TaxRatePercent { get; set; } = 18m;
+    public bool IsTaxExempt { get; set; }
+    public bool IsReverseCharge { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;

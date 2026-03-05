@@ -123,6 +123,9 @@ public class SettingsController(
         profile.Address = (request.Address ?? string.Empty).Trim();
         profile.BillingEmail = InputGuardService.ValidateEmailOrEmpty(request.BillingEmail, "Billing email");
         profile.BillingPhone = (request.BillingPhone ?? string.Empty).Trim();
+        profile.TaxRatePercent = Math.Clamp(request.TaxRatePercent, 0m, 100m);
+        profile.IsTaxExempt = request.IsTaxExempt;
+        profile.IsReverseCharge = request.IsReverseCharge;
         profile.IsActive = request.IsActive;
         profile.UpdatedAtUtc = now;
 
@@ -188,6 +191,9 @@ public class SettingsController(
         p.Address,
         p.BillingEmail,
         p.BillingPhone,
+        p.TaxRatePercent,
+        p.IsTaxExempt,
+        p.IsReverseCharge,
         p.IsActive,
         p.UpdatedAtUtc
     };
@@ -226,6 +232,9 @@ public class SettingsController(
         public string Address { get; set; } = string.Empty;
         public string BillingEmail { get; set; } = string.Empty;
         public string BillingPhone { get; set; } = string.Empty;
+        public decimal TaxRatePercent { get; set; } = 18m;
+        public bool IsTaxExempt { get; set; }
+        public bool IsReverseCharge { get; set; }
         public bool IsActive { get; set; } = true;
     }
 

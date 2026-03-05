@@ -958,6 +958,10 @@ export async function getBillingUsage() {
   return apiGet('/api/billing/usage')
 }
 
+export async function getBillingDunningStatus() {
+  return apiGet('/api/billing/dunning-status')
+}
+
 export async function getBillingInvoices() {
   return apiGet('/api/billing/invoices')
 }

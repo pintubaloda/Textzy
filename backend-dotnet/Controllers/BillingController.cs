@@ -16,11 +16,14 @@ namespace Textzy.Api.Controllers;
 [Route("api/billing")]
 public class BillingController(
     ControlDbContext db,
+    TenantDbContext tenantDb,
     AuthContext auth,
     TenancyContext tenancy,
     RbacService rbac,
+    BillingGuardService billingGuard,
     SecretCryptoService crypto,
     EmailService emailService,
+    IConfiguration config,
     SensitiveDataRedactor redactor,
     AuditLogService audit,
     ILogger<BillingController> logger) : ControllerBase
@@ -74,6 +77,143 @@ public class BillingController(
         });
     }
 
+    [HttpGet("dunning-status")]
+    public async Task<IActionResult> DunningStatus(CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
+        if (!rbac.HasPermission(BillingRead)) return Forbid();
+
+        var sub = await db.TenantSubscriptions
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (sub is null) return Ok(new { hasSubscription = false });
+
+        var now = DateTime.UtcNow;
+        var graceDays = ResolveGraceDaysForApi(config);
+        var renewalReminderDays = ResolveDayOffsetsForApi(config["Billing:RenewalReminderDays"] ?? config["BILLING_RENEWAL_REMINDER_DAYS"], [7, 3, 1, 0]);
+        var dunningReminderDays = ResolveDayOffsetsForApi(config["Billing:DunningReminderDays"] ?? config["BILLING_DUNNING_REMINDER_DAYS"], [1, 3, 5]);
+        var daysToRenew = (int)Math.Floor((sub.RenewAtUtc - now).TotalDays);
+        var daysPastDue = Math.Max(0, (int)Math.Floor((now - sub.RenewAtUtc).TotalDays));
+        var graceDeadlineUtc = sub.RenewAtUtc.AddDays(graceDays);
+        var graceDaysLeft = Math.Max(0, (int)Math.Ceiling((graceDeadlineUtc - now).TotalDays));
+
+        var eventActions = new[] { "billing.renewal.reminder", "billing.dunning.reminder", "billing.dunning.suspended" };
+        var events = await db.AuditLogs.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId && eventActions.Contains(x.Action))
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(20)
+            .Select(x => new { x.Action, x.Details, x.CreatedAtUtc })
+            .ToListAsync(ct);
+
+        var nextAction = "none";
+        if (string.Equals(sub.Status, "active", StringComparison.OrdinalIgnoreCase) && renewalReminderDays.Contains(daysToRenew))
+            nextAction = $"renewal_reminder_d{daysToRenew}";
+        else if (string.Equals(sub.Status, "past_due", StringComparison.OrdinalIgnoreCase) && dunningReminderDays.Contains(daysPastDue))
+            nextAction = $"dunning_reminder_d{daysPastDue}";
+        else if (string.Equals(sub.Status, "past_due", StringComparison.OrdinalIgnoreCase) && now >= graceDeadlineUtc)
+            nextAction = "suspend";
+
+        return Ok(new
+        {
+            hasSubscription = true,
+            subscription = new
+            {
+                sub.Id,
+                sub.Status,
+                sub.BillingCycle,
+                sub.StartedAtUtc,
+                sub.RenewAtUtc,
+                sub.UpdatedAtUtc
+            },
+            dunning = new
+            {
+                nowUtc = now,
+                graceDays,
+                renewalReminderDays = renewalReminderDays.OrderBy(x => x).ToArray(),
+                dunningReminderDays = dunningReminderDays.OrderBy(x => x).ToArray(),
+                daysToRenew,
+                daysPastDue,
+                graceDeadlineUtc,
+                graceDaysLeft,
+                nextAction
+            },
+            recentEvents = events
+        });
+    }
+
+    [HttpPost("usage/resync")]
+    public async Task<IActionResult> ResyncUsage(CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
+        if (!rbac.HasPermission(BillingWrite)) return Forbid();
+
+        var now = DateTime.UtcNow;
+        var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var nextMonth = monthStart.AddMonths(1);
+        var monthKey = now.ToString("yyyy-MM");
+
+        var whatsappMessages = await tenantDb.Messages.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId
+                        && x.Channel == ChannelType.WhatsApp
+                        && !string.Equals(x.Status, "Received", StringComparison.OrdinalIgnoreCase)
+                        && x.CreatedAtUtc >= monthStart
+                        && x.CreatedAtUtc < nextMonth)
+            .CountAsync(ct);
+
+        var smsCredits = await tenantDb.SmsBillingLedgers.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId
+                        && x.CreatedAtUtc >= monthStart
+                        && x.CreatedAtUtc < nextMonth)
+            .SumAsync(x => (int?)x.Segments, ct) ?? 0;
+
+        var contacts = await tenantDb.Contacts.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .CountAsync(ct);
+
+        var teamMembers = await db.TenantUsers.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .CountAsync(ct);
+
+        var flows = await tenantDb.AutomationFlows.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .CountAsync(ct);
+
+        var chatbots = await tenantDb.AutomationFlows.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId && x.LifecycleStatus.ToLower() == "published")
+            .CountAsync(ct);
+
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "whatsappMessages", whatsappMessages, ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "smsCredits", smsCredits, ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "contacts", contacts, ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "teamMembers", teamMembers, ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "flows", flows, ct);
+        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "chatbots", chatbots, ct);
+
+        var usage = await db.TenantUsages.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.MonthKey == monthKey, ct);
+
+        return Ok(new
+        {
+            resynced = true,
+            monthKey,
+            note = "apiCalls was not rebuilt from history; it continues from live runtime metering.",
+            values = usage is null
+                ? new Dictionary<string, int>()
+                : new Dictionary<string, int>
+                {
+                    ["whatsappMessages"] = usage.WhatsappMessagesUsed,
+                    ["smsCredits"] = usage.SmsCreditsUsed,
+                    ["contacts"] = usage.ContactsUsed,
+                    ["teamMembers"] = usage.TeamMembersUsed,
+                    ["chatbots"] = usage.ChatbotsUsed,
+                    ["flows"] = usage.FlowsUsed,
+                    ["apiCalls"] = usage.ApiCallsUsed
+                }
+        });
+    }
+
     [HttpGet("invoices")]
     public async Task<IActionResult> Invoices(CancellationToken ct)
     {
@@ -92,6 +232,9 @@ public class BillingController(
             x.Status,
             x.PaidAtUtc,
             x.PdfUrl,
+            x.IntegrityAlgo,
+            x.IntegrityHash,
+            x.IssuedAtUtc,
             x.CreatedAtUtc
         }));
     }
@@ -114,6 +257,28 @@ public class BillingController(
         var bytes = Encoding.UTF8.GetBytes(html);
         var filename = $"{(string.IsNullOrWhiteSpace(inv.InvoiceNo) ? inv.Id.ToString("N") : inv.InvoiceNo)}.html";
         return File(bytes, "text/html; charset=utf-8", filename);
+    }
+
+    [HttpGet("invoices/{invoiceId:guid}/verify")]
+    public async Task<IActionResult> VerifyInvoice(Guid invoiceId, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
+        if (!rbac.HasPermission(BillingRead)) return Forbid();
+
+        var inv = await db.BillingInvoices.FirstOrDefaultAsync(x => x.Id == invoiceId && x.TenantId == tenancy.TenantId, ct);
+        if (inv is null) return NotFound("Invoice not found.");
+
+        var expected = ComputeInvoiceIntegrityHash(inv);
+        var valid = string.Equals(expected, inv.IntegrityHash, StringComparison.OrdinalIgnoreCase);
+        return Ok(new
+        {
+            invoiceId = inv.Id,
+            invoiceNo = inv.InvoiceNo,
+            integrityAlgo = inv.IntegrityAlgo,
+            integrityHash = inv.IntegrityHash,
+            expectedHash = expected,
+            valid
+        });
     }
 
     [HttpGet("invoices/download-all")]
@@ -145,6 +310,61 @@ public class BillingController(
         return File(Encoding.UTF8.GetBytes(sb.ToString()), "text/csv; charset=utf-8", "textzy-invoices.csv");
     }
 
+    [HttpGet("reconciliation/export")]
+    public async Task<IActionResult> ReconciliationExport([FromQuery] string month = "", CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
+        if (!rbac.HasPermission(BillingRead)) return Forbid();
+
+        var monthKey = string.IsNullOrWhiteSpace(month) ? DateTime.UtcNow.ToString("yyyy-MM") : month.Trim();
+        var monthStart = DateTime.TryParse($"{monthKey}-01T00:00:00Z", out var parsedStart)
+            ? DateTime.SpecifyKind(parsedStart, DateTimeKind.Utc)
+            : new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var monthEnd = monthStart.AddMonths(1);
+        var usage = await db.TenantUsages.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.MonthKey == monthKey, ct);
+        var attempts = await db.BillingPaymentAttempts.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(100)
+            .ToListAsync(ct);
+        var invoices = await db.BillingInvoices.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(100)
+            .ToListAsync(ct);
+        var smsTotal = await tenantDb.SmsBillingLedgers.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId && x.CreatedAtUtc >= monthStart && x.CreatedAtUtc < monthEnd)
+            .SumAsync(x => (decimal?)x.TotalAmount, ct) ?? 0m;
+
+        var sb = new StringBuilder();
+        sb.AppendLine("section,key,value");
+        sb.AppendLine($"usage,monthKey,{Csv(monthKey)}");
+        if (usage is not null)
+        {
+            sb.AppendLine($"usage,whatsappMessages,{usage.WhatsappMessagesUsed}");
+            sb.AppendLine($"usage,smsCredits,{usage.SmsCreditsUsed}");
+            sb.AppendLine($"usage,contacts,{usage.ContactsUsed}");
+            sb.AppendLine($"usage,teamMembers,{usage.TeamMembersUsed}");
+            sb.AppendLine($"usage,chatbots,{usage.ChatbotsUsed}");
+            sb.AppendLine($"usage,flows,{usage.FlowsUsed}");
+            sb.AppendLine($"usage,apiCalls,{usage.ApiCallsUsed}");
+        }
+        sb.AppendLine($"usage,smsLedgerTotal,{smsTotal:0.00}");
+        sb.AppendLine($"summary,paymentAttempts,{attempts.Count}");
+        sb.AppendLine($"summary,invoices,{invoices.Count}");
+        var invoicesPaid = invoices.Count(x => string.Equals(x.Status, "paid", StringComparison.OrdinalIgnoreCase));
+        var invoicesRefunded = invoices.Count(x => string.Equals(x.Status, "refunded", StringComparison.OrdinalIgnoreCase));
+        var attemptsPaid = attempts.Count(x => string.Equals(x.Status, "paid", StringComparison.OrdinalIgnoreCase));
+        var attemptsFailed = attempts.Count(x => x.Status.Contains("failed", StringComparison.OrdinalIgnoreCase));
+        sb.AppendLine($"summary,invoicesPaid,{invoicesPaid}");
+        sb.AppendLine($"summary,invoicesRefunded,{invoicesRefunded}");
+        sb.AppendLine($"summary,attemptsPaid,{attemptsPaid}");
+        sb.AppendLine($"summary,attemptsFailed,{attemptsFailed}");
+
+        return File(Encoding.UTF8.GetBytes(sb.ToString()), "text/csv; charset=utf-8", $"billing-reconciliation-{monthKey}.csv");
+    }
+
     [HttpPost("change-plan")]
     public async Task<IActionResult> ChangePlan([FromBody] ChangePlanRequest request, CancellationToken ct)
     {
@@ -155,16 +375,38 @@ public class BillingController(
         if (plan is null) return NotFound("Plan not found.");
 
         var sub = await db.TenantSubscriptions.Where(x => x.TenantId == tenancy.TenantId).OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(ct);
+        decimal? prorationCredit = null;
+        decimal? prorationDebit = null;
+        decimal? prorationNet = null;
+        if (sub is not null && sub.PlanId != plan.Id && sub.RenewAtUtc > DateTime.UtcNow)
+        {
+            var oldPlan = await db.BillingPlans.AsNoTracking().FirstOrDefaultAsync(x => x.Id == sub.PlanId, ct);
+            if (oldPlan is not null)
+            {
+                var oldPrice = string.Equals(sub.BillingCycle, "yearly", StringComparison.OrdinalIgnoreCase) ? oldPlan.PriceYearly : oldPlan.PriceMonthly;
+                var newPrice = string.Equals(sub.BillingCycle, "yearly", StringComparison.OrdinalIgnoreCase) ? plan.PriceYearly : plan.PriceMonthly;
+                var totalWindow = Math.Max(1, (sub.RenewAtUtc - sub.StartedAtUtc).TotalSeconds);
+                var remaining = Math.Max(0, (sub.RenewAtUtc - DateTime.UtcNow).TotalSeconds);
+                var ratio = (decimal)Math.Clamp(remaining / totalWindow, 0, 1);
+                prorationCredit = Math.Round(oldPrice * ratio, 2, MidpointRounding.AwayFromZero);
+                prorationDebit = Math.Round(newPrice * ratio, 2, MidpointRounding.AwayFromZero);
+                prorationNet = Math.Round((prorationDebit ?? 0) - (prorationCredit ?? 0), 2, MidpointRounding.AwayFromZero);
+            }
+        }
+
         if (sub is null)
         {
             sub = new Textzy.Api.Models.TenantSubscription { Id = Guid.NewGuid(), TenantId = tenancy.TenantId, PlanId = plan.Id };
             db.TenantSubscriptions.Add(sub);
         }
         sub.PlanId = plan.Id;
-        sub.BillingCycle = string.IsNullOrWhiteSpace(request.BillingCycle) ? "monthly" : request.BillingCycle;
+        var normalizedCycle = NormalizeBillingCycle(request.BillingCycle);
+        if (string.IsNullOrWhiteSpace(normalizedCycle))
+            return BadRequest("billingCycle must be monthly, yearly, lifetime, or usage_based.");
+        sub.BillingCycle = normalizedCycle;
         sub.Status = "active";
         sub.UpdatedAtUtc = DateTime.UtcNow;
-        sub.RenewAtUtc = sub.BillingCycle == "yearly" ? DateTime.UtcNow.AddYears(1) : DateTime.UtcNow.AddMonths(1);
+        sub.RenewAtUtc = ResolveRenewAtUtc(DateTime.UtcNow, sub.BillingCycle);
         await db.SaveChangesAsync(ct);
         await TrySendBillingEventAsync(
             tenancy.TenantId,
@@ -178,7 +420,14 @@ public class BillingController(
                 ["Status"] = sub.Status
             },
             ct);
-        return Ok(new { changed = true, planCode = plan.Code });
+        return Ok(new
+        {
+            changed = true,
+            planCode = plan.Code,
+            proration = prorationNet.HasValue
+                ? new { credit = prorationCredit, debit = prorationDebit, net = prorationNet, currency = plan.Currency }
+                : null
+        });
     }
 
     [HttpGet("payment-config")]
@@ -506,6 +755,68 @@ public class BillingController(
         return key.StartsWith("rzp_test_");
     }
 
+    private async Task<(decimal taxRatePercent, bool isTaxExempt, bool isReverseCharge)> ResolveTaxProfileAsync(Guid tenantId, CancellationToken ct)
+    {
+        var profile = await db.TenantCompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, ct);
+        if (profile is null) return (18m, false, false);
+        return (Math.Clamp(profile.TaxRatePercent, 0m, 100m), profile.IsTaxExempt, profile.IsReverseCharge);
+    }
+
+    private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice)
+    {
+        var canonical = string.Join("|",
+            invoice.InvoiceNo,
+            invoice.TenantId.ToString("D"),
+            invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
+            invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
+            invoice.Subtotal.ToString("0.00"),
+            invoice.TaxAmount.ToString("0.00"),
+            invoice.Total.ToString("0.00"),
+            (invoice.PaidAtUtc ?? DateTime.MinValue).ToUniversalTime().ToString("O"),
+            invoice.Status,
+            invoice.IssuedAtUtc.ToUniversalTime().ToString("O"));
+
+        var bytes = Encoding.UTF8.GetBytes(canonical);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string? NormalizeBillingCycle(string? billingCycle)
+    {
+        var cycle = (billingCycle ?? "monthly").Trim().ToLowerInvariant();
+        return cycle switch
+        {
+            "monthly" => "monthly",
+            "yearly" => "yearly",
+            "lifetime" => "lifetime",
+            "usage_based" => "usage_based",
+            "usagebased" => "usage_based",
+            _ => null
+        };
+    }
+
+    private static DateTime ResolveRenewAtUtc(DateTime startUtc, string cycle)
+    {
+        return cycle switch
+        {
+            "yearly" => startUtc.AddYears(1),
+            "lifetime" => DateTime.MaxValue,
+            "usage_based" => DateTime.MaxValue,
+            _ => startUtc.AddMonths(1)
+        };
+    }
+
+    private static DateTime ResolvePeriodEndUtc(DateTime periodStartUtc, string cycle)
+    {
+        return cycle switch
+        {
+            "yearly" => periodStartUtc.AddYears(1).AddSeconds(-1),
+            "lifetime" => periodStartUtc.AddYears(100).AddSeconds(-1),
+            "usage_based" => periodStartUtc.AddMonths(1).AddSeconds(-1),
+            _ => periodStartUtc.AddMonths(1).AddSeconds(-1)
+        };
+    }
+
     private static async Task<(bool ok, string error, string raw)> ValidateRazorpayPaymentAsync(
         string keyId,
         string keySecret,
@@ -544,6 +855,29 @@ public class BillingController(
         return (true, string.Empty, raw);
     }
 
+    private static int ResolveGraceDaysForApi(IConfiguration config)
+    {
+        var raw = (config["Billing:GraceDays"] ?? config["BILLING_GRACE_DAYS"] ?? "7").Trim();
+        if (int.TryParse(raw, out var days)) return Math.Clamp(days, 0, 60);
+        return 7;
+    }
+
+    private static HashSet<int> ResolveDayOffsetsForApi(string? raw, IEnumerable<int> defaults)
+    {
+        var set = new HashSet<int>();
+        var source = string.IsNullOrWhiteSpace(raw) ? string.Join(",", defaults) : raw;
+        foreach (var token in source.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (int.TryParse(token, out var day))
+                set.Add(Math.Clamp(day, 0, 60));
+        }
+        if (set.Count == 0)
+        {
+            foreach (var d in defaults) set.Add(Math.Clamp(d, 0, 60));
+        }
+        return set;
+    }
+
     private async Task ActivateSubscriptionFromPaymentAsync(BillingPaymentAttempt attempt, CancellationToken ct)
     {
         var plan = await db.BillingPlans.FirstOrDefaultAsync(x => x.Id == attempt.PlanId, ct);
@@ -567,23 +901,26 @@ public class BillingController(
 
         var start = DateTime.UtcNow;
         sub.PlanId = plan.Id;
-        sub.BillingCycle = string.IsNullOrWhiteSpace(attempt.BillingCycle) ? "monthly" : attempt.BillingCycle;
+        sub.BillingCycle = NormalizeBillingCycle(attempt.BillingCycle) ?? "monthly";
         sub.Status = "active";
         sub.CancelledAtUtc = null;
         sub.StartedAtUtc = start;
-        sub.RenewAtUtc = sub.BillingCycle == "yearly" ? start.AddYears(1) : start.AddMonths(1);
+        sub.RenewAtUtc = ResolveRenewAtUtc(start, sub.BillingCycle);
         sub.UpdatedAtUtc = DateTime.UtcNow;
 
         var periodStart = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-        var periodEnd = sub.BillingCycle == "yearly" ? periodStart.AddYears(1).AddSeconds(-1) : periodStart.AddMonths(1).AddSeconds(-1);
+        var periodEnd = ResolvePeriodEndUtc(periodStart, sub.BillingCycle);
         var invoiceNo = $"INV-{start:yyyyMMdd}-{attempt.OrderId}";
         var existingInvoice = await db.BillingInvoices
             .FirstOrDefaultAsync(x => x.TenantId == attempt.TenantId && x.InvoiceNo == invoiceNo, ct);
         if (existingInvoice is null)
         {
             var subtotal = attempt.Amount;
-            var tax = Math.Round(subtotal * 0.18m, 2, MidpointRounding.AwayFromZero);
-            db.BillingInvoices.Add(new BillingInvoice
+            var (taxRate, isTaxExempt, isReverseCharge) = await ResolveTaxProfileAsync(attempt.TenantId, ct);
+            var tax = (isTaxExempt || isReverseCharge)
+                ? 0m
+                : Math.Round(subtotal * (taxRate / 100m), 2, MidpointRounding.AwayFromZero);
+            var invoice = new BillingInvoice
             {
                 Id = Guid.NewGuid(),
                 InvoiceNo = invoiceNo,
@@ -596,8 +933,12 @@ public class BillingController(
                 Status = "paid",
                 PaidAtUtc = attempt.PaidAtUtc ?? DateTime.UtcNow,
                 PdfUrl = string.Empty,
+                IntegrityAlgo = "SHA256",
+                IssuedAtUtc = DateTime.UtcNow,
                 CreatedAtUtc = DateTime.UtcNow
-            });
+            };
+            invoice.IntegrityHash = ComputeInvoiceIntegrityHash(invoice);
+            db.BillingInvoices.Add(invoice);
             await TrySendBillingEventAsync(
                 attempt.TenantId,
                 "Invoice generated",
@@ -608,6 +949,7 @@ public class BillingController(
                     ["Period"] = $"{periodStart:yyyy-MM-dd} to {periodEnd:yyyy-MM-dd}",
                     ["Subtotal"] = FormatCurrency(subtotal, attempt.Currency),
                     ["Tax"] = FormatCurrency(tax, attempt.Currency),
+                    ["Tax Rate"] = $"{taxRate:0.##}%",
                     ["Total"] = FormatCurrency(subtotal + tax, attempt.Currency)
                 },
                 ct);

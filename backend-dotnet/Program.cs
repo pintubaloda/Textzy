@@ -190,6 +190,7 @@ builder.Services.AddHostedService<WabaOnboardingHealthWorker>();
 builder.Services.AddHostedService<SecurityMonitoringWorker>();
 builder.Services.AddHostedService<TemplateStatusSyncWorker>();
 builder.Services.AddHostedService<WorkflowDelayResumeWorker>();
+builder.Services.AddHostedService<BillingLifecycleWorker>();
 
 var app = builder.Build();
 
@@ -346,6 +347,9 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         """);
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TenantCompanyProfiles_TenantId" ON "TenantCompanyProfiles" ("TenantId");""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantCompanyProfiles_OwnerGroupId" ON "TenantCompanyProfiles" ("OwnerGroupId");""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "TaxRatePercent" numeric(5,2) NOT NULL DEFAULT 18;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "IsTaxExempt" boolean NOT NULL DEFAULT false;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "IsReverseCharge" boolean NOT NULL DEFAULT false;""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "Users" (
@@ -733,6 +737,9 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingInvoices_TenantId" ON "BillingInvoices" ("TenantId");""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "IntegrityAlgo" text NOT NULL DEFAULT 'SHA256';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "IntegrityHash" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "IssuedAtUtc" timestamp with time zone NOT NULL DEFAULT now();""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "BillingPaymentAttempts" (

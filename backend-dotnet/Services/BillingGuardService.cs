@@ -14,10 +14,13 @@ public class BillingGuardService(ControlDbContext db)
             .Where(x => x.TenantId == tenantId)
             .OrderByDescending(x => x.CreatedAtUtc)
             .FirstOrDefaultAsync(ct);
-        if (sub is null) return (true, int.MaxValue, nextUsed, string.Empty);
+        if (sub is null) return (false, 0, nextUsed, "No active subscription found.");
+        if (string.Equals(sub.Status, "cancelled", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(sub.Status, "suspended", StringComparison.OrdinalIgnoreCase))
+            return (false, 0, nextUsed, $"Subscription status is {sub.Status}. Please renew plan.");
 
         var plan = await db.BillingPlans.FirstOrDefaultAsync(x => x.Id == sub.PlanId && x.IsActive, ct);
-        if (plan is null) return (true, int.MaxValue, nextUsed, string.Empty);
+        if (plan is null) return (false, 0, nextUsed, "Subscription plan is inactive or missing.");
 
         Dictionary<string, int> limits;
         try { limits = JsonSerializer.Deserialize<Dictionary<string, int>>(plan.LimitsJson) ?? new(); }

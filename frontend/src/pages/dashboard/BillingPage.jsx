@@ -20,6 +20,9 @@ import {
   MessageSquare,
   Users,
   AlertTriangle,
+  Workflow,
+  Bot,
+  Activity,
 } from "lucide-react";
 import {
   changeBillingPlan,
@@ -28,6 +31,7 @@ import {
   downloadAllBillingInvoices,
   downloadBillingInvoice,
   getBillingInvoices,
+  getBillingDunningStatus,
   getBillingPaymentConfig,
   getBillingPlans,
   getBillingUsage,
@@ -45,6 +49,7 @@ const BillingPage = () => {
   const [sub, setSub] = useState(null);
   const [usageValues, setUsageValues] = useState({});
   const [invoices, setInvoices] = useState([]);
+  const [dunningStatus, setDunningStatus] = useState(null);
   const [paymentConfig, setPaymentConfig] = useState(null);
   const [company, setCompany] = useState(null);
   const [platformBranding, setPlatformBranding] = useState(null);
@@ -53,11 +58,12 @@ const BillingPage = () => {
   useEffect(() => {
     (async () => {
       try {
-        const [p, c, u, i] = await Promise.all([
+        const [p, c, u, i, d] = await Promise.all([
           getBillingPlans(),
           getCurrentBillingPlan(),
           getBillingUsage(),
-          getBillingInvoices()
+          getBillingInvoices(),
+          getBillingDunningStatus().catch(() => null)
         ]);
         const companyCfg = await getCompanySettings().catch(() => null);
         const paymentCfg = await getBillingPaymentConfig().catch(() => null);
@@ -69,6 +75,7 @@ const BillingPage = () => {
         setSub(c || null);
         setUsageValues(u?.values || {});
         setInvoices(Array.isArray(i) ? i : []);
+        setDunningStatus(d || null);
         setCompany(companyCfg || null);
         setPaymentConfig(paymentCfg);
         setPlatformBranding(platformBrandingCfg?.values || null);
@@ -103,9 +110,20 @@ const BillingPage = () => {
       whatsapp: { used: usageValues.whatsappMessages || 0, limit: limits.whatsappMessages || 0, percentage: pct(usageValues.whatsappMessages || 0, limits.whatsappMessages || 0) },
       sms: { used: usageValues.smsCredits || 0, limit: limits.smsCredits || 0, percentage: pct(usageValues.smsCredits || 0, limits.smsCredits || 0) },
       contacts: { used: usageValues.contacts || 0, limit: limits.contacts || 0, percentage: pct(usageValues.contacts || 0, limits.contacts || 0) },
-      team: { used: usageValues.teamMembers || 0, limit: limits.teamMembers || 0, percentage: pct(usageValues.teamMembers || 0, limits.teamMembers || 0) }
+      team: { used: usageValues.teamMembers || 0, limit: limits.teamMembers || 0, percentage: pct(usageValues.teamMembers || 0, limits.teamMembers || 0) },
+      flows: { used: usageValues.flows || 0, limit: limits.flows || 0, percentage: pct(usageValues.flows || 0, limits.flows || 0) },
+      chatbots: { used: usageValues.chatbots || 0, limit: limits.chatbots || 0, percentage: pct(usageValues.chatbots || 0, limits.chatbots || 0) },
+      apiCalls: { used: usageValues.apiCalls || 0, limit: limits.apiCalls || 0, percentage: pct(usageValues.apiCalls || 0, limits.apiCalls || 0) }
     };
   }, [currentPlan, usageValues]);
+
+  const dunningBadgeClass = useMemo(() => {
+    const status = String(dunningStatus?.subscription?.status || "").toLowerCase();
+    if (status === "active") return "bg-green-100 text-green-700 hover:bg-green-100";
+    if (status === "past_due") return "bg-yellow-100 text-yellow-700 hover:bg-yellow-100";
+    if (status === "suspended") return "bg-red-100 text-red-700 hover:bg-red-100";
+    return "bg-slate-100 text-slate-700 hover:bg-slate-100";
+  }, [dunningStatus]);
 
   const ensureRazorpayScript = async () => {
     if (window.Razorpay) return true;
@@ -347,6 +365,50 @@ const BillingPage = () => {
         </CardContent>
       </Card>
 
+      {/* Dunning Status */}
+      <Card className="border-slate-200">
+        <CardHeader>
+          <CardTitle>Billing Health</CardTitle>
+          <CardDescription>Renewal and grace timeline</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!dunningStatus?.hasSubscription ? (
+            <div className="text-sm text-slate-600">No active subscription record found.</div>
+          ) : (
+            <div className="grid md:grid-cols-4 gap-4">
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <div className="text-xs text-slate-500 mb-2">Status</div>
+                <Badge className={dunningBadgeClass}>{dunningStatus?.subscription?.status || "unknown"}</Badge>
+              </div>
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <div className="text-xs text-slate-500 mb-2">Days To Renewal</div>
+                <div className="text-xl font-semibold text-slate-900">{Number(dunningStatus?.dunning?.daysToRenew || 0)}</div>
+              </div>
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <div className="text-xs text-slate-500 mb-2">Past Due Days</div>
+                <div className="text-xl font-semibold text-slate-900">{Number(dunningStatus?.dunning?.daysPastDue || 0)}</div>
+              </div>
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <div className="text-xs text-slate-500 mb-2">Grace Days Left</div>
+                <div className="text-xl font-semibold text-slate-900">{Number(dunningStatus?.dunning?.graceDaysLeft || 0)}</div>
+              </div>
+              <div className="p-4 rounded-xl bg-orange-50 border border-orange-200 md:col-span-4 flex flex-wrap gap-2 items-center">
+                <span className="text-xs text-slate-600">Next Action:</span>
+                <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100">
+                  {dunningStatus?.dunning?.nextAction || "none"}
+                </Badge>
+                <span className="text-xs text-slate-600">
+                  Renew At: {dunningStatus?.subscription?.renewAtUtc ? new Date(dunningStatus.subscription.renewAtUtc).toLocaleString() : "-"}
+                </span>
+                <span className="text-xs text-slate-600">
+                  Grace Deadline: {dunningStatus?.dunning?.graceDeadlineUtc ? new Date(dunningStatus.dunning.graceDeadlineUtc).toLocaleString() : "-"}
+                </span>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Usage Section */}
       <Card className="border-slate-200">
         <CardHeader>
@@ -355,67 +417,39 @@ const BillingPage = () => {
         </CardHeader>
         <CardContent>
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4 text-green-600" />
-                  <span className="text-sm font-medium text-slate-700">WhatsApp Messages</span>
+            {[
+              { key: "whatsapp", label: "WhatsApp Messages", icon: MessageSquare, color: "text-green-600", suffix: "messages" },
+              { key: "sms", label: "SMS Credits", icon: MessageSquare, color: "text-orange-600", suffix: "credits" },
+              { key: "contacts", label: "Contacts", icon: Users, color: "text-blue-600", suffix: "contacts" },
+              { key: "team", label: "Team Members", icon: Users, color: "text-purple-600", suffix: "members" },
+              { key: "flows", label: "Flows", icon: Workflow, color: "text-indigo-600", suffix: "flows" },
+              { key: "chatbots", label: "Chatbots", icon: Bot, color: "text-pink-600", suffix: "bots" },
+              { key: "apiCalls", label: "API Calls", icon: Activity, color: "text-cyan-600", suffix: "calls" },
+            ].map((item) => {
+              const row = usage[item.key];
+              const Icon = item.icon;
+              return (
+                <div className="space-y-3" key={item.key}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Icon className={`w-4 h-4 ${item.color}`} />
+                      <span className="text-sm font-medium text-slate-700">{item.label}</span>
+                    </div>
+                    <span className="text-sm text-slate-600">{row.percentage}%</span>
+                  </div>
+                  <Progress value={row.percentage} className="h-2" />
+                  <p className="text-xs text-slate-500">
+                    {Number(row.used || 0).toLocaleString()} / {Number(row.limit || 0).toLocaleString()} {item.suffix}
+                  </p>
+                  {row.percentage > 80 ? (
+                    <div className="flex items-center gap-1 text-xs text-yellow-600">
+                      <AlertTriangle className="w-3 h-3" />
+                      Running low
+                    </div>
+                  ) : null}
                 </div>
-                <span className="text-sm text-slate-600">{usage.whatsapp.percentage}%</span>
-              </div>
-              <Progress value={usage.whatsapp.percentage} className="h-2" />
-              <p className="text-xs text-slate-500">
-                {usage.whatsapp.used.toLocaleString()} / {usage.whatsapp.limit.toLocaleString()} messages
-              </p>
-              {usage.whatsapp.percentage > 80 && (
-                <div className="flex items-center gap-1 text-xs text-yellow-600">
-                  <AlertTriangle className="w-3 h-3" />
-                  Running low
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4 text-orange-600" />
-                  <span className="text-sm font-medium text-slate-700">SMS Credits</span>
-                </div>
-                <span className="text-sm text-slate-600">{usage.sms.percentage}%</span>
-              </div>
-              <Progress value={usage.sms.percentage} className="h-2" />
-              <p className="text-xs text-slate-500">
-                {usage.sms.used.toLocaleString()} / {usage.sms.limit.toLocaleString()} credits
-              </p>
-            </div>
-
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4 text-blue-600" />
-                  <span className="text-sm font-medium text-slate-700">Contacts</span>
-                </div>
-                <span className="text-sm text-slate-600">{usage.contacts.percentage}%</span>
-              </div>
-              <Progress value={usage.contacts.percentage} className="h-2" />
-              <p className="text-xs text-slate-500">
-                {usage.contacts.used.toLocaleString()} / {usage.contacts.limit.toLocaleString()} contacts
-              </p>
-            </div>
-
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4 text-purple-600" />
-                  <span className="text-sm font-medium text-slate-700">Team Members</span>
-                </div>
-                <span className="text-sm text-slate-600">{usage.team.percentage}%</span>
-              </div>
-              <Progress value={usage.team.percentage} className="h-2" />
-              <p className="text-xs text-slate-500">
-                {usage.team.used} / {usage.team.limit} members
-              </p>
-            </div>
+              );
+            })}
           </div>
 
           <div className="mt-6 p-4 bg-orange-50 rounded-lg flex items-center justify-between">

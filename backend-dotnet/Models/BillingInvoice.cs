@@ -13,5 +13,8 @@ public class BillingInvoice
     public string Status { get; set; } = "paid";
     public DateTime? PaidAtUtc { get; set; }
     public string PdfUrl { get; set; } = string.Empty;
+    public string IntegrityAlgo { get; set; } = "SHA256";
+    public string IntegrityHash { get; set; } = string.Empty;
+    public DateTime IssuedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }

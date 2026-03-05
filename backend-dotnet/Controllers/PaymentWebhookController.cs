@@ -122,9 +122,11 @@ public class PaymentWebhookController(
     {
         provider = (provider ?? string.Empty).Trim().ToLowerInvariant();
         if (provider != "razorpay") return;
-        if (!string.Equals(eventName, "payment.captured", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(eventName, "order.paid", StringComparison.OrdinalIgnoreCase))
-            return;
+        var isCaptured = string.Equals(eventName, "payment.captured", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(eventName, "order.paid", StringComparison.OrdinalIgnoreCase);
+        var isFailed = string.Equals(eventName, "payment.failed", StringComparison.OrdinalIgnoreCase);
+        var isRefund = string.Equals(eventName, "refund.processed", StringComparison.OrdinalIgnoreCase);
+        if (!isCaptured && !isFailed && !isRefund) return;
 
         try
         {
@@ -143,14 +145,71 @@ public class PaymentWebhookController(
             var amountPaise = paymentEntity.TryGetProperty("amount", out var amtEl) && amtEl.TryGetInt32(out var amt) ? amt : -1;
             var currency = paymentEntity.TryGetProperty("currency", out var curEl) ? curEl.GetString() ?? string.Empty : string.Empty;
             var paymentStatus = paymentEntity.TryGetProperty("status", out var stEl) ? stEl.GetString() ?? string.Empty : string.Empty;
-            if (string.IsNullOrWhiteSpace(orderId)) return;
+            if (isFailed && string.IsNullOrWhiteSpace(orderId) && payload.ValueKind != JsonValueKind.Undefined && payload.TryGetProperty("order", out var orderNode) && orderNode.TryGetProperty("entity", out var orderEntity))
+                orderId = orderEntity.TryGetProperty("id", out var ordId2) ? ordId2.GetString() ?? string.Empty : string.Empty;
+            if (string.IsNullOrWhiteSpace(orderId) && !isRefund) return;
 
             var attempt = await db.BillingPaymentAttempts
                 .Where(x => x.Provider == "razorpay" && x.OrderId == orderId)
                 .OrderByDescending(x => x.CreatedAtUtc)
                 .FirstOrDefaultAsync(ct);
-            if (attempt is null) return;
+            if (attempt is null && !isRefund) return;
 
+            if (isFailed && attempt is not null)
+            {
+                attempt.Status = "failed";
+                attempt.LastError = "Payment failed webhook received.";
+                attempt.RawResponse = raw;
+                attempt.UpdatedAtUtc = DateTime.UtcNow;
+                var subFail = await db.TenantSubscriptions
+                    .Where(x => x.TenantId == attempt.TenantId)
+                    .OrderByDescending(x => x.CreatedAtUtc)
+                    .FirstOrDefaultAsync(ct);
+                if (subFail is not null && string.Equals(subFail.Status, "active", StringComparison.OrdinalIgnoreCase))
+                {
+                    subFail.Status = "past_due";
+                    subFail.UpdatedAtUtc = DateTime.UtcNow;
+                }
+                await db.SaveChangesAsync(ct);
+                await TrySendBillingEventAsync(
+                    attempt.TenantId,
+                    "Payment failed",
+                    "Your recent subscription payment failed. Please complete payment to avoid suspension.",
+                    new Dictionary<string, string>
+                    {
+                        ["Order ID"] = orderId,
+                        ["Payment ID"] = paymentId,
+                        ["Status"] = "past_due"
+                    },
+                    ct);
+                return;
+            }
+
+            if (isRefund)
+            {
+                var invoice = await db.BillingInvoices
+                    .Where(x => x.InvoiceNo.EndsWith(orderId))
+                    .OrderByDescending(x => x.CreatedAtUtc)
+                    .FirstOrDefaultAsync(ct);
+                if (invoice is not null)
+                {
+                    invoice.Status = "refunded";
+                    await db.SaveChangesAsync(ct);
+                    await TrySendBillingEventAsync(
+                        invoice.TenantId,
+                        "Refund processed",
+                        "A refund event was received and invoice status is updated.",
+                        new Dictionary<string, string>
+                        {
+                            ["Invoice No"] = invoice.InvoiceNo,
+                            ["Order ID"] = orderId
+                        },
+                        ct);
+                }
+                return;
+            }
+
+            if (attempt is null) return;
             if (attempt.Status == "paid") return;
             var expectedPaise = (int)Math.Round(attempt.Amount * 100m, MidpointRounding.AwayFromZero);
             if (!string.Equals(paymentStatus, "captured", StringComparison.OrdinalIgnoreCase))
@@ -357,11 +416,13 @@ public class PaymentWebhookController(
 
         var start = DateTime.UtcNow;
         sub.PlanId = plan.Id;
-        sub.BillingCycle = string.IsNullOrWhiteSpace(attempt.BillingCycle) ? "monthly" : attempt.BillingCycle;
+        sub.BillingCycle = NormalizeBillingCycle(attempt.BillingCycle);
         sub.Status = "active";
         sub.CancelledAtUtc = null;
         sub.StartedAtUtc = start;
-        sub.RenewAtUtc = sub.BillingCycle == "yearly" ? start.AddYears(1) : start.AddMonths(1);
+        sub.RenewAtUtc = sub.BillingCycle == "yearly"
+            ? start.AddYears(1)
+            : (sub.BillingCycle is "lifetime" or "usage_based" ? DateTime.MaxValue : start.AddMonths(1));
         sub.UpdatedAtUtc = DateTime.UtcNow;
 
         var invoiceNo = $"INV-{start:yyyyMMdd}-{attempt.OrderId}";
@@ -369,10 +430,15 @@ public class PaymentWebhookController(
         if (!exists)
         {
             var subtotal = attempt.Amount;
-            var tax = Math.Round(subtotal * 0.18m, 2, MidpointRounding.AwayFromZero);
+            var (taxRate, isTaxExempt, isReverseCharge) = await ResolveTaxProfileAsync(attempt.TenantId, ct);
+            var tax = (isTaxExempt || isReverseCharge)
+                ? 0m
+                : Math.Round(subtotal * (taxRate / 100m), 2, MidpointRounding.AwayFromZero);
             var periodStart = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-            var periodEnd = sub.BillingCycle == "yearly" ? periodStart.AddYears(1).AddSeconds(-1) : periodStart.AddMonths(1).AddSeconds(-1);
-            db.BillingInvoices.Add(new BillingInvoice
+            var periodEnd = sub.BillingCycle == "yearly"
+                ? periodStart.AddYears(1).AddSeconds(-1)
+                : (sub.BillingCycle == "lifetime" ? periodStart.AddYears(100).AddSeconds(-1) : periodStart.AddMonths(1).AddSeconds(-1));
+            var invoice = new BillingInvoice
             {
                 Id = Guid.NewGuid(),
                 InvoiceNo = invoiceNo,
@@ -385,8 +451,12 @@ public class PaymentWebhookController(
                 Status = "paid",
                 PaidAtUtc = attempt.PaidAtUtc ?? DateTime.UtcNow,
                 PdfUrl = string.Empty,
+                IntegrityAlgo = "SHA256",
+                IssuedAtUtc = DateTime.UtcNow,
                 CreatedAtUtc = DateTime.UtcNow
-            });
+            };
+            invoice.IntegrityHash = ComputeInvoiceIntegrityHash(invoice);
+            db.BillingInvoices.Add(invoice);
             await TrySendBillingEventAsync(
                 attempt.TenantId,
                 "Invoice generated",
@@ -396,10 +466,48 @@ public class PaymentWebhookController(
                     ["Invoice No"] = invoiceNo,
                     ["Subtotal"] = $"{subtotal:0.00} {attempt.Currency}",
                     ["Tax"] = $"{tax:0.00} {attempt.Currency}",
+                    ["Tax Rate"] = $"{taxRate:0.##}%",
                     ["Total"] = $"{subtotal + tax:0.00} {attempt.Currency}"
                 },
                 ct);
         }
+    }
+
+    private async Task<(decimal taxRatePercent, bool isTaxExempt, bool isReverseCharge)> ResolveTaxProfileAsync(Guid tenantId, CancellationToken ct)
+    {
+        var profile = await db.TenantCompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, ct);
+        if (profile is null) return (18m, false, false);
+        return (Math.Clamp(profile.TaxRatePercent, 0m, 100m), profile.IsTaxExempt, profile.IsReverseCharge);
+    }
+
+    private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice)
+    {
+        var canonical = string.Join("|",
+            invoice.InvoiceNo,
+            invoice.TenantId.ToString("D"),
+            invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
+            invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
+            invoice.Subtotal.ToString("0.00"),
+            invoice.TaxAmount.ToString("0.00"),
+            invoice.Total.ToString("0.00"),
+            (invoice.PaidAtUtc ?? DateTime.MinValue).ToUniversalTime().ToString("O"),
+            invoice.Status,
+            invoice.IssuedAtUtc.ToUniversalTime().ToString("O"));
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string NormalizeBillingCycle(string? billingCycle)
+    {
+        var cycle = (billingCycle ?? "monthly").Trim().ToLowerInvariant();
+        return cycle switch
+        {
+            "yearly" => "yearly",
+            "lifetime" => "lifetime",
+            "usage_based" => "usage_based",
+            "usagebased" => "usage_based",
+            _ => "monthly"
+        };
     }
 
     private async Task TrySendBillingEventAsync(Guid tenantId, string title, string description, Dictionary<string, string> details, CancellationToken ct)

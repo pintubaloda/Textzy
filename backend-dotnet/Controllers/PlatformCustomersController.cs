@@ -403,8 +403,8 @@ public class PlatformCustomersController(
         if (plan is null) return NotFound("Plan not found.");
 
         var cycle = string.IsNullOrWhiteSpace(request.BillingCycle) ? "monthly" : request.BillingCycle.Trim().ToLowerInvariant();
-        if (cycle != "monthly" && cycle != "yearly" && cycle != "lifetime")
-            return BadRequest("billingCycle must be monthly, yearly, or lifetime.");
+        if (cycle != "monthly" && cycle != "yearly" && cycle != "lifetime" && cycle != "usage_based")
+            return BadRequest("billingCycle must be monthly, yearly, lifetime, or usage_based.");
 
         var sub = await db.TenantSubscriptions
             .Where(x => x.TenantId == tenantId)
@@ -425,6 +425,7 @@ public class PlatformCustomersController(
                 {
                     "yearly" => DateTime.UtcNow.AddYears(1),
                     "monthly" => DateTime.UtcNow.AddMonths(1),
+                    "usage_based" => DateTime.MaxValue,
                     _ => DateTime.MaxValue
                 },
                 CreatedAtUtc = DateTime.UtcNow,
@@ -442,6 +443,7 @@ public class PlatformCustomersController(
             {
                 "yearly" => DateTime.UtcNow.AddYears(1),
                 "monthly" => DateTime.UtcNow.AddMonths(1),
+                "usage_based" => DateTime.MaxValue,
                 _ => DateTime.MaxValue
             };
             sub.CancelledAtUtc = null;

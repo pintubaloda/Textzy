@@ -15,6 +15,7 @@ public class AuthMiddleware(RequestDelegate next)
         ControlDbContext db,
         TenancyContext tenancy,
         AuthContext auth,
+        BillingGuardService billingGuard,
         AuthCookieService authCookie,
         IConfiguration config,
         IHostEnvironment env)
@@ -167,10 +168,34 @@ public class AuthMiddleware(RequestDelegate next)
 
         auth.Set(user.Id, session.TenantId, user.Email, tenantUser.Role, effective.ToList(), user.FullName);
         await _next(context);
+
+        if (ShouldCountApiUsage(context.Request.Path.Value ?? string.Empty, context.Response.StatusCode))
+        {
+            try
+            {
+                await billingGuard.TryConsumeAsync(session.TenantId, "apiCalls", 1, context.RequestAborted);
+            }
+            catch
+            {
+                // Non-blocking metering only.
+            }
+        }
     }
 
     private static bool IsUnsafeMethod(string method) =>
         HttpMethods.IsPost(method) || HttpMethods.IsPut(method) || HttpMethods.IsPatch(method) || HttpMethods.IsDelete(method);
+
+    private static bool ShouldCountApiUsage(string path, int statusCode)
+    {
+        if (!path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)) return false;
+        if (path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase)) return false;
+        if (path.StartsWith("/api/public/", StringComparison.OrdinalIgnoreCase)) return false;
+        if (path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase)) return false;
+        if (path.StartsWith("/api/payments/webhook", StringComparison.OrdinalIgnoreCase)) return false;
+        if (path.StartsWith("/api/email/webhook", StringComparison.OrdinalIgnoreCase)) return false;
+        if (path.StartsWith("/api/billing/", StringComparison.OrdinalIgnoreCase)) return false;
+        return statusCode is >= 200 and < 500;
+    }
 
     private static bool HasValidDoubleSubmitCsrf(HttpContext context, AuthCookieService authCookie)
     {

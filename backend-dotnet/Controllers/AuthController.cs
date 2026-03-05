@@ -17,6 +17,7 @@ public class AuthController(
     PasswordHasher hasher,
     SessionService sessions,
     EmailService emailService,
+    BillingGuardService billingGuard,
     TenancyContext tenancy,
     AuthContext auth,
     AuthCookieService authCookie,
@@ -432,6 +433,8 @@ public class AuthController(
         invite.Status = "accepted";
         invite.AcceptedAtUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        var memberCount = await db.TenantUsers.CountAsync(tu => tu.TenantId == invite.TenantId, ct);
+        await billingGuard.SetAbsoluteUsageAsync(invite.TenantId, "teamMembers", memberCount, ct);
 
         var sessionToken = await sessions.CreateSessionAsync(user.Id, invite.TenantId, ct);
         authCookie.SetToken(HttpContext, sessionToken);
