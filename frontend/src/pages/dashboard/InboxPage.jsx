@@ -92,9 +92,95 @@ const parseInteractiveButtonsFromType = (messageType) => {
     .slice(0, 3);
 };
 
+const parseInboundStructured = (text, messageType) => {
+  const raw = String(text || "").trim();
+  const type = String(messageType || "").toLowerCase();
+  if (!raw) return { kind: "", data: null };
+
+  if (raw.startsWith("Location:")) {
+    const m = raw.match(/^Location:\s*(.*?)\s*\(([-\d.]+),([-\d.]+)\)\s*$/);
+    if (m) return { kind: "location", data: { label: m[1]?.trim() || "Shared location", lat: m[2], lng: m[3] } };
+    return { kind: "location", data: { label: raw.replace(/^Location:\s*/i, "") } };
+  }
+
+  if (raw.startsWith("Order:")) {
+    const catalog = (raw.match(/catalog=([^;]+)/i)?.[1] || "").trim();
+    const items = (raw.match(/items=([^;]+)/i)?.[1] || "").trim();
+    const note = (raw.match(/text=(.+)$/i)?.[1] || "").trim();
+    return { kind: "order", data: { catalog, items, note } };
+  }
+
+  if (raw.startsWith("Shared contacts:")) {
+    const count = Number(raw.replace(/[^0-9]/g, "") || 0);
+    return { kind: "contacts", data: { count } };
+  }
+
+  if (raw.startsWith("Reaction:")) {
+    return { kind: "reaction", data: { emoji: raw.replace(/^Reaction:\s*/i, "").trim() } };
+  }
+
+  if (raw.startsWith("Unsupported message:") || raw === "Unsupported incoming WhatsApp message type." || raw === "Inbound unsupported message" || type === "unsupported") {
+    return { kind: "unsupported", data: { reason: raw } };
+  }
+
+  if (raw.startsWith("Referral:")) {
+    return { kind: "referral", data: { headline: raw.replace(/^Referral:\s*/i, "").trim() } };
+  }
+
+  return { kind: "", data: null };
+};
+
 const renderMessageText = (msg, customerName = "Customer", agentName = "Agent") => {
   const text = String(msg?.text || "");
-  const replyMatch = text.match(/^↪ Reply to \(([^)]+)\):\s*([\s\S]*)$/);
+  if (msg?.specialKind === "location") {
+    const label = msg?.specialData?.label || "Shared location";
+    const lat = msg?.specialData?.lat;
+    const lng = msg?.specialData?.lng;
+    const mapHref = lat && lng ? `https://maps.google.com/?q=${encodeURIComponent(`${lat},${lng}`)}` : "";
+    return (
+      <div className="space-y-1.5">
+        <div className="text-xs font-semibold text-sky-700">Location</div>
+        <p className="text-sm whitespace-pre-wrap break-words">{label}</p>
+        {mapHref ? <a href={mapHref} target="_blank" rel="noreferrer" className="text-xs font-medium text-orange-600 underline">Open in Maps</a> : null}
+      </div>
+    );
+  }
+  if (msg?.specialKind === "order") {
+    return (
+      <div className="space-y-1.5">
+        <div className="text-xs font-semibold text-indigo-700">Order Details</div>
+        <p className="text-sm">Catalog: {msg?.specialData?.catalog || "-"}</p>
+        <p className="text-sm">Items: {msg?.specialData?.items || "-"}</p>
+        {msg?.specialData?.note ? <p className="text-sm whitespace-pre-wrap break-words">{msg.specialData.note}</p> : null}
+      </div>
+    );
+  }
+  if (msg?.specialKind === "contacts") {
+    return (
+      <div className="space-y-1">
+        <div className="text-xs font-semibold text-emerald-700">Contacts Shared</div>
+        <p className="text-sm">{msg?.specialData?.count || 0} contact(s)</p>
+      </div>
+    );
+  }
+  if (msg?.specialKind === "reaction") {
+    return (
+      <div className="space-y-1">
+        <div className="text-xs font-semibold text-purple-700">Reaction</div>
+        <p className="text-lg leading-none">{msg?.specialData?.emoji || "??"}</p>
+      </div>
+    );
+  }
+  if (msg?.specialKind === "unsupported") {
+    return (
+      <div className="space-y-1">
+        <div className="text-xs font-semibold text-amber-700">Unsupported Type</div>
+        <p className="text-sm whitespace-pre-wrap break-words">{msg?.specialData?.reason || text}</p>
+      </div>
+    );
+  }
+
+  const replyMatch = text.match(/^(?:↪\s*)?Reply to \(([^)]+)\):\s*([\s\S]*)$/);
   if (!replyMatch) {
     return <p className="text-sm whitespace-pre-wrap break-words">{text}</p>;
   }
@@ -114,7 +200,6 @@ const renderMessageText = (msg, customerName = "Customer", agentName = "Agent") 
     </div>
   );
 };
-
 const InboundMediaPreview = ({ msg, onOpen }) => {
   const [previewUrl, setPreviewUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -323,6 +408,7 @@ const InboxPage = () => {
       text = `🧩 Template: ${name}`;
     }
     const interactiveButtons = parseInteractiveButtonsFromType(messageType);
+    const structured = parseInboundStructured(text, messageType);
     return {
     id: x.id ?? x.Id ?? crypto.randomUUID(),
     sender,
@@ -336,6 +422,8 @@ const InboxPage = () => {
     messageType,
     media,
     interactiveButtons,
+    specialKind: structured.kind,
+    specialData: structured.data,
   };
   };
 

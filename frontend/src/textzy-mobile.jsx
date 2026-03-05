@@ -1,13 +1,13 @@
-import { useState, useRef, useEffect } from "react";
+﻿import { useState, useRef, useEffect } from "react";
 import * as signalR from "@microsoft/signalr";
 import { subscribeFcm, subscribePush, setRuntimePushConfig, getRuntimePushConfig } from "./lib/browserNotifications";
 import { getPublicAppUpdateManifest } from "./lib/api";
 
-/* ═══════════════════════════════════════════════
-   TEXTZY MOBILE — NO BLACK PALETTE
-   Orange #F97316  ·  White #FFFFFF
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   TEXTZY MOBILE â€” NO BLACK PALETTE
+   Orange #F97316  Â·  White #FFFFFF
    All dark tones replaced with deep teal/slate
-═══════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const C = {
   /* brand */
   orange:       "#F97316",
@@ -30,7 +30,7 @@ const C = {
   inputBg:      "#FFFFFF",
   panelBg:      "#F8FAFC",
 
-  /* text — warm slates, never black */
+  /* text â€” warm slates, never black */
   textMain:     "#1E3A5F",
   textSub:      "#64748B",
   textMuted:    "#94A3B8",
@@ -288,6 +288,7 @@ const mapMessage = (x) => {
   }
   const createdAt = x.createdAtUtc ?? x.CreatedAtUtc;
   const interactiveButtons = parseInteractiveButtonsFromType(messageType);
+  const structured = parseInboundStructured(text, messageType);
   return {
     id: x.id ?? x.Id ?? `${Date.now()}-${Math.random()}`,
     sent: sender === "agent",
@@ -301,10 +302,12 @@ const mapMessage = (x) => {
     messageType,
     interactiveButtons,
     media,
+    specialKind: structured.kind,
+    specialData: structured.data,
   };
 };
 
-/* ── MOCK DATA ── */
+/* â”€â”€ MOCK DATA â”€â”€ */
 const CONTACTS = [
   { id:1, name:"Alice Johnson",    avatar:"AJ", color:"#7C3AED",
     online:true, unread:2, time:"10:42 AM", lastMsg:"Sure, I'll send the report by EOD.", typing:false,
@@ -363,9 +366,9 @@ const REPLIES = [
   "Sounds good!", "On it.", "Thanks!", "Will do.", "Let me look into this.", "Perfect!",
 ];
 
-/* ════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    TEXTZY LOGO
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const Logo = ({ size=32 }) => (
   <svg width={size} height={size} viewBox="0 0 40 40" fill="none">
     <rect width="40" height="40" rx="10" fill="#F97316"/>
@@ -373,9 +376,9 @@ const Logo = ({ size=32 }) => (
   </svg>
 );
 
-/* ════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    ICONS
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const I = {
   Send:    ()=><svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>,
   Key:     ()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="7.5" cy="15.5" r="3.5"/><path d="M11 13l9-9"/><path d="M16 4l4 4"/><path d="M14 6l4 4"/></svg>,
@@ -429,6 +432,58 @@ const parseInteractiveButtonsFromType = (messageType) => {
     .slice(0, 3);
 };
 
+const parseInboundStructured = (text, messageType) => {
+  const raw = String(text || "").trim();
+  const type = String(messageType || "").toLowerCase();
+  if (!raw) return { kind: "", data: null };
+
+  if (raw.startsWith("Location:")) {
+    const m = raw.match(/^Location:\s*(.*?)\s*\(([-\d.]+),([-\d.]+)\)\s*$/);
+    if (m) {
+      return {
+        kind: "location",
+        data: {
+          label: m[1]?.trim() || "Shared location",
+          lat: m[2],
+          lng: m[3],
+        },
+      };
+    }
+    return { kind: "location", data: { label: raw.replace(/^Location:\s*/i, "") } };
+  }
+
+  if (raw.startsWith("Order:")) {
+    const catalog = (raw.match(/catalog=([^;]+)/i)?.[1] || "").trim();
+    const items = (raw.match(/items=([^;]+)/i)?.[1] || "").trim();
+    const note = (raw.match(/text=(.+)$/i)?.[1] || "").trim();
+    return { kind: "order", data: { catalog, items, note } };
+  }
+
+  if (raw.startsWith("Shared contacts:")) {
+    const count = Number(raw.replace(/[^0-9]/g, "") || 0);
+    return { kind: "contacts", data: { count } };
+  }
+
+  if (raw.startsWith("Reaction:")) {
+    return { kind: "reaction", data: { emoji: raw.replace(/^Reaction:\s*/i, "").trim() } };
+  }
+
+  if (
+    raw.startsWith("Unsupported message:") ||
+    raw === "Unsupported incoming WhatsApp message type." ||
+    raw === "Inbound unsupported message" ||
+    type === "unsupported"
+  ) {
+    return { kind: "unsupported", data: { reason: raw } };
+  }
+
+  if (raw.startsWith("Referral:")) {
+    return { kind: "referral", data: { headline: raw.replace(/^Referral:\s*/i, "").trim() } };
+  }
+
+  return { kind: "", data: null };
+};
+
 const extractTemplateParamIndexes = (body = "") => {
   const seen = new Set();
   const out = [];
@@ -442,9 +497,88 @@ const extractTemplateParamIndexes = (body = "") => {
   return out.sort((a, b) => a - b);
 };
 
-/* ════════════════════════════
+const renderMessageBody = (msg) => {
+  const kind = String(msg?.specialKind || "");
+  const data = msg?.specialData || {};
+
+  if (kind === "location") {
+    const mapHref = data?.lat && data?.lng
+      ? `https://maps.google.com/?q=${encodeURIComponent(`${data.lat},${data.lng}`)}`
+      : "";
+    return (
+      <div style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#0369A1" }}>Location</div>
+        <p style={{ margin: 0, fontSize: 15, color: C.textMain, lineHeight: 1.45, wordBreak: "break-word" }}>
+          {data?.label || "Shared location"}
+        </p>
+        {mapHref ? (
+          <a
+            href={mapHref}
+            target="_blank"
+            rel="noreferrer"
+            style={{ fontSize: 12, color: C.orangeDark, textDecoration: "underline", fontWeight: 600 }}
+          >
+            Open in Maps
+          </a>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (kind === "order") {
+    return (
+      <div style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#4338CA" }}>Order Details</div>
+        <p style={{ margin: 0, fontSize: 14, color: C.textMain }}>Catalog: {data?.catalog || "-"}</p>
+        <p style={{ margin: 0, fontSize: 14, color: C.textMain }}>Items: {data?.items || "-"}</p>
+        {data?.note ? (
+          <p style={{ margin: 0, fontSize: 14, color: C.textMain, lineHeight: 1.45, wordBreak: "break-word" }}>
+            {data.note}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (kind === "contacts") {
+    return (
+      <div style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#047857" }}>Contacts Shared</div>
+        <p style={{ margin: 0, fontSize: 14, color: C.textMain }}>{data?.count || 0} contact(s)</p>
+      </div>
+    );
+  }
+
+  if (kind === "reaction") {
+    return (
+      <div style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#7C3AED" }}>Reaction</div>
+        <p style={{ margin: 0, fontSize: 24, lineHeight: 1 }}>{data?.emoji || "?"}</p>
+      </div>
+    );
+  }
+
+  if (kind === "unsupported") {
+    return (
+      <div style={{ display: "grid", gap: 6 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#B45309" }}>Unsupported Type</div>
+        <p style={{ margin: 0, fontSize: 14, color: C.textMain, lineHeight: 1.45, wordBreak: "break-word" }}>
+          {data?.reason || msg?.text || ""}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <p style={{ margin: 0, fontSize: 15, color: C.textMain, lineHeight: 1.45, wordBreak: "break-word" }}>
+      {msg?.text || ""}
+    </p>
+  );
+};
+
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    AVATAR
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const Avatar = ({ name, color, size=46, online=false }) => (
   <div style={{ position:"relative", flexShrink:0 }}>
     <div style={{
@@ -466,9 +600,9 @@ const Avatar = ({ name, color, size=46, online=false }) => (
   </div>
 );
 
-/* ════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    TYPING INDICATOR
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const Typing = () => (
   <div style={{ display:"flex", gap:5, alignItems:"center", padding:"11px 15px" }}>
     {[0,1,2].map(i=>(
@@ -481,9 +615,9 @@ const Typing = () => (
   </div>
 );
 
-/* ════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    QR CODE (decorative)
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const QRCode = ({ size=175 }) => {
   const cells=21, cs=size/cells;
   const grid = Array.from({length:cells},(_,r)=>
@@ -513,9 +647,9 @@ const QRCode = ({ size=175 }) => {
   );
 };
 
-/* ════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    SCAN ANIMATION (camera view)
-════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const Scanner = ({ onDone }) => {
   const [pct, setPct]   = useState(0);
   const [done, setDone] = useState(false);
@@ -741,10 +875,10 @@ const Scanner = ({ onDone }) => {
   );
 };
 
-/* ══════════════════════════════════════
-   SCREEN 1 — MOBILE LOGIN
-   Orange gradient bg · no black
-══════════════════════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   SCREEN 1 â€” MOBILE LOGIN
+   Orange gradient bg Â· no black
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const LoginScreen = ({ onLogin }) => {
   const [tab,setTab]     = useState("password");
   const [email,setEmail] = useState("admin@textzy.io");
@@ -1032,9 +1166,9 @@ const LoginScreen = ({ onLogin }) => {
   );
 };
 
-/* ══════════════════════════════════════
-   SCREEN 2 — PROJECT PICKER
-══════════════════════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   SCREEN 2 â€” PROJECT PICKER
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 const ProjectPicker = ({ projects, onSelect, loading = false }) => {
   const [sel, setSel] = useState(null);
   const rows = projects?.length ? projects : PROJECTS;
@@ -1084,9 +1218,9 @@ const ProjectPicker = ({ projects, onSelect, loading = false }) => {
   );
 };
 
-/* ══════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    MAIN MOBILE APP
-══════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 export default function TextzyMobile() {
   const restored = (() => {
     try {
@@ -2497,7 +2631,7 @@ export default function TextzyMobile() {
 
   const uname=(user?.email||"User").split("@")[0];
 
-  /* ── PROFILE PANEL ── */
+  /* â”€â”€ PROFILE PANEL â”€â”€ */
   if (view==="profile") return (
     <div style={{ minHeight:"100vh",fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#fff" }}>
       {/* header */}
@@ -2578,7 +2712,7 @@ export default function TextzyMobile() {
     </div>
   );
 
-  /* ── CHAT VIEW ── */
+  /* â”€â”€ CHAT VIEW â”€â”€ */
   if (view==="chat" && active) return (
     <div style={{ height:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Segoe UI',system-ui,sans-serif",background:C.chatBg }}>
       {/* header */}
@@ -2646,7 +2780,7 @@ export default function TextzyMobile() {
               borderRadius:msg.sent?"16px 16px 3px 16px":"16px 16px 16px 3px",
               boxShadow:msg.sent?`0 2px 8px ${C.orange}22`:"0 1px 4px rgba(0,0,0,0.08)",
             }}>
-              <p style={{ margin:0,fontSize:15,color:C.textMain,lineHeight:1.45,wordBreak:"break-word" }}>{msg.text}</p>
+              {renderMessageBody(msg)}
               {msg.messageType?.startsWith("media:") ? (
                 <div style={{ marginTop:8, border:`1px solid ${C.divider}`, borderRadius:10, padding:"8px 10px", background:"#fff" }}>
                   <div style={{ fontSize:12, color:C.textSub, marginBottom:6 }}>
@@ -2677,7 +2811,7 @@ export default function TextzyMobile() {
                         cursor:"pointer",
                       }}
                     >
-                      ↩ {btn}
+                      Reply: {btn}
                     </button>
                   ))}
                 </div>
@@ -2789,7 +2923,7 @@ export default function TextzyMobile() {
     </div>
   );
 
-  /* ── INBOX LIST VIEW ── */
+  /* â”€â”€ INBOX LIST VIEW â”€â”€ */
   return (
     <div style={{ height:"100vh",display:"flex",flexDirection:"column",fontFamily:"'Segoe UI',system-ui,sans-serif",background:"#fff" }}>
       {/* header */}
@@ -2919,6 +3053,7 @@ export default function TextzyMobile() {
     </div>
   );
 }
+
 
 
 

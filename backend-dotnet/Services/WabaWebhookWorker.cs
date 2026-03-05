@@ -73,6 +73,7 @@ public class WabaWebhookWorker(
         public string ReactionMessageId { get; init; } = string.Empty;
         public string OrderSummary { get; init; } = string.Empty;
         public string ContactsSummary { get; init; } = string.Empty;
+        public string UnsupportedSummary { get; init; } = string.Empty;
         public string RawJson { get; init; } = "{}";
     }
 
@@ -560,7 +561,7 @@ public class WabaWebhookWorker(
         if (subscriptions.Count == 0) return;
 
         var bodyText = string.IsNullOrWhiteSpace(inbound.Body)
-            ? (!string.IsNullOrWhiteSpace(inbound.MessageType) ? $"New {inbound.MessageType} message" : "You received a new customer message")
+            ? ComposeInboundBody(inbound)
             : inbound.Body;
         if (bodyText.Length > 120) bodyText = $"{bodyText[..117]}...";
 
@@ -1739,6 +1740,7 @@ public class WabaWebhookWorker(
                         {
                             contactsSummary = $"Shared contacts: {msgContactsNode.GetArrayLength()}";
                         }
+                        var unsupportedSummary = ExtractUnsupportedSummary(msg);
                         var name = value.TryGetProperty("contacts", out var contactsNode)
                             && contactsNode.ValueKind == JsonValueKind.Array
                             && contactsNode.GetArrayLength() > 0
@@ -1773,6 +1775,7 @@ public class WabaWebhookWorker(
                             ReactionMessageId = reactionMessageId,
                             OrderSummary = orderSummary,
                             ContactsSummary = contactsSummary,
+                            UnsupportedSummary = unsupportedSummary,
                             RawJson = msg.GetRawText()
                         });
                     }
@@ -1790,6 +1793,7 @@ public class WabaWebhookWorker(
     private static string ComposeInboundBody(InboundItem inbound)
     {
         if (!string.IsNullOrWhiteSpace(inbound.Body)) return inbound.Body;
+        if (!string.IsNullOrWhiteSpace(inbound.UnsupportedSummary)) return inbound.UnsupportedSummary;
         if (!string.IsNullOrWhiteSpace(inbound.ButtonText)) return $"Button reply: {inbound.ButtonText}";
         if (!string.IsNullOrWhiteSpace(inbound.ListReplyTitle)) return $"Interactive reply: {inbound.ListReplyTitle}";
         if (!string.IsNullOrWhiteSpace(inbound.ReactionEmoji)) return $"Reaction: {inbound.ReactionEmoji}";
@@ -1797,8 +1801,37 @@ public class WabaWebhookWorker(
         if (!string.IsNullOrWhiteSpace(inbound.LocationSummary)) return inbound.LocationSummary;
         if (!string.IsNullOrWhiteSpace(inbound.ContactsSummary)) return inbound.ContactsSummary;
         if (!string.IsNullOrWhiteSpace(inbound.ReferralHeadline)) return $"Referral: {inbound.ReferralHeadline}";
+        if (string.Equals(inbound.MessageType, "unsupported", StringComparison.OrdinalIgnoreCase))
+            return "Unsupported incoming WhatsApp message type.";
         if (!string.IsNullOrWhiteSpace(inbound.MessageType)) return $"Inbound {inbound.MessageType} message";
         return "[Inbound message]";
+    }
+
+    private static string ExtractUnsupportedSummary(JsonElement msg)
+    {
+        if (!msg.TryGetProperty("unsupported", out var unsupportedNode) || unsupportedNode.ValueKind != JsonValueKind.Object)
+            return string.Empty;
+
+        string pickValue(params string[] keys)
+        {
+            foreach (var key in keys)
+            {
+                if (!unsupportedNode.TryGetProperty(key, out var node)) continue;
+                var value = node.ValueKind == JsonValueKind.String ? node.GetString() ?? string.Empty : node.ToString();
+                if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+            }
+            return string.Empty;
+        }
+
+        var title = pickValue("title", "reason");
+        var detail = pickValue("message", "description", "details", "type");
+        if (!string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(detail))
+            return $"Unsupported message: {title} ({detail})";
+        if (!string.IsNullOrWhiteSpace(title))
+            return $"Unsupported message: {title}";
+        if (!string.IsNullOrWhiteSpace(detail))
+            return $"Unsupported message: {detail}";
+        return "Unsupported incoming WhatsApp message type.";
     }
 
     private static bool IsMediaType(string? messageType)
