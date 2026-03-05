@@ -136,6 +136,14 @@ const IntegrationsPage = () => {
     toast.success("API key copied to clipboard");
   };
 
+  const openApiDocs = () => {
+    window.open("/docs/API_INTEGRATION_SIMPLE_GUIDE.md", "_blank", "noopener,noreferrer");
+  };
+
+  const openFullDocs = () => {
+    window.open("/docs/index.html", "_blank", "noopener,noreferrer");
+  };
+
   return (
     <div className="space-y-6" data-testid="integrations-page">
       {/* Header */}
@@ -189,7 +197,7 @@ const IntegrationsPage = () => {
                 <RefreshCw className="w-4 h-4" />
                 Regenerate Key
               </Button>
-              <Button variant="outline" className="gap-2" data-testid="view-docs-btn">
+              <Button variant="outline" className="gap-2" data-testid="view-docs-btn" onClick={openApiDocs}>
                 <Code className="w-4 h-4" />
                 View API Docs
               </Button>
@@ -349,18 +357,17 @@ const IntegrationsPage = () => {
         <CardContent>
           <div className="bg-slate-900 rounded-lg p-4 overflow-x-auto">
             <pre className="text-sm text-slate-300">
-              <code>{`curl -X POST https://api.textzy.in/v1/messages \\
-  -H "Authorization: Bearer YOUR_API_KEY" \\
+              <code>{`curl -X POST https://textzy-backend-production.up.railway.app/api/messages/send \\
+  -H "X-API-Key: YOUR_API_KEY" \\
+  -H "X-API-Secret: YOUR_API_SECRET" \\
+  -H "X-Tenant-Slug: moneyart" \\
+  -H "Idempotency-Key: your-unique-id-123" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "to": "+919876543210",
-    "channel": "whatsapp",
-    "template": "order_confirmation",
-    "variables": {
-      "1": "John",
-      "2": "ORD-12345",
-      "3": "https://track.example.com/12345"
-    }
+    "recipient": "919876543210",
+    "channel": "WhatsApp",
+    "body": "Hello from integration",
+    "useTemplate": false
   }'`}</code>
             </pre>
           </div>
@@ -369,7 +376,7 @@ const IntegrationsPage = () => {
               <Copy className="w-4 h-4" />
               Copy Code
             </Button>
-            <Button variant="outline" size="sm" className="gap-2">
+            <Button variant="outline" size="sm" className="gap-2" onClick={openFullDocs}>
               <ExternalLink className="w-4 h-4" />
               Full Documentation
             </Button>

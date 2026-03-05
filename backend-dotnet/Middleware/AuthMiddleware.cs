@@ -2,6 +2,8 @@ using Textzy.Api.Data;
 using Textzy.Api.Services;
 using System.Security.Cryptography;
 using System.Text;
+using System.Net;
+using Microsoft.EntityFrameworkCore;
 
 namespace Textzy.Api.Middleware;
 
@@ -16,6 +18,7 @@ public class AuthMiddleware(RequestDelegate next)
         TenancyContext tenancy,
         AuthContext auth,
         BillingGuardService billingGuard,
+        SecretCryptoService crypto,
         AuthCookieService authCookie,
         IConfiguration config,
         IHostEnvironment env)
@@ -49,6 +52,12 @@ public class AuthMiddleware(RequestDelegate next)
             return;
         }
 
+        var apiClientAuthenticated = false;
+        if (!isCsrfExemptPath)
+        {
+            apiClientAuthenticated = await TryAuthenticateApiClientAsync(context, db, tenancy, auth, crypto, config);
+        }
+
         if (env.IsProduction() && IsUnsafeMethod(context.Request.Method))
         {
             var origin = context.Request.Headers.Origin.ToString().Trim().TrimEnd('/');
@@ -63,7 +72,7 @@ public class AuthMiddleware(RequestDelegate next)
                 return;
             }
         }
-        if (IsUnsafeMethod(context.Request.Method) && !isCsrfExemptPath)
+        if (IsUnsafeMethod(context.Request.Method) && !isCsrfExemptPath && !apiClientAuthenticated)
         {
             if (!HasValidDoubleSubmitCsrf(context, authCookie))
             {
@@ -87,6 +96,23 @@ public class AuthMiddleware(RequestDelegate next)
         if (string.IsNullOrWhiteSpace(opaqueToken) && isHubPath)
         {
             opaqueToken = context.Request.Query["access_token"].FirstOrDefault()?.Trim() ?? string.Empty;
+        }
+
+        if (apiClientAuthenticated)
+        {
+            await _next(context);
+            if (ShouldCountApiUsage(context.Request.Path.Value ?? string.Empty, context.Response.StatusCode))
+            {
+                try
+                {
+                    await billingGuard.TryConsumeAsync(tenancy.TenantId, "apiCalls", 1, context.RequestAborted);
+                }
+                catch
+                {
+                    // Non-blocking metering only.
+                }
+            }
+            return;
         }
 
         if (string.IsNullOrWhiteSpace(opaqueToken))
@@ -184,6 +210,177 @@ public class AuthMiddleware(RequestDelegate next)
 
     private static bool IsUnsafeMethod(string method) =>
         HttpMethods.IsPost(method) || HttpMethods.IsPut(method) || HttpMethods.IsPatch(method) || HttpMethods.IsDelete(method);
+
+    private static async Task<bool> TryAuthenticateApiClientAsync(
+        HttpContext context,
+        ControlDbContext db,
+        TenancyContext tenancy,
+        AuthContext auth,
+        SecretCryptoService crypto,
+        IConfiguration config)
+    {
+        var apiKey = context.Request.Headers["X-API-Key"].FirstOrDefault()?.Trim() ?? string.Empty;
+        var apiSecret = context.Request.Headers["X-API-Secret"].FirstOrDefault()?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(apiSecret))
+            return false;
+
+        if (!IsHttpsRequest(context))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsync("HTTPS is required for API key authentication.");
+            return false;
+        }
+
+        var path = context.Request.Path.Value ?? string.Empty;
+        if (!IsApiClientPathAllowed(path))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsync("API key authentication not allowed for this endpoint.");
+            return false;
+        }
+
+        // Tenant context should already be resolved by TenantMiddleware for non-auth/public paths.
+        if (!tenancy.IsSet)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            await context.Response.WriteAsync("Missing tenant context for API key authentication.");
+            return false;
+        }
+
+        var rows = await db.PlatformSettings
+            .Where(x => x.Scope == "api-integration")
+            .ToListAsync(context.RequestAborted);
+
+        var settings = rows.ToDictionary(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase);
+        var keyConfig = settings.TryGetValue("apiKey", out var k) ? (k ?? string.Empty) : string.Empty;
+        var secretConfig = settings.TryGetValue("apiSecret", out var s) ? (s ?? string.Empty) : string.Empty;
+        var allowIpsRaw = settings.TryGetValue("ipWhitelist", out var ipw) ? (ipw ?? string.Empty) : string.Empty;
+        var enabledRaw = settings.TryGetValue("enabled", out var en) ? (en ?? string.Empty) : "false";
+
+        // Fallback to env/config when platform settings are not configured yet.
+        var expectedKey = string.IsNullOrWhiteSpace(keyConfig) ? (config["IntegrationApi:ApiKey"] ?? string.Empty) : keyConfig;
+        var expectedSecret = string.IsNullOrWhiteSpace(secretConfig) ? (config["IntegrationApi:ApiSecret"] ?? string.Empty) : secretConfig;
+        var enabled = bool.TryParse(enabledRaw, out var e) ? e : !string.IsNullOrWhiteSpace(expectedKey) && !string.IsNullOrWhiteSpace(expectedSecret);
+        if (!enabled)
+            return false;
+
+        if (!SecureEquals(apiKey, expectedKey) || !SecureEquals(apiSecret, expectedSecret))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsync("Invalid API credentials.");
+            return false;
+        }
+
+        var ipWhitelist = string.IsNullOrWhiteSpace(allowIpsRaw) ? (config["IntegrationApi:IpWhitelist"] ?? string.Empty) : allowIpsRaw;
+        if (!IsIpAllowed(context.Connection.RemoteIpAddress, ipWhitelist))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsync("Client IP is not allowed.");
+            return false;
+        }
+
+        var syntheticUserId = CreateStableGuid($"{tenancy.TenantId}:api-client:{expectedKey}");
+        auth.Set(
+            syntheticUserId,
+            tenancy.TenantId,
+            "api-client@textzy.local",
+            "api_client",
+            new[]
+            {
+                PermissionCatalog.ApiRead,
+                PermissionCatalog.ApiWrite,
+                PermissionCatalog.InboxRead,
+                PermissionCatalog.InboxWrite,
+                PermissionCatalog.TemplatesRead,
+                PermissionCatalog.TemplatesWrite,
+                PermissionCatalog.AutomationRead,
+                PermissionCatalog.AutomationWrite
+            },
+            "API Client");
+
+        return true;
+    }
+
+    private static bool IsApiClientPathAllowed(string path)
+    {
+        return path.StartsWith("/api/messages/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/sms/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/waba/smoke/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/waba/debug/", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/automation/meta/flows", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/automation/metrics/flows", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/automation/flows/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsHttpsRequest(HttpContext context)
+    {
+        if (context.Request.IsHttps) return true;
+        var xfProto = context.Request.Headers["X-Forwarded-Proto"].FirstOrDefault();
+        return string.Equals(xfProto, "https", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool SecureEquals(string left, string right)
+    {
+        var a = Encoding.UTF8.GetBytes(left ?? string.Empty);
+        var b = Encoding.UTF8.GetBytes(right ?? string.Empty);
+        return a.Length == b.Length && CryptographicOperations.FixedTimeEquals(a, b);
+    }
+
+    private static bool IsIpAllowed(IPAddress? remoteIp, string rawWhitelist)
+    {
+        if (string.IsNullOrWhiteSpace(rawWhitelist)) return true; // optional whitelist
+        if (remoteIp is null) return false;
+
+        var ip = remoteIp.IsIPv4MappedToIPv6 ? remoteIp.MapToIPv4() : remoteIp;
+        var rules = rawWhitelist.Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var rule in rules)
+        {
+            if (string.IsNullOrWhiteSpace(rule)) continue;
+            if (string.Equals(rule, "*", StringComparison.Ordinal)) return true;
+            if (TryMatchCidr(ip, rule)) return true;
+            if (IPAddress.TryParse(rule, out var allowed))
+            {
+                var normalizedAllowed = allowed.IsIPv4MappedToIPv6 ? allowed.MapToIPv4() : allowed;
+                if (normalizedAllowed.Equals(ip)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool TryMatchCidr(IPAddress ip, string cidr)
+    {
+        var parts = cidr.Split('/');
+        if (parts.Length != 2) return false;
+        if (!IPAddress.TryParse(parts[0], out var baseIp)) return false;
+        if (!int.TryParse(parts[1], out var prefixLength)) return false;
+
+        var ipBytes = (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip).GetAddressBytes();
+        var baseBytes = (baseIp.IsIPv4MappedToIPv6 ? baseIp.MapToIPv4() : baseIp).GetAddressBytes();
+        if (ipBytes.Length != baseBytes.Length) return false;
+
+        var bits = ipBytes.Length * 8;
+        if (prefixLength < 0 || prefixLength > bits) return false;
+
+        var fullBytes = prefixLength / 8;
+        var remainingBits = prefixLength % 8;
+
+        for (var i = 0; i < fullBytes; i++)
+        {
+            if (ipBytes[i] != baseBytes[i]) return false;
+        }
+
+        if (remainingBits == 0) return true;
+        var mask = (byte)(0xFF << (8 - remainingBits));
+        return (ipBytes[fullBytes] & mask) == (baseBytes[fullBytes] & mask);
+    }
+
+    private static Guid CreateStableGuid(string input)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        var bytes = new byte[16];
+        Array.Copy(hash, bytes, 16);
+        return new Guid(bytes);
+    }
 
     private static bool ShouldCountApiUsage(string path, int statusCode)
     {
