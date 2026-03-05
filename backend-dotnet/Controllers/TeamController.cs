@@ -88,11 +88,6 @@ public class TeamController(
         if (string.IsNullOrWhiteSpace(email)) return BadRequest("Email is required.");
         if (string.IsNullOrWhiteSpace(role)) return BadRequest("Valid role is required.");
 
-        var currentMembers = await db.TenantUsers.CountAsync(tu => tu.TenantId == tenancy.TenantId, ct);
-        var limit = await billingGuard.CheckLimitAsync(tenancy.TenantId, "teamMembers", currentMembers + 1, ct);
-        if (!limit.Allowed) return BadRequest(limit.Message);
-        var tenantOwnerGroupId = await EnsureTenantOwnerGroupAsync(tenancy.TenantId, auth.UserId, ct);
-
         var user = await db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email, ct);
         if (user is null)
         {
@@ -115,24 +110,29 @@ public class TeamController(
             user.FullName = request.Name.Trim();
         }
 
+        var existingMembership = await db.TenantUsers.FirstOrDefaultAsync(tu => tu.TenantId == tenancy.TenantId && tu.UserId == user.Id, ct);
+        var currentMembers = await db.TenantUsers.CountAsync(tu => tu.TenantId == tenancy.TenantId, ct);
+        var projectedMembers = existingMembership is null ? currentMembers + 1 : currentMembers;
+        var limit = await billingGuard.CheckLimitAsync(tenancy.TenantId, "teamMembers", projectedMembers, ct);
+        if (!limit.Allowed) return BadRequest(limit.Message);
+        var tenantOwnerGroupId = await EnsureTenantOwnerGroupAsync(tenancy.TenantId, auth.UserId, ct);
+
         if (!await CanUserJoinOwnerGroupAsync(user.Id, tenantOwnerGroupId, ct))
             return BadRequest("User already belongs to another tenant owner group and cannot be added to this tenant.");
 
-        var member = await db.TenantUsers.FirstOrDefaultAsync(tu => tu.TenantId == tenancy.TenantId && tu.UserId == user.Id, ct);
-        if (member is null)
+        if (existingMembership is not null)
         {
-            member = new TenantUser
+            var previousRole = existingMembership.Role;
+            existingMembership.Role = role;
+            await db.SaveChangesAsync(ct);
+            await audit.WriteAsync("team.role.update", $"tenant={tenancy.TenantId}; user={user.Id}; from={previousRole}; to={role}", ct);
+            return Ok(new
             {
-                Id = Guid.NewGuid(),
-                TenantId = tenancy.TenantId,
-                UserId = user.Id,
-                Role = role
-            };
-            db.TenantUsers.Add(member);
-        }
-        else
-        {
-            member.Role = role;
+                email,
+                role,
+                invitationStatus = "accepted",
+                message = "User is already a team member. Role updated."
+            });
         }
 
         var activeInvite = await db.TeamInvitations
@@ -169,8 +169,6 @@ public class TeamController(
         }
 
         await db.SaveChangesAsync(ct);
-        var memberCount = await db.TenantUsers.CountAsync(tu => tu.TenantId == tenancy.TenantId, ct);
-        await billingGuard.SetAbsoluteUsageAsync(tenancy.TenantId, "teamMembers", memberCount, ct);
         var inviteUrl = await BuildInviteUrlAsync(rawToken, ct);
         try
         {
