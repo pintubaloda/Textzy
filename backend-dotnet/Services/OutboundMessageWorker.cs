@@ -157,6 +157,17 @@ public class OutboundMessageWorker(
                     message.Status = MessageStateMachine.AcceptedByMeta;
                     message.LastError = string.Empty;
                     message.NextRetryAtUtc = null;
+                    if (message.Channel == ChannelType.Sms)
+                    {
+                        var smsLedger = await tenantDb.SmsBillingLedgers.FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.MessageId == message.Id, stoppingToken);
+                        if (smsLedger is not null)
+                        {
+                            smsLedger.ProviderMessageId = providerId;
+                            smsLedger.DeliveryState = "submitted";
+                            smsLedger.UpdatedAtUtc = DateTime.UtcNow;
+                            smsLedger.Notes = "Accepted by SMS provider; awaiting DLR callback.";
+                        }
+                    }
                     var idem = await tenantDb.IdempotencyKeys.FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.MessageId == message.Id, stoppingToken);
                     if (idem is not null)
                     {
@@ -185,6 +196,16 @@ public class OutboundMessageWorker(
                     {
                         message.Status = MessageStateMachine.Failed;
                         message.NextRetryAtUtc = null;
+                        if (message.Channel == ChannelType.Sms)
+                        {
+                            var smsLedger = await tenantDb.SmsBillingLedgers.FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.MessageId == message.Id, stoppingToken);
+                            if (smsLedger is not null)
+                            {
+                                smsLedger.DeliveryState = "failed";
+                                smsLedger.UpdatedAtUtc = DateTime.UtcNow;
+                                smsLedger.Notes = Truncate($"Provider send failed before DLR: {ex.Message}", 900);
+                            }
+                        }
                         var idem = await tenantDb.IdempotencyKeys.FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.MessageId == message.Id, stoppingToken);
                         if (idem is not null)
                         {

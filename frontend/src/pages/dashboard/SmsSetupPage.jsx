@@ -13,6 +13,7 @@ import {
   createSmsTemplate,
   getSmsComplianceKpis,
   getSmsSenderStats,
+  listSmsBillingLedger,
   listSmsComplianceEvents,
   listSmsOptOuts,
   listSmsSenders,
@@ -64,18 +65,20 @@ const SmsSetupPage = () => {
   const [optOutReason, setOptOutReason] = useState("");
 
   const [events, setEvents] = useState([]);
-  const [kpis, setKpis] = useState({ templatesTotal: 0, templatesApproved: 0, templatesPending: 0, templatesRejected: 0, optOuts: 0, sentToday: 0 });
+  const [billingRows, setBillingRows] = useState([]);
+  const [kpis, setKpis] = useState({ templatesTotal: 0, templatesApproved: 0, templatesPending: 0, templatesRejected: 0, optOuts: 0, sentToday: 0, deliveredToday: 0, failedToday: 0, billedToday: 0 });
 
   const [busy, setBusy] = useState(false);
 
   const loadAll = async () => {
     try {
-      const [senderRes, senderStatRes, tplRes, optRes, eventRes, kpiRes] = await Promise.all([
+      const [senderRes, senderStatRes, tplRes, optRes, eventRes, billingRes, kpiRes] = await Promise.all([
         listSmsSenders().catch(() => []),
         getSmsSenderStats().catch(() => null),
         listSmsTemplates().catch(() => []),
         listSmsOptOuts(400).catch(() => []),
         listSmsComplianceEvents(200).catch(() => []),
+        listSmsBillingLedger(300).catch(() => []),
         getSmsComplianceKpis().catch(() => null),
       ]);
       setSenders(senderRes || []);
@@ -83,6 +86,7 @@ const SmsSetupPage = () => {
       setTemplateRows(tplRes || []);
       setOptOutRows(optRes || []);
       setEvents(eventRes || []);
+      setBillingRows(billingRes || []);
       if (kpiRes) setKpis(kpiRes);
     } catch {
       toast.error("Failed to load SMS module data.");
@@ -184,8 +188,11 @@ const SmsSetupPage = () => {
 
   const statusBadge = (value) => {
     const v = String(value || "").toLowerCase();
+    if (v === "delivered") return <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Delivered</Badge>;
+    if (v === "failed") return <Badge className="bg-red-100 text-red-700 hover:bg-red-100">Failed</Badge>;
+    if (v === "queued" || v === "processing" || v === "submitted") return <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">In Progress</Badge>;
     if (v === "approved") return <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Approved</Badge>;
-    if (v === "submitted" || v === "inreview") return <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">Pending</Badge>;
+    if (v === "inreview") return <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">Pending</Badge>;
     if (v === "rejected") return <Badge className="bg-red-100 text-red-700 hover:bg-red-100">Rejected</Badge>;
     if (v === "expired") return <Badge variant="secondary">Expired</Badge>;
     return <Badge variant="outline">Draft</Badge>;
@@ -206,11 +213,12 @@ const SmsSetupPage = () => {
         <Card className="border-slate-200"><CardContent className="pt-6"><div className="flex items-center gap-3"><FileCheck2 className="w-5 h-5 text-blue-600" /><div><p className="text-xs text-slate-500">Templates Total</p><p className="text-2xl font-semibold text-slate-900">{kpis.templatesTotal || 0}</p></div></div></CardContent></Card>
         <Card className="border-slate-200"><CardContent className="pt-6"><div className="flex items-center gap-3"><Ban className="w-5 h-5 text-red-600" /><div><p className="text-xs text-slate-500">Opt-Outs</p><p className="text-2xl font-semibold text-slate-900">{kpis.optOuts || 0}</p></div></div></CardContent></Card>
         <Card className="border-slate-200"><CardContent className="pt-6"><div className="flex items-center gap-3"><MessageSquareText className="w-5 h-5 text-indigo-600" /><div><p className="text-xs text-slate-500">SMS Sent Today</p><p className="text-2xl font-semibold text-slate-900">{kpis.sentToday || 0}</p></div></div></CardContent></Card>
-        <Card className="border-slate-200"><CardContent className="pt-6"><div className="flex items-center gap-3"><Activity className="w-5 h-5 text-amber-600" /><div><p className="text-xs text-slate-500">DLR Events</p><p className="text-2xl font-semibold text-slate-900">{events.length}</p></div></div></CardContent></Card>
+        <Card className="border-slate-200"><CardContent className="pt-6"><div className="flex items-center gap-3"><Activity className="w-5 h-5 text-amber-600" /><div><p className="text-xs text-slate-500">Delivered / Failed</p><p className="text-2xl font-semibold text-slate-900">{kpis.deliveredToday || 0} / {kpis.failedToday || 0}</p></div></div></CardContent></Card>
       </div>
+      <Card className="border-slate-200"><CardContent className="pt-4"><p className="text-xs text-slate-500">Billed Today</p><p className="text-2xl font-semibold text-slate-900">INR {Number(kpis.billedToday || 0).toFixed(2)}</p></CardContent></Card>
 
       <div className="flex flex-wrap gap-2">
-        {[{k:"senders",l:"DLT Senders"},{k:"templates",l:"Template Registry"},{k:"optouts",l:"Opt-Out Control"},{k:"events",l:"Delivery Events"}].map((x)=>(
+        {[{k:"senders",l:"DLT Senders"},{k:"templates",l:"Template Registry"},{k:"optouts",l:"Opt-Out Control"},{k:"events",l:"Delivery Events"},{k:"billing",l:"Billing Ledger"}].map((x)=>(
           <Button key={x.k} variant={panel===x.k?"default":"outline"} className={panel===x.k?"bg-orange-500 hover:bg-orange-600":""} onClick={()=>setPanel(x.k)}>{x.l}</Button>
         ))}
       </div>
@@ -253,7 +261,38 @@ const SmsSetupPage = () => {
       )}
 
       {panel === "events" && (
-        <Card className="border-slate-200"><CardHeader><CardTitle className="text-base">SMS Delivery Events (DLR)</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Time</TableHead><TableHead>State</TableHead><TableHead>Provider Message ID</TableHead><TableHead>Phone</TableHead><TableHead>Event</TableHead></TableRow></TableHeader><TableBody>{events.length===0?<TableRow><TableCell colSpan={5} className="text-slate-500">No delivery events yet.</TableCell></TableRow>:null}{events.map((e)=><TableRow key={e.id}><TableCell>{e.createdAtUtc ? new Date(e.createdAtUtc).toLocaleString() : "-"}</TableCell><TableCell>{statusBadge(e.state)}</TableCell><TableCell className="font-mono text-xs">{e.providerMessageId || "-"}</TableCell><TableCell className="font-mono">{e.customerPhone || "-"}</TableCell><TableCell>{e.eventType || "-"}</TableCell></TableRow>)}</TableBody></Table></CardContent></Card>
+        <Card className="border-slate-200"><CardHeader><CardTitle className="text-base">SMS Delivery Events (DLR)</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Time</TableHead><TableHead>State</TableHead><TableHead>Provider Message ID</TableHead><TableHead>Phone</TableHead><TableHead>Delivery Message</TableHead></TableRow></TableHeader><TableBody>{events.length===0?<TableRow><TableCell colSpan={5} className="text-slate-500">No delivery events yet.</TableCell></TableRow>:null}{events.map((e)=><TableRow key={e.id}><TableCell>{e.createdAtUtc ? new Date(e.createdAtUtc).toLocaleString() : "-"}</TableCell><TableCell>{statusBadge(e.state)}</TableCell><TableCell className="font-mono text-xs">{e.providerMessageId || "-"}</TableCell><TableCell className="font-mono">{e.customerPhone || "-"}</TableCell><TableCell>{e.deliveryMessage || e.eventType || "-"}</TableCell></TableRow>)}</TableBody></Table></CardContent></Card>
+      )}
+
+      {panel === "billing" && (
+        <Card className="border-slate-200">
+          <CardHeader><CardTitle className="text-base">Per-Message Billing and Delivery</CardTitle></CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Recipient</TableHead>
+                  <TableHead>State</TableHead>
+                  <TableHead>Delivery Message</TableHead>
+                  <TableHead>Charge</TableHead>
+                  <TableHead>Provider Message ID</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {billingRows.length===0?<TableRow><TableCell colSpan={6} className="text-slate-500">No billing entries yet.</TableCell></TableRow>:null}
+                {billingRows.map((row)=><TableRow key={row.id}>
+                  <TableCell>{row.createdAtUtc ? new Date(row.createdAtUtc).toLocaleString() : "-"}</TableCell>
+                  <TableCell className="font-mono">{row.recipient || "-"}</TableCell>
+                  <TableCell>{statusBadge(row.deliveryState)}</TableCell>
+                  <TableCell>{row.notes || row.deliveryMessage || "-"}</TableCell>
+                  <TableCell className="font-medium">{row.currency || "INR"} {Number(row.totalAmount || 0).toFixed(2)}</TableCell>
+                  <TableCell className="font-mono text-xs">{row.providerMessageId || "-"}</TableCell>
+                </TableRow>)}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

@@ -23,6 +23,13 @@ public class SmsComplianceController(TenantDbContext db, TenancyContext tenancy,
         var today = DateTime.UtcNow.Date;
         var sentToday = await db.Messages.AsNoTracking()
             .CountAsync(x => x.TenantId == tenancy.TenantId && x.Channel == ChannelType.Sms && x.CreatedAtUtc >= today, ct);
+        var deliveredToday = await db.MessageEvents.AsNoTracking()
+            .CountAsync(x => x.TenantId == tenancy.TenantId && x.EventType == "sms.dlr.delivered" && x.CreatedAtUtc >= today, ct);
+        var failedToday = await db.MessageEvents.AsNoTracking()
+            .CountAsync(x => x.TenantId == tenancy.TenantId && x.EventType == "sms.dlr.failed" && x.CreatedAtUtc >= today, ct);
+        var billedToday = await db.SmsBillingLedgers.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId && x.CreatedAtUtc >= today)
+            .SumAsync(x => (decimal?)x.TotalAmount, ct) ?? 0m;
         return Ok(new
         {
             templatesTotal = templates.Count,
@@ -30,7 +37,10 @@ public class SmsComplianceController(TenantDbContext db, TenancyContext tenancy,
             templatesPending = templates.Count(x => string.Equals(x.LifecycleStatus, "submitted", StringComparison.OrdinalIgnoreCase) || string.Equals(x.Status, "InReview", StringComparison.OrdinalIgnoreCase)),
             templatesRejected = templates.Count(x => string.Equals(x.LifecycleStatus, "rejected", StringComparison.OrdinalIgnoreCase) || string.Equals(x.Status, "Rejected", StringComparison.OrdinalIgnoreCase)),
             optOuts,
-            sentToday
+            sentToday,
+            deliveredToday,
+            failedToday,
+            billedToday = decimal.Round(billedToday, 2)
         });
     }
 
@@ -116,6 +126,7 @@ public class SmsComplianceController(TenantDbContext db, TenancyContext tenancy,
                               ev.ProviderMessageId,
                               ev.EventType,
                               ev.State,
+                              deliveryMessage = MapDeliveryMessage(ev.State, ev.EventType),
                               ev.CustomerPhone,
                               ev.RawPayloadJson,
                               ev.CreatedAtUtc
@@ -124,5 +135,51 @@ public class SmsComplianceController(TenantDbContext db, TenancyContext tenancy,
             .ToListAsync(ct);
         return Ok(rows);
     }
-}
 
+    [HttpGet("billing-ledger")]
+    public async Task<IActionResult> BillingLedger([FromQuery] int take = 200, CancellationToken ct = default)
+    {
+        if (!rbac.HasPermission(TemplatesRead)) return Forbid();
+        take = Math.Clamp(take, 1, 2000);
+        var rows = await db.SmsBillingLedgers.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(take)
+            .Select(x => new
+            {
+                x.Id,
+                x.MessageId,
+                x.Recipient,
+                x.ProviderMessageId,
+                x.Currency,
+                x.UnitPrice,
+                x.Segments,
+                x.TotalAmount,
+                x.BillingState,
+                x.DeliveryState,
+                deliveryMessage = MapDeliveryMessage(x.DeliveryState, string.Empty),
+                x.Notes,
+                x.CreatedAtUtc,
+                x.UpdatedAtUtc
+            })
+            .ToListAsync(ct);
+        return Ok(rows);
+    }
+
+    private static string MapDeliveryMessage(string? state, string? eventType)
+    {
+        var normalized = (state ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalized) && !string.IsNullOrWhiteSpace(eventType))
+            normalized = eventType.Replace("sms.dlr.", string.Empty, StringComparison.OrdinalIgnoreCase).Trim().ToLowerInvariant();
+
+        return normalized switch
+        {
+            "delivered" => "Delivered to customer handset.",
+            "submitted" => "Submitted to operator, waiting final delivery report.",
+            "failed" => "Delivery failed at operator/network.",
+            "queued" => "Queued for provider dispatch.",
+            "processing" => "Message is being processed.",
+            _ => "Delivery status update received."
+        };
+    }
+}

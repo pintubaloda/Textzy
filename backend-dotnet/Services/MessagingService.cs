@@ -246,6 +246,28 @@ public class MessagingService(
             CreatedAtUtc = DateTime.UtcNow
         });
 
+        if (request.Channel == ChannelType.Sms)
+        {
+            const decimal unitPrice = 1.00m; // Per-message charge model
+            var segments = EstimateSmsSegments(message.Body);
+            db.SmsBillingLedgers.Add(new SmsBillingLedger
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenancy.TenantId,
+                MessageId = message.Id,
+                Recipient = message.Recipient,
+                ProviderMessageId = string.Empty,
+                Currency = "INR",
+                UnitPrice = unitPrice,
+                Segments = segments,
+                TotalAmount = decimal.Round(unitPrice * segments, 2),
+                BillingState = "charged",
+                DeliveryState = "submitted",
+                Notes = "Charged at enqueue.",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+        }
+
         // Auto-create/update contact from outbound sends (WhatsApp/SMS).
         var recipientHash = contactPii.IsEnabled ? contactPii.ComputePhoneHash(request.Recipient) : string.Empty;
         var existingContact = contactPii.IsEnabled
@@ -310,5 +332,12 @@ public class MessagingService(
             IdempotencyKey = idempotencyKey
         }, ct);
         return message;
+    }
+
+    private static int EstimateSmsSegments(string text)
+    {
+        var body = text ?? string.Empty;
+        if (body.Length <= 160) return 1;
+        return Math.Max(1, (int)Math.Ceiling(body.Length / 153.0));
     }
 }

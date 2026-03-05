@@ -607,6 +607,10 @@ export async function listSmsComplianceEvents(take = 200) {
   return apiGet(`/api/sms/compliance/events?take=${encodeURIComponent(String(take))}`)
 }
 
+export async function listSmsBillingLedger(take = 200) {
+  return apiGet(`/api/sms/compliance/billing-ledger?take=${encodeURIComponent(String(take))}`)
+}
+
 export async function getPlatformEmailReport({ days = 7, take = 100 } = {}) {
   const q = new URLSearchParams()
   q.set('days', String(days))

@@ -63,6 +63,7 @@ public class SmsWebhookController(
         }
 
         var normalized = NormalizeDeliveryState(statusRaw ?? string.Empty, reason ?? string.Empty);
+        var deliveryMessage = BuildDeliveryMessage(normalized, statusRaw ?? string.Empty, reason ?? string.Empty);
         if (normalized == "delivered")
             message.Status = MessageStateMachine.Delivered;
         else if (normalized == "failed")
@@ -78,19 +79,92 @@ public class SmsWebhookController(
             MessageId = message.Id,
             ProviderMessageId = message.ProviderMessageId,
             Direction = "outbound",
-            EventType = "sms.dlr",
+            EventType = $"sms.dlr.{normalized}",
             State = normalized,
             StatePriority = normalized == "delivered" ? 50 : normalized == "failed" ? 90 : 40,
             EventTimestampUtc = DateTime.UtcNow,
             RecipientId = phone ?? string.Empty,
             CustomerPhone = phone ?? string.Empty,
             MessageType = message.MessageType,
-            RawPayloadJson = string.IsNullOrWhiteSpace(rawBody) ? JsonSerializer.Serialize(payload) : rawBody,
+            RawPayloadJson = JsonSerializer.Serialize(new
+            {
+                provider = "tata",
+                normalizedState = normalized,
+                deliveryMessage,
+                statusRaw,
+                reason,
+                payload = payload
+            }),
             CreatedAtUtc = DateTime.UtcNow
         });
 
+        var ledger = await tenantDb.SmsBillingLedgers.FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.MessageId == message.Id, ct);
+        if (ledger is not null)
+        {
+            ledger.ProviderMessageId = string.IsNullOrWhiteSpace(ledger.ProviderMessageId) ? message.ProviderMessageId ?? providerMessageId : ledger.ProviderMessageId;
+            ledger.DeliveryState = normalized;
+            ledger.UpdatedAtUtc = DateTime.UtcNow;
+            ledger.Notes = string.IsNullOrWhiteSpace(reason) ? deliveryMessage : $"{deliveryMessage} ({reason})";
+        }
+
         await tenantDb.SaveChangesAsync(ct);
-        return Ok(new { ok = true, state = normalized, messageId = message.Id, providerMessageId });
+        return Ok(new { ok = true, state = normalized, deliveryMessage, messageId = message.Id, providerMessageId });
+    }
+
+    [HttpPost("tata/inbound")]
+    [AllowAnonymous]
+    public async Task<IActionResult> TataInbound([FromQuery] string tenantSlug = "", CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(tenantSlug))
+            return BadRequest("tenantSlug is required.");
+        var tenant = await controlDb.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Slug == tenantSlug, ct);
+        if (tenant is null) return NotFound("Tenant not found.");
+        await tenantSchemaGuard.EnsureContactEncryptionColumnsAsync(tenant.Id, tenant.DataConnectionString, ct);
+
+        string rawBody;
+        using (var reader = new StreamReader(Request.Body))
+            rawBody = await reader.ReadToEndAsync(ct);
+        var query = Request.Query.ToDictionary(x => x.Key, x => x.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+        var payload = ParsePayload(rawBody, query);
+        var phone = (payload.TryGetValue("recipient", out var ph1) ? ph1 : payload.TryGetValue("mobile", out var ph2) ? ph2 : string.Empty)?.Trim() ?? string.Empty;
+        var text = (payload.TryGetValue("message", out var m1) ? m1 : payload.TryGetValue("msg", out var m2) ? m2 : string.Empty)?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(phone))
+            return BadRequest("Phone is required.");
+
+        var normalizedText = text.ToLowerInvariant();
+        var stopKeywords = new[] { "stop", "unsubscribe", "optout", "cancel", "quit", "end" };
+        var matchedStop = stopKeywords.Any(k => normalizedText.Contains(k));
+
+        using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
+        if (matchedStop)
+        {
+            var existing = await tenantDb.SmsOptOuts.FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.Phone == phone, ct);
+            if (existing is null)
+            {
+                tenantDb.SmsOptOuts.Add(new SmsOptOut
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenant.Id,
+                    Phone = phone,
+                    Reason = "STOP keyword inbound",
+                    Source = "inbound_sms",
+                    OptedOutAtUtc = DateTime.UtcNow,
+                    IsActive = true,
+                    CreatedAtUtc = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                existing.IsActive = true;
+                existing.Reason = "STOP keyword inbound";
+                existing.Source = "inbound_sms";
+                existing.OptedOutAtUtc = DateTime.UtcNow;
+            }
+            await tenantDb.SaveChangesAsync(ct);
+            return Ok(new { ok = true, action = "opted_out", phone });
+        }
+
+        return Ok(new { ok = true, action = "ignored", phone });
     }
 
     private static Dictionary<string, string> ParsePayload(string rawBody, Dictionary<string, string> query)
@@ -142,5 +216,22 @@ public class SmsWebhookController(
         if (full.Contains("submit") || full.Contains("accept") || full.Contains("sent"))
             return "submitted";
         return "unknown";
+    }
+
+    private static string BuildDeliveryMessage(string normalized, string statusRaw, string reason)
+    {
+        var statusPart = string.IsNullOrWhiteSpace(statusRaw) ? string.Empty : $"provider={statusRaw.Trim()}";
+        var reasonPart = string.IsNullOrWhiteSpace(reason) ? string.Empty : $"reason={reason.Trim()}";
+        var suffix = string.Join(", ", new[] { statusPart, reasonPart }.Where(x => !string.IsNullOrWhiteSpace(x)));
+
+        var baseText = normalized switch
+        {
+            "delivered" => "SMS delivered to handset.",
+            "submitted" => "SMS accepted by operator and awaiting final DLR.",
+            "failed" => "SMS delivery failed at operator/network stage.",
+            _ => "SMS DLR received with unclassified state."
+        };
+
+        return string.IsNullOrWhiteSpace(suffix) ? baseText : $"{baseText} ({suffix})";
     }
 }

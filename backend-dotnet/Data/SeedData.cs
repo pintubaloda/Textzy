@@ -329,6 +329,26 @@ public static class SeedData
             );
             """);
         db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SmsOptOuts_Tenant_Phone" ON "SmsOptOuts" ("TenantId","Phone");""");
+        db.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "SmsBillingLedgers" (
+                "Id" uuid PRIMARY KEY,
+                "TenantId" uuid NOT NULL,
+                "MessageId" uuid NOT NULL,
+                "Recipient" text NOT NULL DEFAULT '',
+                "ProviderMessageId" text NOT NULL DEFAULT '',
+                "Currency" text NOT NULL DEFAULT 'INR',
+                "UnitPrice" numeric(18,4) NOT NULL DEFAULT 0,
+                "Segments" integer NOT NULL DEFAULT 1,
+                "TotalAmount" numeric(18,4) NOT NULL DEFAULT 0,
+                "BillingState" text NOT NULL DEFAULT 'charged',
+                "DeliveryState" text NOT NULL DEFAULT 'submitted',
+                "Notes" text NOT NULL DEFAULT '',
+                "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+                "UpdatedAtUtc" timestamp with time zone NULL
+            );
+            """);
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SmsBillingLedgers_Tenant_CreatedAtUtc" ON "SmsBillingLedgers" ("TenantId","CreatedAtUtc");""");
+        db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SmsBillingLedgers_MessageId" ON "SmsBillingLedgers" ("MessageId");""");
 
         if (db.Campaigns.Any(c => c.TenantId == tenantId)) return;
 
