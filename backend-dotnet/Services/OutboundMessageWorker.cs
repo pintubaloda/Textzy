@@ -141,7 +141,16 @@ public class OutboundMessageWorker(
                     }
                     else
                     {
-                        providerId = await provider.SendAsync(message.Channel, message.Recipient, message.Body, stoppingToken);
+                        providerId = await provider.SendAsync(
+                            message.Channel,
+                            message.Recipient,
+                            message.Body,
+                            new SmsSendContext
+                            {
+                                TenantId = tenant.Id,
+                                MessageType = message.MessageType
+                            },
+                            stoppingToken);
                     }
 
                     message.ProviderMessageId = providerId;

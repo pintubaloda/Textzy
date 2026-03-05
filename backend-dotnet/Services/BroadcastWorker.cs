@@ -61,7 +61,16 @@ public class BroadcastWorker(
                     {
                         try
                         {
-                            var providerId = await provider.SendAsync(job.Channel, recipient, job.MessageBody, stoppingToken);
+                            var providerId = await provider.SendAsync(
+                                job.Channel,
+                                recipient,
+                                job.MessageBody,
+                                new SmsSendContext
+                                {
+                                    TenantId = job.TenantId,
+                                    MessageType = "broadcast"
+                                },
+                                stoppingToken);
                             tenantDb.Messages.Add(new Message
                             {
                                 Id = Guid.NewGuid(),

@@ -151,6 +151,16 @@ const PlatformSettingsPage = () => {
     resendFromName: "Textzy",
     testEmail: "",
   });
+  const [smsGateway, setSmsGateway] = useState({
+    provider: "tata",
+    tataBaseUrl: "https://smsgw.tatatel.co.in:9095/campaignService/campaigns/qs",
+    tataUsername: "",
+    tataPassword: "",
+    defaultSenderAddress: "",
+    defaultPeId: "",
+    defaultTemplateId: "",
+    timeoutMs: "15000",
+  });
   const [smtpDiag, setSmtpDiag] = useState(null);
   const [emailReport, setEmailReport] = useState(null);
   const [webhookItems, setWebhookItems] = useState([]);
@@ -223,6 +233,8 @@ const PlatformSettingsPage = () => {
         ? "Billing Plans"
         : tab === "smtp-settings"
         ? "SMTP Settings"
+        : tab === "sms-gateway"
+        ? "SMS Gateway Settings"
         : tab === "waba-onboarding"
         ? "WABA Onboarding Summary"
         : tab === "waba-lookup"
@@ -241,6 +253,64 @@ const PlatformSettingsPage = () => {
   );
 
   const setTab = (next) => setSearchParams({ tab: next });
+  const saveMobileAppSettings = async () => {
+    await savePlatformSettings("mobile-app", {
+      appName: appConfig.appName || "",
+      baseDomain: appConfig.baseDomain || "",
+      apiBaseUrl: appConfig.apiBaseUrl || "",
+      hubPath: appConfig.hubPath || "/hubs/inbox",
+      supportUrl: appConfig.supportUrl || "",
+      termsUrl: appConfig.termsUrl || "",
+      privacyUrl: appConfig.privacyUrl || "",
+      webPushPublicKey: appConfig.webPushPublicKey || "",
+      firebaseApiKey: appConfig.firebaseApiKey || "",
+      firebaseAuthDomain: appConfig.firebaseAuthDomain || "",
+      firebaseProjectId: appConfig.firebaseProjectId || "",
+      firebaseStorageBucket: appConfig.firebaseStorageBucket || "",
+      firebaseMessagingSenderId: appConfig.firebaseMessagingSenderId || "",
+      firebaseAppId: appConfig.firebaseAppId || "",
+      firebaseMeasurementId: appConfig.firebaseMeasurementId || "",
+      enforceApiAllowList: appConfig.enforceApiAllowList ? "true" : "false",
+      maxDevicesPerUser: appConfig.maxDevicesPerUser || "3",
+      pairCodeTtlSeconds: appConfig.pairCodeTtlSeconds || "180",
+      minSupportedAppVersion: appConfig.minSupportedAppVersion || "",
+      pairSchemaVersion: appConfig.pairSchemaVersion || "1",
+      androidApkUrl: appConfig.androidApkUrl || "",
+      androidVersionName: appConfig.androidVersionName || "",
+      androidVersionCode: appConfig.androidVersionCode || "",
+      androidMinSupportedVersion: appConfig.androidMinSupportedVersion || "",
+      androidForceUpdate: appConfig.androidForceUpdate ? "true" : "false",
+      androidReleaseNotesUrl: appConfig.androidReleaseNotesUrl || "",
+      iosDownloadUrl: appConfig.iosDownloadUrl || "",
+      iosStoreUrl: appConfig.iosStoreUrl || "",
+      iosVersionName: appConfig.iosVersionName || "",
+      iosBuildNumber: appConfig.iosBuildNumber || "",
+      iosMinSupportedVersion: appConfig.iosMinSupportedVersion || "",
+      iosForceUpdate: appConfig.iosForceUpdate ? "true" : "false",
+      iosReleaseNotesUrl: appConfig.iosReleaseNotesUrl || "",
+      windowsDownloadUrl: appConfig.windowsDownloadUrl || "",
+      windowsVersionName: appConfig.windowsVersionName || "",
+      windowsVersionCode: appConfig.windowsVersionCode || "",
+      windowsMinSupportedVersion: appConfig.windowsMinSupportedVersion || "",
+      windowsForceUpdate: appConfig.windowsForceUpdate ? "true" : "false",
+      windowsReleaseNotesUrl: appConfig.windowsReleaseNotesUrl || "",
+      macosDownloadUrl: appConfig.macosDownloadUrl || "",
+      macosVersionName: appConfig.macosVersionName || "",
+      macosVersionCode: appConfig.macosVersionCode || "",
+      macosMinSupportedVersion: appConfig.macosMinSupportedVersion || "",
+      macosForceUpdate: appConfig.macosForceUpdate ? "true" : "false",
+      macosReleaseNotesUrl: appConfig.macosReleaseNotesUrl || "",
+      webUrl: appConfig.webUrl || "",
+      webVersionName: appConfig.webVersionName || "",
+      webVersionCode: appConfig.webVersionCode || "",
+      webMinSupportedVersion: appConfig.webMinSupportedVersion || "",
+      webForceUpdate: appConfig.webForceUpdate ? "true" : "false",
+      webReleaseNotesUrl: appConfig.webReleaseNotesUrl || "",
+      webhookAllowedHosts: appConfig.webhookAllowedHosts || "",
+      allowedApiPrefixes: appConfig.allowedApiPrefixes || "",
+      apiCatalog: appConfig.apiCatalog || "",
+    });
+  };
 
   useEffect(() => {
     let active = true;
@@ -371,6 +441,21 @@ const PlatformSettingsPage = () => {
           const report = await getPlatformEmailReport({ days: 7, take: 60 }).catch(() => null);
           if (!active) return;
           setEmailReport(report);
+        } else if (tab === "sms-gateway") {
+          const res = await getPlatformSettings("sms-gateway");
+          const values = res?.values || {};
+          if (!active) return;
+          setSmsGateway((prev) => ({
+            ...prev,
+            provider: (values.provider || "tata").toLowerCase(),
+            tataBaseUrl: values.tataBaseUrl || prev.tataBaseUrl,
+            tataUsername: values.tataUsername || "",
+            tataPassword: values.tataPassword || "",
+            defaultSenderAddress: values.defaultSenderAddress || "",
+            defaultPeId: values.defaultPeId || "",
+            defaultTemplateId: values.defaultTemplateId || "",
+            timeoutMs: values.timeoutMs || "15000",
+          }));
         } else {
           if (tab === "billing-plans") {
             const rows = await listPlatformBillingPlans();
@@ -867,6 +952,21 @@ const PlatformSettingsPage = () => {
               </CardDescription>
             </CardHeader>
             <CardContent className="max-h-[70vh] overflow-y-auto pr-2 grid gap-4 md:grid-cols-2">
+            <div className="md:col-span-2 flex items-center justify-between rounded-lg bg-slate-50 border border-slate-200 px-3 py-2">
+              <p className="text-sm font-medium text-slate-900">Core Runtime Endpoints</p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  try { setLoading(true); await saveMobileAppSettings(); toast.success("Core runtime saved"); }
+                  catch { toast.error("Failed to save core runtime"); }
+                  finally { setLoading(false); }
+                }}
+              >
+                Save Core
+              </Button>
+            </div>
             <div className="space-y-2">
               <Label>App Name</Label>
               <Input value={appConfig.appName} onChange={(e) => setAppConfig((p) => ({ ...p, appName: e.target.value }))} />
@@ -895,8 +995,20 @@ const PlatformSettingsPage = () => {
               <Label>Privacy URL</Label>
               <Input placeholder="https://textzy.in/privacy" value={appConfig.privacyUrl} onChange={(e) => setAppConfig((p) => ({ ...p, privacyUrl: e.target.value }))} />
             </div>
-            <div className="md:col-span-2 border-t border-slate-200 pt-3">
-              <p className="text-sm font-medium text-slate-900">Firebase / Push Runtime</p>
+            <div className="md:col-span-2 border-t border-slate-200 pt-3 flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-900">Firebase / Push Runtime Endpoint</p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  try { setLoading(true); await saveMobileAppSettings(); toast.success("Push settings saved"); }
+                  catch { toast.error("Failed to save push settings"); }
+                  finally { setLoading(false); }
+                }}
+              >
+                Save Push
+              </Button>
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Web Push Public Key (VAPID)</Label>
@@ -970,6 +1082,20 @@ const PlatformSettingsPage = () => {
               />
               Enforce API allow-list in app runtime
             </label>
+            <div className="md:col-span-2 flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  try { setLoading(true); await saveMobileAppSettings(); toast.success("Security endpoints saved"); }
+                  catch { toast.error("Failed to save security settings"); }
+                  finally { setLoading(false); }
+                }}
+              >
+                Save Security
+              </Button>
+            </div>
             <div className="space-y-2">
               <Label>Max Devices Per User</Label>
               <Input
@@ -1005,6 +1131,20 @@ const PlatformSettingsPage = () => {
                 value={appConfig.pairSchemaVersion}
                 onChange={(e) => setAppConfig((p) => ({ ...p, pairSchemaVersion: e.target.value }))}
               />
+            </div>
+            <div className="md:col-span-2 flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  try { setLoading(true); await saveMobileAppSettings(); toast.success("Pairing policy saved"); }
+                  catch { toast.error("Failed to save pairing policy"); }
+                  finally { setLoading(false); }
+                }}
+              >
+                Save Pairing
+              </Button>
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Android APK URL (public download)</Label>
@@ -1054,8 +1194,34 @@ const PlatformSettingsPage = () => {
               />
               Android force update
             </label>
-            <div className="md:col-span-2 border-t border-slate-200 pt-3">
-              <p className="text-sm font-medium text-slate-900">iOS Update Manifest</p>
+            <div className="md:col-span-2 flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  try { setLoading(true); await saveMobileAppSettings(); toast.success("Android endpoint saved"); }
+                  catch { toast.error("Failed to save Android endpoint"); }
+                  finally { setLoading(false); }
+                }}
+              >
+                Save Android
+              </Button>
+            </div>
+            <div className="md:col-span-2 border-t border-slate-200 pt-3 flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-900">iOS Update Manifest Endpoint</p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  try { setLoading(true); await saveMobileAppSettings(); toast.success("iOS endpoint saved"); }
+                  catch { toast.error("Failed to save iOS endpoint"); }
+                  finally { setLoading(false); }
+                }}
+              >
+                Save iOS
+              </Button>
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>iOS Store/Download URL</Label>
@@ -1085,8 +1251,20 @@ const PlatformSettingsPage = () => {
               <Label>iOS Release Notes URL</Label>
               <Input value={appConfig.iosReleaseNotesUrl} onChange={(e) => setAppConfig((p) => ({ ...p, iosReleaseNotesUrl: e.target.value }))} />
             </div>
-            <div className="md:col-span-2 border-t border-slate-200 pt-3">
-              <p className="text-sm font-medium text-slate-900">Windows Desktop Update Manifest</p>
+            <div className="md:col-span-2 border-t border-slate-200 pt-3 flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-900">Windows Desktop Update Manifest Endpoint</p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  try { setLoading(true); await saveMobileAppSettings(); toast.success("Windows endpoint saved"); }
+                  catch { toast.error("Failed to save Windows endpoint"); }
+                  finally { setLoading(false); }
+                }}
+              >
+                Save Windows
+              </Button>
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Windows Download URL</Label>
@@ -1112,8 +1290,20 @@ const PlatformSettingsPage = () => {
               <Label>Windows Release Notes URL</Label>
               <Input value={appConfig.windowsReleaseNotesUrl} onChange={(e) => setAppConfig((p) => ({ ...p, windowsReleaseNotesUrl: e.target.value }))} />
             </div>
-            <div className="md:col-span-2 border-t border-slate-200 pt-3">
-              <p className="text-sm font-medium text-slate-900">macOS Desktop Update Manifest</p>
+            <div className="md:col-span-2 border-t border-slate-200 pt-3 flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-900">macOS Desktop Update Manifest Endpoint</p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  try { setLoading(true); await saveMobileAppSettings(); toast.success("macOS endpoint saved"); }
+                  catch { toast.error("Failed to save macOS endpoint"); }
+                  finally { setLoading(false); }
+                }}
+              >
+                Save macOS
+              </Button>
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>macOS Download URL</Label>
@@ -1139,8 +1329,20 @@ const PlatformSettingsPage = () => {
               <Label>macOS Release Notes URL</Label>
               <Input value={appConfig.macosReleaseNotesUrl} onChange={(e) => setAppConfig((p) => ({ ...p, macosReleaseNotesUrl: e.target.value }))} />
             </div>
-            <div className="md:col-span-2 border-t border-slate-200 pt-3">
-              <p className="text-sm font-medium text-slate-900">Web App Update Manifest</p>
+            <div className="md:col-span-2 border-t border-slate-200 pt-3 flex items-center justify-between">
+              <p className="text-sm font-medium text-slate-900">Web App Update Manifest Endpoint</p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading}
+                onClick={async () => {
+                  try { setLoading(true); await saveMobileAppSettings(); toast.success("Web endpoint saved"); }
+                  catch { toast.error("Failed to save Web endpoint"); }
+                  finally { setLoading(false); }
+                }}
+              >
+                Save Web
+              </Button>
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Web URL</Label>
@@ -1173,62 +1375,7 @@ const PlatformSettingsPage = () => {
                 onClick={async () => {
                   try {
                     setLoading(true);
-                    await savePlatformSettings("mobile-app", {
-                      appName: appConfig.appName || "",
-                      baseDomain: appConfig.baseDomain || "",
-                      apiBaseUrl: appConfig.apiBaseUrl || "",
-                      hubPath: appConfig.hubPath || "/hubs/inbox",
-                      supportUrl: appConfig.supportUrl || "",
-                      termsUrl: appConfig.termsUrl || "",
-                      privacyUrl: appConfig.privacyUrl || "",
-                      webPushPublicKey: appConfig.webPushPublicKey || "",
-                      firebaseApiKey: appConfig.firebaseApiKey || "",
-                      firebaseAuthDomain: appConfig.firebaseAuthDomain || "",
-                      firebaseProjectId: appConfig.firebaseProjectId || "",
-                      firebaseStorageBucket: appConfig.firebaseStorageBucket || "",
-                      firebaseMessagingSenderId: appConfig.firebaseMessagingSenderId || "",
-                      firebaseAppId: appConfig.firebaseAppId || "",
-                      firebaseMeasurementId: appConfig.firebaseMeasurementId || "",
-                      enforceApiAllowList: appConfig.enforceApiAllowList ? "true" : "false",
-                      maxDevicesPerUser: appConfig.maxDevicesPerUser || "3",
-                      pairCodeTtlSeconds: appConfig.pairCodeTtlSeconds || "180",
-                      minSupportedAppVersion: appConfig.minSupportedAppVersion || "",
-                      pairSchemaVersion: appConfig.pairSchemaVersion || "1",
-                      androidApkUrl: appConfig.androidApkUrl || "",
-                      androidVersionName: appConfig.androidVersionName || "",
-                      androidVersionCode: appConfig.androidVersionCode || "",
-                      androidMinSupportedVersion: appConfig.androidMinSupportedVersion || "",
-                      androidForceUpdate: appConfig.androidForceUpdate ? "true" : "false",
-                      androidReleaseNotesUrl: appConfig.androidReleaseNotesUrl || "",
-                      iosDownloadUrl: appConfig.iosDownloadUrl || "",
-                      iosStoreUrl: appConfig.iosStoreUrl || "",
-                      iosVersionName: appConfig.iosVersionName || "",
-                      iosBuildNumber: appConfig.iosBuildNumber || "",
-                      iosMinSupportedVersion: appConfig.iosMinSupportedVersion || "",
-                      iosForceUpdate: appConfig.iosForceUpdate ? "true" : "false",
-                      iosReleaseNotesUrl: appConfig.iosReleaseNotesUrl || "",
-                      windowsDownloadUrl: appConfig.windowsDownloadUrl || "",
-                      windowsVersionName: appConfig.windowsVersionName || "",
-                      windowsVersionCode: appConfig.windowsVersionCode || "",
-                      windowsMinSupportedVersion: appConfig.windowsMinSupportedVersion || "",
-                      windowsForceUpdate: appConfig.windowsForceUpdate ? "true" : "false",
-                      windowsReleaseNotesUrl: appConfig.windowsReleaseNotesUrl || "",
-                      macosDownloadUrl: appConfig.macosDownloadUrl || "",
-                      macosVersionName: appConfig.macosVersionName || "",
-                      macosVersionCode: appConfig.macosVersionCode || "",
-                      macosMinSupportedVersion: appConfig.macosMinSupportedVersion || "",
-                      macosForceUpdate: appConfig.macosForceUpdate ? "true" : "false",
-                      macosReleaseNotesUrl: appConfig.macosReleaseNotesUrl || "",
-                      webUrl: appConfig.webUrl || "",
-                      webVersionName: appConfig.webVersionName || "",
-                      webVersionCode: appConfig.webVersionCode || "",
-                      webMinSupportedVersion: appConfig.webMinSupportedVersion || "",
-                      webForceUpdate: appConfig.webForceUpdate ? "true" : "false",
-                      webReleaseNotesUrl: appConfig.webReleaseNotesUrl || "",
-                      webhookAllowedHosts: appConfig.webhookAllowedHosts || "",
-                      allowedApiPrefixes: appConfig.allowedApiPrefixes || "",
-                      apiCatalog: appConfig.apiCatalog || "",
-                    });
+                    await saveMobileAppSettings();
                     toast.success("App base settings saved");
                   } catch {
                     toast.error("Failed to save app settings");
@@ -1243,6 +1390,88 @@ const PlatformSettingsPage = () => {
           </CardContent>
         </Card>
         </div>
+      )}
+
+      {tab === "sms-gateway" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle>TATA SMS Gateway Configuration</CardTitle>
+            <CardDescription>
+              Maps exactly to provider variables: MobileNo, Message, Username, PassWord, senderAddress, PEID, TemplateID.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2 md:col-span-2">
+              <Label>Provider</Label>
+              <Select value={smsGateway.provider} onValueChange={(value) => setSmsGateway((p) => ({ ...p, provider: value }))}>
+                <SelectTrigger><SelectValue placeholder="Select provider" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="tata">TATA</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>TATA Base URL</Label>
+              <Input
+                value={smsGateway.tataBaseUrl}
+                onChange={(e) => setSmsGateway((p) => ({ ...p, tataBaseUrl: e.target.value }))}
+                placeholder="https://smsgw.tatatel.co.in:9095/campaignService/campaigns/qs"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Username</Label>
+              <Input value={smsGateway.tataUsername} onChange={(e) => setSmsGateway((p) => ({ ...p, tataUsername: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>PassWord</Label>
+              <Input type="password" value={smsGateway.tataPassword} onChange={(e) => setSmsGateway((p) => ({ ...p, tataPassword: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>senderAddress</Label>
+              <Input value={smsGateway.defaultSenderAddress} onChange={(e) => setSmsGateway((p) => ({ ...p, defaultSenderAddress: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>PEID</Label>
+              <Input value={smsGateway.defaultPeId} onChange={(e) => setSmsGateway((p) => ({ ...p, defaultPeId: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>TemplateID</Label>
+              <Input value={smsGateway.defaultTemplateId} onChange={(e) => setSmsGateway((p) => ({ ...p, defaultTemplateId: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Timeout (ms)</Label>
+              <Input value={smsGateway.timeoutMs} onChange={(e) => setSmsGateway((p) => ({ ...p, timeoutMs: e.target.value }))} />
+            </div>
+            <div className="md:col-span-2 flex gap-2">
+              <Button
+                className="bg-orange-500 hover:bg-orange-600"
+                disabled={loading}
+                onClick={async () => {
+                  try {
+                    setLoading(true);
+                    await savePlatformSettings("sms-gateway", {
+                      provider: smsGateway.provider || "tata",
+                      tataBaseUrl: smsGateway.tataBaseUrl || "",
+                      tataUsername: smsGateway.tataUsername || "",
+                      tataPassword: smsGateway.tataPassword || "",
+                      defaultSenderAddress: smsGateway.defaultSenderAddress || "",
+                      defaultPeId: smsGateway.defaultPeId || "",
+                      defaultTemplateId: smsGateway.defaultTemplateId || "",
+                      timeoutMs: smsGateway.timeoutMs || "15000",
+                    });
+                    toast.success("SMS gateway settings saved");
+                  } catch {
+                    toast.error("Failed to save SMS gateway settings");
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+              >
+                Save SMS Gateway
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {tab === "smtp-settings" && (

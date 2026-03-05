@@ -598,6 +598,18 @@ export async function createSmsSender(payload) {
   }
 }
 
+export async function updateSmsSender(id, payload) {
+  return apiPut(`/api/sms/senders/${id}`, payload)
+}
+
+export async function archiveSmsSender(id) {
+  return apiDelete(`/api/sms/senders/${id}`)
+}
+
+export async function getSmsSenderStats() {
+  return apiGet('/api/sms/senders/stats')
+}
+
 export async function getPlatformWebhookLogs({ provider = "", limit = 100 } = {}) {
   const q = new URLSearchParams()
   if (provider) q.set("provider", provider)
