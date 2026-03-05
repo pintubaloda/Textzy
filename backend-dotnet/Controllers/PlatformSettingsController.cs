@@ -388,6 +388,69 @@ public class PlatformSettingsController(
         }
     }
 
+    [HttpPost("sms/test")]
+    public async Task<IActionResult> TestSms([FromBody] SmsTestRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+
+        var values = await db.PlatformSettings
+            .Where(x => x.Scope == "sms-gateway")
+            .ToDictionaryAsync(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase, ct);
+
+        var provider = "tata";
+        var timeoutMs = ParseTimeout(Pick(values, "timeoutMs", config["Sms:TimeoutMs"], "15000"));
+        var recipient = InputGuardService.ValidatePhone(request.Phone, "Phone");
+        var message = string.IsNullOrWhiteSpace(request.Message)
+            ? "Textzy SMS gateway test message."
+            : InputGuardService.RequireTrimmed(request.Message, "Message", 1024);
+
+        try
+        {
+            var tataBaseUrl = Pick(values, "tataBaseUrl", config["Sms:Tata:BaseUrl"], "https://smsgw.tatatel.co.in:9095/campaignService/campaigns/qs");
+            var tataUsername = Pick(values, "tataUsername", config["Sms:Tata:Username"]);
+            var tataPassword = Pick(values, "tataPassword", config["Sms:Tata:Password"]);
+            var sender = Pick(values, "defaultSenderAddress", config["Sms:Tata:SenderAddress"]);
+            var peId = Pick(values, "defaultPeId", config["Sms:Tata:PeId"]);
+            var templateId = Pick(values, "defaultTemplateId", config["Sms:Tata:TemplateId"], request.TemplateId);
+
+            if (string.IsNullOrWhiteSpace(tataUsername) || string.IsNullOrWhiteSpace(tataPassword) ||
+                string.IsNullOrWhiteSpace(sender) || string.IsNullOrWhiteSpace(peId) || string.IsNullOrWhiteSpace(templateId))
+            {
+                return BadRequest("TATA settings missing. Require username, password, senderAddress, PEID, TemplateID.");
+            }
+
+            var query = new[]
+            {
+                $"recipient={Uri.EscapeDataString(recipient)}",
+                "dr=false",
+                $"msg={Uri.EscapeDataString(message)}",
+                $"user={Uri.EscapeDataString(tataUsername)}",
+                $"pswd={Uri.EscapeDataString(tataPassword)}",
+                $"sender={Uri.EscapeDataString(sender)}",
+                $"PE_ID={Uri.EscapeDataString(peId)}",
+                $"Template_ID={Uri.EscapeDataString(templateId)}",
+            };
+            var url = $"{tataBaseUrl.TrimEnd('?')}{(tataBaseUrl.Contains('?') ? "&" : "?")}{string.Join("&", query)}";
+
+            using var smsTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            smsTimeoutCts.CancelAfter(timeoutMs);
+            var http = httpClientFactory.CreateClient();
+            using var resTata = await http.GetAsync(url, smsTimeoutCts.Token);
+            var rawBody = await resTata.Content.ReadAsStringAsync(smsTimeoutCts.Token);
+            if (!resTata.IsSuccessStatusCode)
+                throw new InvalidOperationException($"TATA test failed ({(int)resTata.StatusCode}): {rawBody}");
+
+            await audit.WriteAsync("platform.sms.test.success", $"provider=tata; to={recipient}", ct);
+            return Ok(new { ok = true, provider = "tata", message = "TATA test SMS submitted.", raw = rawBody });
+        }
+        catch (Exception ex)
+        {
+            await audit.WriteAsync("platform.sms.test.failed", $"provider={provider}; to={recipient}; err={ex.Message}", ct);
+            return StatusCode(StatusCodes.Status502BadGateway, ex.Message);
+        }
+    }
+
     private static string Pick(Dictionary<string, string> values, string key, params string?[] fallbacks)
     {
         if (values.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
@@ -442,4 +505,12 @@ public class PlatformSettingsController(
         public string TimeoutMs { get; set; } = string.Empty;
         public string EnableSsl { get; set; } = string.Empty;
     }
+
+    public sealed class SmsTestRequest
+    {
+        public string Phone { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+        public string TemplateId { get; set; } = string.Empty;
+    }
+
 }

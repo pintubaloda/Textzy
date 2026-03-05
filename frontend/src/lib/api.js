@@ -566,6 +566,10 @@ export async function diagnosePlatformSmtp(payload = {}) {
   return apiPost('/api/platform/settings/smtp/diagnose', payload || {})
 }
 
+export async function testPlatformSms(payload = {}) {
+  return apiPost('/api/platform/settings/sms/test', payload || {})
+}
+
 export async function getPlatformEmailReport({ days = 7, take = 100 } = {}) {
   const q = new URLSearchParams()
   q.set('days', String(days))

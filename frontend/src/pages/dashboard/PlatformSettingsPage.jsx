@@ -10,6 +10,7 @@ import {
   getPlatformSettings,
   savePlatformSettings,
   testPlatformSmtp,
+  testPlatformSms,
   diagnosePlatformSmtp,
   getPlatformEmailReport,
   getPlatformWebhookLogs,
@@ -161,6 +162,8 @@ const PlatformSettingsPage = () => {
     defaultPeId: "",
     defaultTemplateId: "",
     timeoutMs: "15000",
+    testPhone: "",
+    testMessage: "Textzy SMS gateway test message.",
   });
   const [smtpDiag, setSmtpDiag] = useState(null);
   const [emailReport, setEmailReport] = useState(null);
@@ -448,7 +451,7 @@ const PlatformSettingsPage = () => {
           if (!active) return;
           setSmsGateway((prev) => ({
             ...prev,
-            provider: (values.provider || "tata").toLowerCase(),
+            provider: "tata",
             tataBaseUrl: values.tataBaseUrl || prev.tataBaseUrl,
             tataUsername: values.tataUsername || "",
             tataPassword: values.tataPassword || "",
@@ -1509,21 +1512,15 @@ const PlatformSettingsPage = () => {
       {tab === "sms-gateway" && (
         <Card className="border-slate-200">
           <CardHeader>
-            <CardTitle>TATA SMS Gateway Configuration</CardTitle>
-          <CardDescription>
-              Maps exactly to provider variables: MobileNo, Message, Username, PassWord, senderAddress, PEID, TemplateID.
-              Tenant-level Sender/Entity from SMS Sender Master overrides these defaults automatically.
-          </CardDescription>
+            <CardTitle>Professional SMS Gateway Setup (TATA)</CardTitle>
+            <CardDescription>
+              Industry-style control panel with DLT-safe defaults. Tenant sender/entity/template mappings still override platform defaults automatically.
+            </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2 md:col-span-2">
-              <Label>Provider</Label>
-              <Select value={smsGateway.provider} onValueChange={(value) => setSmsGateway((p) => ({ ...p, provider: value }))}>
-                <SelectTrigger><SelectValue placeholder="Select provider" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="tata">TATA</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="md:col-span-2 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">
+              <div className="text-sm font-semibold text-orange-700">Provider Mode</div>
+              <div className="mt-1 text-sm text-slate-700">TATA SMS only (MSG91-like professional setup flow, single provider active).</div>
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>TATA Base URL</Label>
@@ -1584,6 +1581,50 @@ const PlatformSettingsPage = () => {
               >
                 Save SMS Gateway
               </Button>
+            </div>
+            <div className="md:col-span-2 mt-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-900 mb-3">Gateway Test</p>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Test Phone</Label>
+                  <Input
+                    placeholder="+919876543210"
+                    value={smsGateway.testPhone}
+                    onChange={(e) => setSmsGateway((p) => ({ ...p, testPhone: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Test Message</Label>
+                  <Input
+                    placeholder="Textzy SMS gateway test message."
+                    value={smsGateway.testMessage}
+                    onChange={(e) => setSmsGateway((p) => ({ ...p, testMessage: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="mt-3">
+                <Button
+                  variant="outline"
+                  disabled={loading || !smsGateway.testPhone.trim()}
+                  onClick={async () => {
+                    try {
+                      setLoading(true);
+                      await testPlatformSms({
+                        phone: smsGateway.testPhone,
+                        message: smsGateway.testMessage,
+                        templateId: smsGateway.defaultTemplateId || "",
+                      });
+                      toast.success("TATA test SMS submitted");
+                    } catch (e) {
+                      toast.error(e?.message || "TATA test SMS failed");
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                >
+                  Send Test SMS
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
