@@ -3,7 +3,6 @@ import ReactDOM from "react-dom/client";
 import "@/index.css";
 import App from "@/App";
 import TextzyMobile from "@/textzy-mobile";
-import TextzyApp from "@/textzy-app";
 import { ensureServiceWorkerRegistered } from "@/lib/browserNotifications";
 
 const params = new URLSearchParams(window.location.search);
@@ -19,7 +18,7 @@ const mobileShell =
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
   <React.StrictMode>
-    {mobileShell ? <TextzyMobile /> : desktopShell ? <TextzyApp /> : <App />}
+    {mobileShell ? <TextzyMobile /> : desktopShell ? <TextzyMobile /> : <App />}
   </React.StrictMode>,
 );
 

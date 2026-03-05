@@ -193,6 +193,13 @@ builder.Services.AddHostedService<WorkflowDelayResumeWorker>();
 
 var app = builder.Build();
 
+using (var queueScope = app.Services.CreateScope())
+{
+    var outboundQueue = queueScope.ServiceProvider.GetRequiredService<OutboundMessageQueueService>();
+    var webhookQueue = queueScope.ServiceProvider.GetRequiredService<WabaWebhookQueueService>();
+    EnsureQueueProviderExpectations(app, outboundQueue, webhookQueue);
+}
+
 var workflowRuntimeSection = app.Configuration.GetSection("Workflow");
 var workflowMode = (workflowRuntimeSection["EngineMode"] ?? "legacy").Trim().ToLowerInvariant();
 var workflowShadowOnly = bool.TryParse(workflowRuntimeSection["ShadowLogOnly"], out var shadowOnly) && shadowOnly;
@@ -262,6 +269,31 @@ app.UseMiddleware<AuthMiddleware>();
 app.MapControllers();
 app.MapHub<Textzy.Api.Services.InboxHub>("/hubs/inbox").RequireCors("frontend");
 app.Run();
+
+static void EnsureQueueProviderExpectations(WebApplication app, OutboundMessageQueueService outboundQueue, WabaWebhookQueueService webhookQueue)
+{
+    var strictInProd = app.Configuration.GetValue<bool?>("QueueProviders:StrictInProduction") ?? true;
+    if (!app.Environment.IsProduction() || !strictInProd) return;
+
+    var outboundConfigured = (app.Configuration["OutboundQueue:Provider"] ?? "memory").Trim().ToLowerInvariant();
+    var webhookConfigured = (app.Configuration["WebhookQueue:Provider"] ?? "memory").Trim().ToLowerInvariant();
+    var outboundActive = (outboundQueue.ActiveProvider ?? "memory").Trim().ToLowerInvariant();
+    var webhookActive = (webhookQueue.ActiveProvider ?? "memory").Trim().ToLowerInvariant();
+
+    if (outboundConfigured != "memory" && outboundActive == "memory")
+        throw new InvalidOperationException($"Outbound queue configured as '{outboundConfigured}' but active provider resolved to memory.");
+
+    if (webhookConfigured != "memory" && webhookActive == "memory")
+        throw new InvalidOperationException($"Webhook queue configured as '{webhookConfigured}' but active provider resolved to memory.");
+
+    if (outboundConfigured == "memory" || webhookConfigured == "memory")
+    {
+        app.Logger.LogWarning(
+            "Production is using memory queue provider(s). outboundConfigured={OutboundConfigured}, webhookConfigured={WebhookConfigured}",
+            outboundConfigured,
+            webhookConfigured);
+    }
+}
 
 static void EnsureControlAuthSchema(ControlDbContext db)
 {
