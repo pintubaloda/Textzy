@@ -30,6 +30,21 @@ public class PaymentWebhookController(
         var settings = scopeRows.ToDictionary(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase);
 
         var secret = settings.TryGetValue("webhookSecret", out var s) ? s : string.Empty;
+        if (string.IsNullOrWhiteSpace(secret))
+        {
+            db.AuditLogs.Add(new AuditLog
+            {
+                Id = Guid.NewGuid(),
+                TenantId = null,
+                ActorUserId = Guid.Empty,
+                Action = "payment.webhook.rejected",
+                Details = $"provider={provider}; reason=webhook_secret_missing",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync(ct);
+            return Unauthorized("Webhook secret is not configured.");
+        }
+
         var valid = Verify(provider, raw, secret, Request.Headers);
         if (!valid)
         {
@@ -54,6 +69,21 @@ public class PaymentWebhookController(
             if (string.IsNullOrWhiteSpace(eventName) && doc.RootElement.TryGetProperty("type", out var t)) eventName = t.GetString() ?? "";
         }
         catch { }
+
+        var replayKey = ResolveReplayKey(provider, eventName, raw, Request.Headers);
+        var duplicate = await db.WebhookReplayGuards
+            .FirstOrDefaultAsync(x => x.Provider == provider && x.ReplayKey == replayKey, ct);
+        if (duplicate is not null)
+            return Ok(new { ok = true, duplicate = true });
+
+        db.WebhookReplayGuards.Add(new WebhookReplayGuard
+        {
+            Id = Guid.NewGuid(),
+            Provider = provider,
+            ReplayKey = replayKey,
+            FirstSeenAtUtc = DateTime.UtcNow,
+            ExpiresAtUtc = DateTime.UtcNow.AddDays(2)
+        });
 
         db.AuditLogs.Add(new AuditLog
         {
@@ -142,7 +172,7 @@ public class PaymentWebhookController(
 
     private static bool Verify(string provider, string body, string secret, IHeaderDictionary headers)
     {
-        if (string.IsNullOrWhiteSpace(secret)) return true;
+        if (string.IsNullOrWhiteSpace(secret)) return false;
         provider = provider.Trim().ToLowerInvariant();
 
         if (provider == "razorpay")
@@ -151,14 +181,48 @@ public class PaymentWebhookController(
             if (string.IsNullOrWhiteSpace(sig)) return false;
             using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
             var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(body));
-            var hex = Convert.ToHexString(hash).ToLowerInvariant();
-            return string.Equals(hex, sig.Trim().ToLowerInvariant(), StringComparison.Ordinal);
+            var expected = Convert.ToHexString(hash).ToLowerInvariant();
+            var actual = sig.Trim().ToLowerInvariant();
+            var a = Encoding.UTF8.GetBytes(expected);
+            var b = Encoding.UTF8.GetBytes(actual);
+            return a.Length == b.Length && CryptographicOperations.FixedTimeEquals(a, b);
         }
 
         var generic = headers["X-Webhook-Secret"].ToString();
         if (string.IsNullOrWhiteSpace(generic)) generic = headers["X-Signature"].ToString();
         if (string.IsNullOrWhiteSpace(generic)) return false;
         return string.Equals(generic.Trim(), secret.Trim(), StringComparison.Ordinal);
+    }
+
+    private static string ResolveReplayKey(string provider, string eventName, string raw, IHeaderDictionary headers)
+    {
+        var h = headers["X-Razorpay-Event-Id"].ToString().Trim();
+        if (!string.IsNullOrWhiteSpace(h)) return h;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var payload = doc.RootElement.TryGetProperty("payload", out var pl) ? pl : default;
+            var paymentEntity = payload.ValueKind != JsonValueKind.Undefined &&
+                                payload.TryGetProperty("payment", out var pay) &&
+                                pay.TryGetProperty("entity", out var ent)
+                ? ent
+                : default;
+            var paymentId = paymentEntity.ValueKind == JsonValueKind.Object &&
+                            paymentEntity.TryGetProperty("id", out var pid)
+                ? (pid.GetString() ?? string.Empty)
+                : string.Empty;
+            if (!string.IsNullOrWhiteSpace(paymentId))
+                return $"{provider}:{eventName}:{paymentId}";
+        }
+        catch
+        {
+            // fallback to raw hash
+        }
+
+        using var sha = SHA256.Create();
+        var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(raw ?? string.Empty));
+        return $"{provider}:{eventName}:{Convert.ToHexString(hash)}";
     }
 
     private async Task ActivateSubscriptionFromPaymentAsync(BillingPaymentAttempt attempt, CancellationToken ct)
