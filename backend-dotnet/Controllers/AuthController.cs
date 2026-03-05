@@ -123,7 +123,7 @@ public class AuthController(
             {
                 tenantId = db.TenantUsers
                     .Where(tu => tu.UserId == user.Id)
-                    .OrderBy(tu => tu.CreatedAtUtc)
+                    .OrderByDescending(tu => tu.CreatedAtUtc)
                     .Select(tu => tu.TenantId)
                     .FirstOrDefault();
                 if (tenantId == Guid.Empty) return Forbid();
@@ -479,9 +479,10 @@ public class AuthController(
                 t.Name,
                 t.Slug,
                 tu.Role,
-                t.CreatedAtUtc
+                t.CreatedAtUtc,
+                MembershipCreatedAtUtc = tu.CreatedAtUtc
             })
-            .OrderBy(x => x.CreatedAtUtc)
+            .OrderByDescending(x => x.MembershipCreatedAtUtc)
             .ToList();
 
         return Ok(projects);
