@@ -32,17 +32,33 @@ public class TataSmsMessageProvider(
         var peId = defaultPeId;
         var templateId = defaultTemplateId;
 
-        if (context is not null &&
-            context.TenantId != Guid.Empty &&
-            string.Equals(context.MessageType, "template", StringComparison.OrdinalIgnoreCase))
+        if (context is not null && context.TenantId != Guid.Empty)
         {
-            var parsed = ParseTemplateBody(body ?? string.Empty);
-            if (!string.IsNullOrWhiteSpace(parsed.TemplateName))
+            var tenant = await controlDb.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == context.TenantId, ct);
+            if (tenant is not null)
             {
-                var tenant = await controlDb.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == context.TenantId, ct);
-                if (tenant is not null)
+                using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
+
+                // Tenant sender master has priority over platform fallback.
+                var tenantSender = await tenantDb.SmsSenders
+                    .AsNoTracking()
+                    .Where(x => x.TenantId == context.TenantId && x.IsActive)
+                    .OrderByDescending(x => x.IsVerified)
+                    .ThenBy(x => x.SenderId)
+                    .FirstOrDefaultAsync(ct);
+
+                if (tenantSender is not null)
                 {
-                    using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
+                    sender = string.IsNullOrWhiteSpace(tenantSender.SenderId) ? sender : tenantSender.SenderId;
+                    peId = string.IsNullOrWhiteSpace(tenantSender.EntityId) ? peId : tenantSender.EntityId;
+                }
+
+                if (string.Equals(context.MessageType, "template", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parsed = ParseTemplateBody(body ?? string.Empty);
+                    if (string.IsNullOrWhiteSpace(parsed.TemplateName))
+                        goto TenantDone;
+
                     var tpl = await tenantDb.Templates
                         .AsNoTracking()
                         .Where(x => x.TenantId == context.TenantId && x.Channel == ChannelType.Sms && x.Name == parsed.TemplateName)
@@ -59,6 +75,7 @@ public class TataSmsMessageProvider(
                 }
             }
         }
+TenantDone:
 
         if (string.IsNullOrWhiteSpace(sender) || string.IsNullOrWhiteSpace(peId) || string.IsNullOrWhiteSpace(templateId))
             throw new InvalidOperationException("SMS send blocked: senderAddress / PE_ID / Template_ID is missing.");

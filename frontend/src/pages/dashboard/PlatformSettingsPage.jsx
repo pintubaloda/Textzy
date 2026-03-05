@@ -76,6 +76,7 @@ const DEFAULT_LIMITS = {
 const PlatformSettingsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "waba-master";
+  const isAppSettingsTab = tab === "app-settings" || tab === "app-settings-all" || tab.startsWith("app-settings-");
   const [gateway, setGateway] = useState("razorpay");
   const [waba, setWaba] = useState({ appId: "", appSecret: "", embeddedConfigId: "", verifyToken: "", webhookUrl: "", systemUserAccessToken: "" });
   const [appConfig, setAppConfig] = useState({
@@ -243,13 +244,13 @@ const PlatformSettingsPage = () => {
         ? "Security Operations"
         : tab === "idempotency-diagnostics"
         ? "Idempotency Diagnostics"
-        : tab === "app-settings"
+        : isAppSettingsTab
         ? "Mobile App Base Settings"
         : tab === "waba-policies"
         ? "WABA Error Policies"
         : "Waba Master Config"
     ),
-    [tab],
+    [tab, isAppSettingsTab],
   );
 
   const setTab = (next) => setSearchParams({ tab: next });
@@ -329,7 +330,7 @@ const PlatformSettingsPage = () => {
             webhookUrl: values.webhookUrl || "",
             systemUserAccessToken: values.systemUserAccessToken || values.accessToken || "",
           });
-        } else if (tab === "app-settings") {
+        } else if (isAppSettingsTab) {
           const res = await getPlatformSettings("mobile-app");
           const values = res?.values || {};
           if (!active) return;
@@ -574,7 +575,14 @@ const PlatformSettingsPage = () => {
     requestLogFilters.pathContains,
     requestLogFilters.limit,
     mobileTelemetryDays,
+    isAppSettingsTab,
   ]);
+
+  useEffect(() => {
+    if (tab === "app-settings") {
+      setSearchParams({ tab: "app-settings-core" });
+    }
+  }, [tab, setSearchParams]);
 
   return (
     <div className="space-y-4" data-testid="platform-settings-page">
@@ -907,7 +915,113 @@ const PlatformSettingsPage = () => {
         </Card>
       )}
 
-      {tab === "app-settings" && (
+      {isAppSettingsTab && tab !== "app-settings-all" && (
+        <div className="space-y-4">
+          <Card className="border-slate-200 bg-gradient-to-r from-orange-50 via-white to-slate-50">
+            <CardHeader>
+              <CardTitle>Mobile App Base Settings</CardTitle>
+              <CardDescription>Configure by module with dedicated save action per section.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-2 md:grid-cols-6">
+              {[
+                ["app-settings-core", "Core"],
+                ["app-settings-firebase", "Firebase"],
+                ["app-settings-security", "Security"],
+                ["app-settings-pairing", "Pairing"],
+                ["app-settings-releases", "Releases"],
+                ["app-settings-all", "All Fields"],
+              ].map(([key, label]) => (
+                <Button
+                  key={key}
+                  type="button"
+                  variant={tab === key ? "default" : "outline"}
+                  className={tab === key ? "bg-orange-500 hover:bg-orange-600" : ""}
+                  onClick={() => setSearchParams({ tab: key })}
+                >
+                  {label}
+                </Button>
+              ))}
+            </CardContent>
+          </Card>
+
+          {tab === "app-settings-core" && (
+            <Card className="border-slate-200">
+              <CardHeader>
+                <CardTitle>Core Runtime</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2"><Label>App Name</Label><Input value={appConfig.appName} onChange={(e) => setAppConfig((p) => ({ ...p, appName: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Base Domain</Label><Input value={appConfig.baseDomain} onChange={(e) => setAppConfig((p) => ({ ...p, baseDomain: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>API Base URL</Label><Input value={appConfig.apiBaseUrl} onChange={(e) => setAppConfig((p) => ({ ...p, apiBaseUrl: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>SignalR Hub Path</Label><Input value={appConfig.hubPath} onChange={(e) => setAppConfig((p) => ({ ...p, hubPath: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Support URL</Label><Input value={appConfig.supportUrl} onChange={(e) => setAppConfig((p) => ({ ...p, supportUrl: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Terms URL</Label><Input value={appConfig.termsUrl} onChange={(e) => setAppConfig((p) => ({ ...p, termsUrl: e.target.value }))} /></div>
+                <div className="space-y-2 md:col-span-2"><Label>Privacy URL</Label><Input value={appConfig.privacyUrl} onChange={(e) => setAppConfig((p) => ({ ...p, privacyUrl: e.target.value }))} /></div>
+                <div className="md:col-span-2"><Button className="bg-orange-500 hover:bg-orange-600" disabled={loading} onClick={async () => { try { setLoading(true); await saveMobileAppSettings(); toast.success("Core saved"); } catch { toast.error("Failed to save core"); } finally { setLoading(false); } }}>Save Core</Button></div>
+              </CardContent>
+            </Card>
+          )}
+
+          {tab === "app-settings-firebase" && (
+            <Card className="border-slate-200">
+              <CardHeader><CardTitle>Firebase & Push</CardTitle></CardHeader>
+              <CardContent className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2 md:col-span-2"><Label>Web Push Public Key (VAPID)</Label><Input value={appConfig.webPushPublicKey} onChange={(e) => setAppConfig((p) => ({ ...p, webPushPublicKey: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Firebase API Key</Label><Input value={appConfig.firebaseApiKey} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseApiKey: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Firebase Auth Domain</Label><Input value={appConfig.firebaseAuthDomain} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseAuthDomain: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Firebase Project ID</Label><Input value={appConfig.firebaseProjectId} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseProjectId: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Firebase Storage Bucket</Label><Input value={appConfig.firebaseStorageBucket} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseStorageBucket: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Firebase Messaging Sender ID</Label><Input value={appConfig.firebaseMessagingSenderId} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseMessagingSenderId: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Firebase App ID</Label><Input value={appConfig.firebaseAppId} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseAppId: e.target.value }))} /></div>
+                <div className="space-y-2 md:col-span-2"><Label>Firebase Measurement ID</Label><Input value={appConfig.firebaseMeasurementId} onChange={(e) => setAppConfig((p) => ({ ...p, firebaseMeasurementId: e.target.value }))} /></div>
+                <div className="md:col-span-2"><Button className="bg-orange-500 hover:bg-orange-600" disabled={loading} onClick={async () => { try { setLoading(true); await saveMobileAppSettings(); toast.success("Firebase settings saved"); } catch { toast.error("Failed to save Firebase"); } finally { setLoading(false); } }}>Save Firebase</Button></div>
+              </CardContent>
+            </Card>
+          )}
+
+          {tab === "app-settings-security" && (
+            <Card className="border-slate-200">
+              <CardHeader><CardTitle>API Security</CardTitle></CardHeader>
+              <CardContent className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2 md:col-span-2"><Label>Webhook Allowed Hosts</Label><textarea className="min-h-[90px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm" value={appConfig.webhookAllowedHosts} onChange={(e) => setAppConfig((p) => ({ ...p, webhookAllowedHosts: e.target.value }))} /></div>
+                <div className="space-y-2 md:col-span-2"><Label>Allowed API Prefixes</Label><textarea className="min-h-[110px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm" value={appConfig.allowedApiPrefixes} onChange={(e) => setAppConfig((p) => ({ ...p, allowedApiPrefixes: e.target.value }))} /></div>
+                <div className="space-y-2 md:col-span-2"><Label>API Catalog</Label><textarea className="min-h-[150px] w-full rounded-md border border-slate-200 px-3 py-2 text-sm" value={appConfig.apiCatalog} onChange={(e) => setAppConfig((p) => ({ ...p, apiCatalog: e.target.value }))} /></div>
+                <label className="md:col-span-2 inline-flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={!!appConfig.enforceApiAllowList} onChange={(e) => setAppConfig((p) => ({ ...p, enforceApiAllowList: e.target.checked }))} /> Enforce API allow-list in app runtime</label>
+                <div className="md:col-span-2"><Button className="bg-orange-500 hover:bg-orange-600" disabled={loading} onClick={async () => { try { setLoading(true); await saveMobileAppSettings(); toast.success("Security settings saved"); } catch { toast.error("Failed to save security settings"); } finally { setLoading(false); } }}>Save Security</Button></div>
+              </CardContent>
+            </Card>
+          )}
+
+          {tab === "app-settings-pairing" && (
+            <Card className="border-slate-200">
+              <CardHeader><CardTitle>Pairing Policy</CardTitle></CardHeader>
+              <CardContent className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2"><Label>Max Devices Per User</Label><Input type="number" min="1" max="20" value={appConfig.maxDevicesPerUser} onChange={(e) => setAppConfig((p) => ({ ...p, maxDevicesPerUser: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Pair QR TTL (seconds)</Label><Input type="number" min="60" max="600" value={appConfig.pairCodeTtlSeconds} onChange={(e) => setAppConfig((p) => ({ ...p, pairCodeTtlSeconds: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Min Supported App Version</Label><Input value={appConfig.minSupportedAppVersion} onChange={(e) => setAppConfig((p) => ({ ...p, minSupportedAppVersion: e.target.value }))} /></div>
+                <div className="space-y-2"><Label>Pair Schema Version</Label><Input value={appConfig.pairSchemaVersion} onChange={(e) => setAppConfig((p) => ({ ...p, pairSchemaVersion: e.target.value }))} /></div>
+                <div className="md:col-span-2"><Button className="bg-orange-500 hover:bg-orange-600" disabled={loading} onClick={async () => { try { setLoading(true); await saveMobileAppSettings(); toast.success("Pairing settings saved"); } catch { toast.error("Failed to save pairing settings"); } finally { setLoading(false); } }}>Save Pairing</Button></div>
+              </CardContent>
+            </Card>
+          )}
+
+          {tab === "app-settings-releases" && (
+            <Card className="border-slate-200">
+              <CardHeader><CardTitle>Release Endpoints</CardTitle></CardHeader>
+              <CardContent className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2 md:col-span-2"><Label>Android APK URL</Label><Input value={appConfig.androidApkUrl} onChange={(e) => setAppConfig((p) => ({ ...p, androidApkUrl: e.target.value }))} /></div>
+                <div className="space-y-2 md:col-span-2"><Label>iOS Store/Download URL</Label><Input value={appConfig.iosStoreUrl || appConfig.iosDownloadUrl} onChange={(e) => setAppConfig((p) => ({ ...p, iosStoreUrl: e.target.value, iosDownloadUrl: e.target.value }))} /></div>
+                <div className="space-y-2 md:col-span-2"><Label>Windows Download URL</Label><Input value={appConfig.windowsDownloadUrl} onChange={(e) => setAppConfig((p) => ({ ...p, windowsDownloadUrl: e.target.value }))} /></div>
+                <div className="space-y-2 md:col-span-2"><Label>macOS Download URL</Label><Input value={appConfig.macosDownloadUrl} onChange={(e) => setAppConfig((p) => ({ ...p, macosDownloadUrl: e.target.value }))} /></div>
+                <div className="space-y-2 md:col-span-2"><Label>Web URL</Label><Input value={appConfig.webUrl} onChange={(e) => setAppConfig((p) => ({ ...p, webUrl: e.target.value }))} /></div>
+                <div className="md:col-span-2"><Button className="bg-orange-500 hover:bg-orange-600" disabled={loading} onClick={async () => { try { setLoading(true); await saveMobileAppSettings(); toast.success("Release endpoints saved"); } catch { toast.error("Failed to save release endpoints"); } finally { setLoading(false); } }}>Save Releases</Button></div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {tab === "app-settings-all" && (
         <div className="space-y-4">
           <Card className="border-slate-200 bg-gradient-to-r from-orange-50 via-white to-slate-50">
             <CardHeader>
@@ -1396,9 +1510,10 @@ const PlatformSettingsPage = () => {
         <Card className="border-slate-200">
           <CardHeader>
             <CardTitle>TATA SMS Gateway Configuration</CardTitle>
-            <CardDescription>
+          <CardDescription>
               Maps exactly to provider variables: MobileNo, Message, Username, PassWord, senderAddress, PEID, TemplateID.
-            </CardDescription>
+              Tenant-level Sender/Entity from SMS Sender Master overrides these defaults automatically.
+          </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2">
