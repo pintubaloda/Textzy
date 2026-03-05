@@ -11,8 +11,10 @@ import {
   archiveSmsSender,
   createSmsSender,
   createSmsTemplate,
+  deleteSmsTemplate,
   getSmsComplianceKpis,
   getSmsSenderStats,
+  importApprovedSmsTemplatesCsv,
   listSmsBillingLedger,
   listSmsComplianceEvents,
   listSmsOptOuts,
@@ -24,7 +26,7 @@ import {
   updateSmsTemplate,
 } from "@/lib/api";
 import { toast } from "sonner";
-import { CheckCircle2, FileCheck2, ShieldCheck, Trash2, MessageSquareText, Ban, Activity } from "lucide-react";
+import { CheckCircle2, FileCheck2, ShieldCheck, Trash2, MessageSquareText, Ban, Activity, Eye, Upload, Download } from "lucide-react";
 
 const defaultSenderForm = {
   senderId: "",
@@ -59,6 +61,9 @@ const SmsSetupPage = () => {
   const [templateRows, setTemplateRows] = useState([]);
   const [templateForm, setTemplateForm] = useState(defaultTemplateForm);
   const [editingTemplateId, setEditingTemplateId] = useState("");
+  const [viewTemplate, setViewTemplate] = useState(null);
+  const [importFile, setImportFile] = useState(null);
+  const [importResult, setImportResult] = useState(null);
 
   const [optOutRows, setOptOutRows] = useState([]);
   const [optOutPhone, setOptOutPhone] = useState("");
@@ -167,6 +172,59 @@ const SmsSetupPage = () => {
     }
   };
 
+  const handleDeleteTemplate = async (id) => {
+    if (!id) return;
+    if (!window.confirm("Delete this SMS template?")) return;
+    try {
+      setBusy(true);
+      await deleteSmsTemplate(id);
+      toast.success("Template deleted.");
+      if (editingTemplateId === id) {
+        setEditingTemplateId("");
+        setTemplateForm(defaultTemplateForm);
+      }
+      if (viewTemplate?.id === id) setViewTemplate(null);
+      await loadAll();
+    } catch (e) {
+      toast.error(e?.message || "Failed to delete template.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const downloadTemplateCsvSample = () => {
+    const sample = [
+      "EntityID,TemplateName,TemplateID,TemplateContent,Header,TemplateType,SenderID,Operator",
+      "1401234567890123456,otp_login,TMP10001,\"Your OTP is {{1}}\",OTP Alert,otp,TXTZY,all"
+    ].join("\n");
+    const blob = new Blob([sample], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "sms-approved-templates-sample.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportApprovedCsv = async () => {
+    if (!importFile) {
+      toast.error("Please choose a CSV file.");
+      return;
+    }
+    try {
+      setBusy(true);
+      const result = await importApprovedSmsTemplatesCsv(importFile);
+      setImportResult(result);
+      toast.success(`Import done. Imported: ${result.imported || 0}, Updated: ${result.updated || 0}, Rejected: ${result.rejected || 0}`);
+      setImportFile(null);
+      await loadAll();
+    } catch (e) {
+      toast.error(e?.message || "Failed to import CSV.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const addOptOut = async () => {
     if (!optOutPhone.trim()) {
       toast.error("Phone is required.");
@@ -247,9 +305,79 @@ const SmsSetupPage = () => {
 
       {panel === "templates" && (
         <>
-          <Card className="border-slate-200"><CardHeader><CardTitle className="text-base">{editingTemplateId ? "Edit SMS Template" : "Create SMS Template"}</CardTitle></CardHeader><CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3"><div className="space-y-2"><Label>Template Name</Label><Input value={templateForm.name} onChange={(e)=>setTemplateForm((p)=>({ ...p, name:e.target.value }))} /></div><div className="space-y-2"><Label>Category</Label><Select value={templateForm.category} onValueChange={(v)=>setTemplateForm((p)=>({ ...p, category:v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="service">Service</SelectItem><SelectItem value="otp">OTP</SelectItem><SelectItem value="transactional">Transactional</SelectItem><SelectItem value="promotional">Promotional</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>Language</Label><Input value={templateForm.language} onChange={(e)=>setTemplateForm((p)=>({ ...p, language:e.target.value }))} /></div><div className="space-y-2"><Label>Sender ID</Label><Input value={templateForm.smsSenderId} onChange={(e)=>setTemplateForm((p)=>({ ...p, smsSenderId:e.target.value.toUpperCase() }))} /></div><div className="space-y-2"><Label>DLT Entity ID</Label><Input value={templateForm.dltEntityId} onChange={(e)=>setTemplateForm((p)=>({ ...p, dltEntityId:e.target.value }))} /></div><div className="space-y-2"><Label>DLT Template ID</Label><Input value={templateForm.dltTemplateId} onChange={(e)=>setTemplateForm((p)=>({ ...p, dltTemplateId:e.target.value }))} /></div><div className="space-y-2"><Label>Operator</Label><Select value={templateForm.smsOperator} onValueChange={(v)=>setTemplateForm((p)=>({ ...p, smsOperator:v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="jio">Jio</SelectItem><SelectItem value="vi">Vi</SelectItem><SelectItem value="airtel">Airtel</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>Effective From</Label><Input type="datetime-local" value={templateForm.effectiveFromUtc} onChange={(e)=>setTemplateForm((p)=>({ ...p, effectiveFromUtc:e.target.value }))} /></div><div className="space-y-2"><Label>Effective To</Label><Input type="datetime-local" value={templateForm.effectiveToUtc} onChange={(e)=>setTemplateForm((p)=>({ ...p, effectiveToUtc:e.target.value }))} /></div><div className="space-y-2 md:col-span-3"><Label>Template Body</Label><Input value={templateForm.body} onChange={(e)=>setTemplateForm((p)=>({ ...p, body:e.target.value }))} placeholder="Example: Dear customer, your OTP is {{1}}" /></div><div><Button className="bg-orange-500 hover:bg-orange-600 w-full" disabled={busy} onClick={saveTemplate}>{editingTemplateId?"Update Template":"Create Template"}</Button></div>{editingTemplateId?<div><Button variant="outline" className="w-full" onClick={()=>{setEditingTemplateId("");setTemplateForm(defaultTemplateForm);}}>Cancel Edit</Button></div>:null}</CardContent></Card>
+          <Card className="border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50">
+            <CardHeader>
+              <CardTitle className="text-base">Approved DLT CSV Import</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div className="md:col-span-2 space-y-2">
+                <Label>Upload Approved Template CSV</Label>
+                <Input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(e) => setImportFile(e.target.files?.[0] || null)}
+                />
+              </div>
+              <div className="flex items-end">
+                <Button variant="outline" className="w-full" onClick={downloadTemplateCsvSample}>
+                  <Download className="w-4 h-4 mr-2" /> Sample CSV
+                </Button>
+              </div>
+              <div className="flex items-end">
+                <Button className="w-full bg-orange-500 hover:bg-orange-600" disabled={busy} onClick={handleImportApprovedCsv}>
+                  <Upload className="w-4 h-4 mr-2" /> Import Approved
+                </Button>
+              </div>
+              {importResult ? (
+                <div className="md:col-span-4 rounded-lg border border-orange-200 bg-white p-3 text-sm">
+                  <span className="font-semibold text-slate-900">Import Result:</span>{" "}
+                  Imported <span className="font-semibold">{importResult.imported || 0}</span>, Updated{" "}
+                  <span className="font-semibold">{importResult.updated || 0}</span>, Rejected{" "}
+                  <span className="font-semibold">{importResult.rejected || 0}</span>
+                  {(importResult.errors || []).length > 0 ? (
+                    <div className="mt-2 max-h-32 overflow-auto text-xs text-red-700">
+                      {(importResult.errors || []).map((err, idx) => (
+                        <div key={idx}>Row {err.row}: {err.error}</div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
 
-          <Card className="border-slate-200"><CardHeader><CardTitle className="text-base">Template Registry</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Sender</TableHead><TableHead>DLT Template</TableHead><TableHead>Status</TableHead><TableHead>Operator</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{templateRows.length===0?<TableRow><TableCell colSpan={6} className="text-slate-500">No templates created.</TableCell></TableRow>:null}{templateRows.map((r)=><TableRow key={r.id}><TableCell>{r.name}</TableCell><TableCell className="font-mono">{r.smsSenderId}</TableCell><TableCell className="font-mono">{r.dltTemplateId}</TableCell><TableCell>{statusBadge(r.lifecycleStatus || r.status)}</TableCell><TableCell>{r.smsOperator || "all"}</TableCell><TableCell className="text-right"><div className="inline-flex gap-2"><Button size="sm" variant="outline" onClick={()=>{setEditingTemplateId(r.id);setTemplateForm({name:r.name||"",category:r.category||"service",language:r.language||"en",body:r.body||"",smsSenderId:r.smsSenderId||"",dltEntityId:r.dltEntityId||"",dltTemplateId:r.dltTemplateId||"",smsOperator:r.smsOperator||"all",effectiveFromUtc:r.effectiveFromUtc?new Date(r.effectiveFromUtc).toISOString().slice(0,16):"",effectiveToUtc:r.effectiveToUtc?new Date(r.effectiveToUtc).toISOString().slice(0,16):""});}}>Edit</Button><Select onValueChange={async(v)=>{try{await setSmsTemplateStatus(r.id,{status:v,reason:v==="rejected"?"Rejected by operator": ""});toast.success("Status updated");await loadAll();}catch(e){toast.error(e?.message||"Failed to set status");}}}><SelectTrigger className="h-8 w-[120px]"><SelectValue placeholder="Set status" /></SelectTrigger><SelectContent>{statusOptions.map((x)=><SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></div></TableCell></TableRow>)}</TableBody></Table></CardContent></Card>
+          <Card className="border-slate-200">
+            <CardHeader><CardTitle className="text-base">{editingTemplateId ? "Edit SMS Template" : "Create SMS Template"}</CardTitle></CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="space-y-2"><Label>Template Name</Label><Input value={templateForm.name} onChange={(e)=>setTemplateForm((p)=>({ ...p, name:e.target.value }))} /></div>
+              <div className="space-y-2"><Label>Category</Label><Select value={templateForm.category} onValueChange={(v)=>setTemplateForm((p)=>({ ...p, category:v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="service">Service</SelectItem><SelectItem value="otp">OTP</SelectItem><SelectItem value="transactional">Transactional</SelectItem><SelectItem value="promotional">Promotional</SelectItem></SelectContent></Select></div>
+              <div className="space-y-2"><Label>Language</Label><Input value={templateForm.language} onChange={(e)=>setTemplateForm((p)=>({ ...p, language:e.target.value }))} /></div>
+              <div className="space-y-2"><Label>Sender ID</Label><Input value={templateForm.smsSenderId} onChange={(e)=>setTemplateForm((p)=>({ ...p, smsSenderId:e.target.value.toUpperCase() }))} /></div>
+              <div className="space-y-2"><Label>DLT Entity ID</Label><Input value={templateForm.dltEntityId} onChange={(e)=>setTemplateForm((p)=>({ ...p, dltEntityId:e.target.value }))} /></div>
+              <div className="space-y-2"><Label>DLT Template ID</Label><Input value={templateForm.dltTemplateId} onChange={(e)=>setTemplateForm((p)=>({ ...p, dltTemplateId:e.target.value }))} /></div>
+              <div className="space-y-2"><Label>Operator</Label><Select value={templateForm.smsOperator} onValueChange={(v)=>setTemplateForm((p)=>({ ...p, smsOperator:v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="jio">Jio</SelectItem><SelectItem value="vi">Vi</SelectItem><SelectItem value="airtel">Airtel</SelectItem></SelectContent></Select></div>
+              <div className="space-y-2"><Label>Effective From</Label><Input type="datetime-local" value={templateForm.effectiveFromUtc} onChange={(e)=>setTemplateForm((p)=>({ ...p, effectiveFromUtc:e.target.value }))} /></div>
+              <div className="space-y-2"><Label>Effective To</Label><Input type="datetime-local" value={templateForm.effectiveToUtc} onChange={(e)=>setTemplateForm((p)=>({ ...p, effectiveToUtc:e.target.value }))} /></div>
+              <div className="space-y-2 md:col-span-3"><Label>Template Body</Label><Input value={templateForm.body} onChange={(e)=>setTemplateForm((p)=>({ ...p, body:e.target.value }))} placeholder="Example: Dear customer, your OTP is {{1}}" /></div>
+              <div><Button className="bg-orange-500 hover:bg-orange-600 w-full" disabled={busy} onClick={saveTemplate}>{editingTemplateId?"Update Template":"Create Template"}</Button></div>
+              {editingTemplateId?<div><Button variant="outline" className="w-full" onClick={()=>{setEditingTemplateId("");setTemplateForm(defaultTemplateForm);}}>Cancel Edit</Button></div>:null}
+            </CardContent>
+          </Card>
+
+          {viewTemplate ? (
+            <Card className="border-indigo-200 bg-indigo-50/40">
+              <CardHeader><CardTitle className="text-base">Template Preview</CardTitle></CardHeader>
+              <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <div><span className="text-slate-500">Name:</span> <span className="font-medium">{viewTemplate.name}</span></div>
+                <div><span className="text-slate-500">Template ID:</span> <span className="font-mono">{viewTemplate.dltTemplateId}</span></div>
+                <div><span className="text-slate-500">Entity ID:</span> <span className="font-mono">{viewTemplate.dltEntityId}</span></div>
+                <div><span className="text-slate-500">Sender:</span> <span className="font-mono">{viewTemplate.smsSenderId || "-"}</span></div>
+                <div className="md:col-span-2"><span className="text-slate-500">Body:</span> <div className="mt-1 rounded border bg-white p-2">{viewTemplate.body}</div></div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          <Card className="border-slate-200"><CardHeader><CardTitle className="text-base">Template Registry</CardTitle></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Sender</TableHead><TableHead>DLT Template</TableHead><TableHead>Status</TableHead><TableHead>Operator</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{templateRows.length===0?<TableRow><TableCell colSpan={6} className="text-slate-500">No templates created.</TableCell></TableRow>:null}{templateRows.map((r)=><TableRow key={r.id}><TableCell>{r.name}</TableCell><TableCell className="font-mono">{r.smsSenderId}</TableCell><TableCell className="font-mono">{r.dltTemplateId}</TableCell><TableCell>{statusBadge(r.lifecycleStatus || r.status)}</TableCell><TableCell>{r.smsOperator || "all"}</TableCell><TableCell className="text-right"><div className="inline-flex gap-2"><Button size="sm" variant="outline" onClick={()=>setViewTemplate(r)}><Eye className="w-4 h-4 mr-1" />View</Button><Button size="sm" variant="outline" onClick={()=>{setEditingTemplateId(r.id);setTemplateForm({name:r.name||"",category:r.category||"service",language:r.language||"en",body:r.body||"",smsSenderId:r.smsSenderId||"",dltEntityId:r.dltEntityId||"",dltTemplateId:r.dltTemplateId||"",smsOperator:r.smsOperator||"all",effectiveFromUtc:r.effectiveFromUtc?new Date(r.effectiveFromUtc).toISOString().slice(0,16):"",effectiveToUtc:r.effectiveToUtc?new Date(r.effectiveToUtc).toISOString().slice(0,16):""});}}>Edit</Button><Button size="sm" variant="ghost" className="text-red-600" onClick={()=>handleDeleteTemplate(r.id)}><Trash2 className="w-4 h-4 mr-1" />Delete</Button><Select onValueChange={async(v)=>{try{await setSmsTemplateStatus(r.id,{status:v,reason:v==="rejected"?"Rejected by operator": ""});toast.success("Status updated");await loadAll();}catch(e){toast.error(e?.message||"Failed to set status");}}}><SelectTrigger className="h-8 w-[130px]"><SelectValue placeholder="Update Status" /></SelectTrigger><SelectContent>{statusOptions.map((x)=><SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></div></TableCell></TableRow>)}</TableBody></Table></CardContent></Card>
         </>
       )}
 

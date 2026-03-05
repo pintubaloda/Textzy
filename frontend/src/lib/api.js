@@ -583,8 +583,27 @@ export async function updateSmsTemplate(id, payload) {
   return apiPut(`/api/sms/templates/${id}`, payload)
 }
 
+export async function deleteSmsTemplate(id) {
+  return apiDelete(`/api/sms/templates/${id}`)
+}
+
 export async function setSmsTemplateStatus(id, payload) {
   return apiPost(`/api/sms/templates/${id}/status`, payload)
+}
+
+export async function importApprovedSmsTemplatesCsv(file) {
+  if (!file) throw new Error('CSV file is required')
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await apiRequest('/api/sms/templates/import-approved-csv', {
+    method: 'POST',
+    body: fd
+  })
+  if (!res.ok) {
+    const msg = await res.text().catch(() => '')
+    throw new Error(msg || `CSV import failed (${res.status})`)
+  }
+  return res.json()
 }
 
 export async function getSmsComplianceKpis() {

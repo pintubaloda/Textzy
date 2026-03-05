@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text;
 using Textzy.Api.Data;
 using Textzy.Api.Models;
 using Textzy.Api.Services;
@@ -46,6 +47,17 @@ public class SmsTemplatesController(TenantDbContext db, TenancyContext tenancy, 
             x.EffectiveToUtc,
             x.CreatedAtUtc
         }));
+    }
+
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken ct = default)
+    {
+        if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
+        var row = await db.Templates.FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tenancy.TenantId && x.Channel == ChannelType.Sms, ct);
+        if (row is null) return NotFound();
+        db.Templates.Remove(row);
+        await db.SaveChangesAsync(ct);
+        return NoContent();
     }
 
     public sealed class UpsertSmsTemplateRequest
@@ -149,5 +161,210 @@ public class SmsTemplatesController(TenantDbContext db, TenancyContext tenancy, 
         await db.SaveChangesAsync(ct);
         return Ok(new { ok = true, row.Id, row.Status, row.LifecycleStatus, row.RejectionReason });
     }
-}
 
+    [HttpPost("import-approved-csv")]
+    [RequestSizeLimit(5 * 1024 * 1024)]
+    public async Task<IActionResult> ImportApprovedCsv([FromForm] IFormFile? file, CancellationToken ct = default)
+    {
+        if (!rbac.HasPermission(TemplatesWrite)) return Forbid();
+        if (file is null || file.Length <= 0) return BadRequest("CSV file is required.");
+        if (file.Length > 5 * 1024 * 1024) return BadRequest("CSV file is too large. Max 5MB.");
+
+        using var reader = new StreamReader(file.OpenReadStream(), Encoding.UTF8, true);
+        var headerLine = await reader.ReadLineAsync(ct);
+        if (string.IsNullOrWhiteSpace(headerLine))
+            return BadRequest("CSV header is missing.");
+
+        var headers = ParseCsvLine(headerLine).Select(x => x.Trim()).ToList();
+        var map = BuildHeaderMap(headers);
+
+        var rowNo = 1;
+        var imported = 0;
+        var updated = 0;
+        var rejected = 0;
+        var errors = new List<object>();
+
+        while (!reader.EndOfStream)
+        {
+            var line = await reader.ReadLineAsync(ct);
+            rowNo++;
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            var cols = ParseCsvLine(line);
+            string GetValue(string key) => map.TryGetValue(key, out var idx) && idx < cols.Count ? (cols[idx] ?? string.Empty).Trim() : string.Empty;
+
+            var entityId = GetValue("entityid");
+            var templateName = GetValue("templatename");
+            var templateId = GetValue("templateid");
+            var templateContent = GetValue("templatecontent");
+            var header = GetValue("header");
+            var templateType = NormalizeCategory(GetValue("templatetype"));
+            var senderId = GetValue("senderid");
+            var smsOperator = NormalizeOperator(GetValue("operator"));
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(entityId)) throw new InvalidOperationException("EntityID is required.");
+                if (string.IsNullOrWhiteSpace(templateName)) throw new InvalidOperationException("TemplateName is required.");
+                if (string.IsNullOrWhiteSpace(templateId)) throw new InvalidOperationException("TemplateID is required.");
+                if (string.IsNullOrWhiteSpace(templateContent)) throw new InvalidOperationException("TemplateContent is required.");
+
+                entityId = InputGuardService.RequireTrimmed(entityId, "Entity ID", 50);
+                templateName = InputGuardService.RequireTrimmed(templateName, "Template name", 120);
+                templateId = InputGuardService.RequireTrimmed(templateId, "Template ID", 80);
+                templateContent = InputGuardService.RequireTrimmed(templateContent, "Template content", 2000);
+                header = (header ?? string.Empty).Trim();
+                if (header.Length > 240) header = header[..240];
+                senderId = string.IsNullOrWhiteSpace(senderId) ? string.Empty : InputGuardService.RequireTrimmed(senderId, "Sender ID", 20);
+
+                var existing = await db.Templates.FirstOrDefaultAsync(x =>
+                    x.TenantId == tenancy.TenantId &&
+                    x.Channel == ChannelType.Sms &&
+                    x.DltTemplateId == templateId, ct);
+
+                if (existing is null)
+                {
+                    db.Templates.Add(new Template
+                    {
+                        Id = Guid.NewGuid(),
+                        TenantId = tenancy.TenantId,
+                        Channel = ChannelType.Sms,
+                        Name = templateName,
+                        Category = templateType,
+                        Language = "en",
+                        Body = templateContent,
+                        SmsSenderId = senderId,
+                        DltEntityId = entityId,
+                        DltTemplateId = templateId,
+                        HeaderType = string.IsNullOrWhiteSpace(header) ? "none" : "text",
+                        HeaderText = header,
+                        SmsOperator = smsOperator,
+                        LifecycleStatus = "approved",
+                        Status = "Approved",
+                        RejectionReason = string.Empty,
+                        CreatedAtUtc = DateTime.UtcNow
+                    });
+                    imported++;
+                }
+                else
+                {
+                    existing.Name = templateName;
+                    existing.Category = templateType;
+                    existing.Body = templateContent;
+                    existing.SmsSenderId = senderId;
+                    existing.DltEntityId = entityId;
+                    existing.HeaderType = string.IsNullOrWhiteSpace(header) ? "none" : "text";
+                    existing.HeaderText = header;
+                    existing.SmsOperator = smsOperator;
+                    existing.LifecycleStatus = "approved";
+                    existing.Status = "Approved";
+                    existing.RejectionReason = string.Empty;
+                    updated++;
+                }
+            }
+            catch (Exception ex)
+            {
+                rejected++;
+                errors.Add(new { row = rowNo, error = ex.Message });
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        return Ok(new
+        {
+            ok = true,
+            imported,
+            updated,
+            rejected,
+            tenantId = tenancy.TenantId,
+            totalProcessed = imported + updated + rejected,
+            errors = errors.Take(200).ToArray()
+        });
+    }
+
+    private static Dictionary<string, int> BuildHeaderMap(IReadOnlyList<string> headers)
+    {
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < headers.Count; i++)
+        {
+            var normalized = NormalizeHeader(headers[i]);
+            if (!string.IsNullOrWhiteSpace(normalized) && !map.ContainsKey(normalized))
+                map[normalized] = i;
+        }
+
+        if (!map.ContainsKey("entityid") || !map.ContainsKey("templatename") || !map.ContainsKey("templateid") || !map.ContainsKey("templatecontent"))
+            throw new InvalidOperationException("CSV must contain EntityID, TemplateName, TemplateID, TemplateContent columns.");
+
+        return map;
+    }
+
+    private static string NormalizeHeader(string value)
+    {
+        var v = (value ?? string.Empty).Trim().ToLowerInvariant().Replace(" ", string.Empty).Replace("_", string.Empty);
+        return v switch
+        {
+            "tenantid" => "tenantid",
+            "entityid" => "entityid",
+            "templatename" => "templatename",
+            "templateid" => "templateid",
+            "templatecontent" => "templatecontent",
+            "header" => "header",
+            "templatetype" => "templatetype",
+            "status" => "status",
+            "senderid" => "senderid",
+            "smssenderid" => "senderid",
+            "operator" => "operator",
+            _ => string.Empty
+        };
+    }
+
+    private static List<string> ParseCsvLine(string line)
+    {
+        var result = new List<string>();
+        var current = new StringBuilder();
+        var inQuotes = false;
+
+        for (var i = 0; i < line.Length; i++)
+        {
+            var ch = line[i];
+            if (ch == '"')
+            {
+                if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                {
+                    current.Append('"');
+                    i++;
+                    continue;
+                }
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (ch == ',' && !inQuotes)
+            {
+                result.Add(current.ToString());
+                current.Clear();
+                continue;
+            }
+            current.Append(ch);
+        }
+        result.Add(current.ToString());
+        return result;
+    }
+
+    private static string NormalizeCategory(string value)
+    {
+        var v = (value ?? string.Empty).Trim().ToLowerInvariant();
+        if (v is "otp" or "service" or "transactional" or "promotional") return v;
+        if (v.Contains("trans")) return "transactional";
+        if (v.Contains("promo")) return "promotional";
+        if (v.Contains("otp")) return "otp";
+        return "service";
+    }
+
+    private static string NormalizeOperator(string value)
+    {
+        var v = (value ?? string.Empty).Trim().ToLowerInvariant();
+        if (v is "jio" or "vi" or "airtel" or "all") return v;
+        return "all";
+    }
+}
