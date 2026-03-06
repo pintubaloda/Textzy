@@ -93,9 +93,9 @@ const DashboardLayout = () => {
   const canViewApi = isPlatformOwner || hasPermission("api.read", session);
   const canViewAnalytics = isPlatformOwner || (hasPermission("campaigns.read", session) && hasPermission("api.read", session));
   const canViewIntegrations = isPlatformOwner || hasPermission("api.write", session);
-  const canViewSettings = isPlatformOwner || (hasPermission("automation.read", session) && hasPermission("api.read", session));
+  const canViewSettings = isPlatformOwner || hasPermission("api.read", session);
   const canViewBilling = isPlatformOwner || hasPermission("billing.read", session);
-  const canManageTeam = isPlatformOwner || hasPermission("api.write", session);
+  const canManageTeam = ["owner", "admin", "super_admin"].includes(role);
   const tenantHomePath = "/dashboard";
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
   const isBrandingPage = location.pathname.startsWith("/dashboard/platform-branding");

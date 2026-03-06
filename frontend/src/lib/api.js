@@ -103,7 +103,7 @@ const ROLE_PERMISSION_FALLBACK = {
   owner: [
     'contacts.read', 'contacts.write', 'campaigns.read', 'campaigns.write', 'templates.read', 'templates.write',
     'automation.read', 'automation.write', 'inbox.read', 'inbox.write', 'billing.read', 'billing.write',
-    'api.read', 'api.write', 'platform.tenants.manage', 'platform.settings.read', 'platform.settings.write'
+    'api.read', 'api.write'
   ],
   admin: [
     'contacts.read', 'contacts.write', 'campaigns.read', 'campaigns.write', 'templates.read', 'templates.write',

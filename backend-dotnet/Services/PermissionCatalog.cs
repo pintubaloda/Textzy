@@ -20,6 +20,7 @@ public static class PermissionCatalog
     public const string PlatformSettingsRead = "platform.settings.read";
     public const string PlatformSettingsWrite = "platform.settings.write";
 
+    // Tenant-scoped permission catalog. Platform-only permissions are intentionally excluded.
     public static readonly string[] All =
     [
         ContactsRead, ContactsWrite,
@@ -28,8 +29,6 @@ public static class PermissionCatalog
         AutomationRead, AutomationWrite,
         InboxRead, InboxWrite,
         BillingRead, BillingWrite,
-        ApiRead, ApiWrite,
-        PlatformTenantsManage,
-        PlatformSettingsRead, PlatformSettingsWrite
+        ApiRead, ApiWrite
     ];
 }

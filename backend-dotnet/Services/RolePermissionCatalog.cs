@@ -53,7 +53,18 @@ public static class RolePermissionCatalog
             PermissionCatalog.CampaignsRead,
             PermissionCatalog.ApiRead
         ],
-        [SuperAdmin] = PermissionCatalog.All
+        [SuperAdmin] =
+        [
+            PermissionCatalog.ContactsRead, PermissionCatalog.ContactsWrite,
+            PermissionCatalog.CampaignsRead, PermissionCatalog.CampaignsWrite,
+            PermissionCatalog.TemplatesRead, PermissionCatalog.TemplatesWrite,
+            PermissionCatalog.AutomationRead, PermissionCatalog.AutomationWrite,
+            PermissionCatalog.InboxRead, PermissionCatalog.InboxWrite,
+            PermissionCatalog.BillingRead, PermissionCatalog.BillingWrite,
+            PermissionCatalog.ApiRead, PermissionCatalog.ApiWrite,
+            PermissionCatalog.PlatformTenantsManage,
+            PermissionCatalog.PlatformSettingsRead, PermissionCatalog.PlatformSettingsWrite
+        ]
     };
 
     public static IReadOnlyList<string> GetPermissions(string role)
