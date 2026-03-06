@@ -217,47 +217,90 @@ public class AutomationController(
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
         if (tenancy.TenantId == Guid.Empty) return BadRequest("Tenant context missing.");
-        if (!TryEnsureAutomationSchema(out _))
-            return StatusCode(StatusCodes.Status500InternalServerError, "Automation schema unavailable.");
 
-        var automationFlows = await db.AutomationFlows
-            .AsNoTracking()
-            .Where(x => x.TenantId == tenancy.TenantId)
-            .OrderByDescending(x => x.UpdatedAtUtc)
-            .Select(x => new
-            {
-                x.Id,
-                x.Name,
-                x.IsActive,
-                x.LifecycleStatus,
-                x.UpdatedAtUtc
-            })
-            .ToListAsync(ct);
+        List<object> automationFlows = [];
+        List<object> smsFlows = [];
+        string automationError = string.Empty;
+        string smsError = string.Empty;
 
-        var smsFlows = await db.SmsFlows
-            .AsNoTracking()
-            .Where(x => x.TenantId == tenancy.TenantId)
-            .OrderByDescending(x => x.CreatedAtUtc)
-            .Select(x => new
+        try
+        {
+            automationFlows = await db.AutomationFlows
+                .AsNoTracking()
+                .Where(x => x.TenantId == tenancy.TenantId)
+                .OrderByDescending(x => x.UpdatedAtUtc)
+                .Select(x => (object)new
+                {
+                    x.Id,
+                    x.Name,
+                    x.IsActive,
+                    x.LifecycleStatus,
+                    x.UpdatedAtUtc
+                })
+                .ToListAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            automationError = redactor.RedactText(ex.Message);
+        }
+
+        try
+        {
+            smsFlows = await db.SmsFlows
+                .AsNoTracking()
+                .Where(x => x.TenantId == tenancy.TenantId)
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .Select(x => (object)new
+                {
+                    x.Id,
+                    x.Name,
+                    x.Status,
+                    x.CreatedAtUtc
+                })
+                .ToListAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            smsError = redactor.RedactText(ex.Message);
+        }
+
+        var automationPublished = automationFlows.Count(x =>
+        {
+            if (x is not null)
             {
-                x.Id,
-                x.Name,
-                x.Status,
-                x.CreatedAtUtc
-            })
-            .ToListAsync(ct);
+                var prop = x.GetType().GetProperty("LifecycleStatus");
+                var val = prop?.GetValue(x)?.ToString() ?? string.Empty;
+                return string.Equals(val, "published", StringComparison.OrdinalIgnoreCase);
+            }
+            return false;
+        });
+        var automationActive = automationFlows.Count(x =>
+        {
+            if (x is not null)
+            {
+                var prop = x.GetType().GetProperty("IsActive");
+                var val = prop?.GetValue(x);
+                return val is bool b && b;
+            }
+            return false;
+        });
 
         return Ok(new
         {
             tenantId = tenancy.TenantId,
             tenantSlug = tenancy.TenantSlug,
+            ok = string.IsNullOrWhiteSpace(automationError) && string.IsNullOrWhiteSpace(smsError),
+            errors = new
+            {
+                automation = automationError,
+                sms = smsError
+            },
             counts = new
             {
                 automationFlows = automationFlows.Count,
                 smsFlows = smsFlows.Count,
-                automationPublished = automationFlows.Count(x =>
-                    string.Equals(x.LifecycleStatus, "published", StringComparison.OrdinalIgnoreCase)),
-                automationActive = automationFlows.Count(x => x.IsActive)
+                automationPublished,
+                automationActive
             },
             automationFlows = automationFlows.Take(50),
             smsFlows = smsFlows.Take(50),
