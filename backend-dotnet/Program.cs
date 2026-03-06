@@ -549,6 +549,19 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TenantSecurityControls_TenantId" ON "TenantSecurityControls" ("TenantId");""");
 
     db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "TenantFeatureFlags" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NOT NULL,
+            "FeatureKey" text NOT NULL,
+            "IsEnabled" boolean NOT NULL DEFAULT false,
+            "UpdatedAtUtc" timestamp with time zone NOT NULL,
+            "UpdatedByUserId" uuid NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TenantFeatureFlags_Tenant_Feature" ON "TenantFeatureFlags" ("TenantId","FeatureKey");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantFeatureFlags_Feature_Enabled" ON "TenantFeatureFlags" ("FeatureKey","IsEnabled");""");
+
+    db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "UserPushSubscriptions" (
             "Id" uuid PRIMARY KEY,
             "TenantId" uuid NOT NULL,

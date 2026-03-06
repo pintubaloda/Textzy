@@ -16,6 +16,8 @@ public class PlatformCustomersController(
     RbacService rbac,
     AuditLogService audit) : ControllerBase
 {
+    private const string TenantSmsGatewayReportFeatureKey = "tenant.smsGatewayReport.enabled";
+
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] string q = "", CancellationToken ct = default)
     {
@@ -281,6 +283,62 @@ public class PlatformCustomersController(
         });
     }
 
+    [HttpGet("{tenantId:guid}/features")]
+    public async Task<IActionResult> GetTenantFeatures(Guid tenantId, CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+
+        var tenantExists = await db.Tenants.AsNoTracking().AnyAsync(t => t.Id == tenantId, ct);
+        if (!tenantExists) return NotFound("Tenant not found.");
+
+        var smsGatewayReportEnabled = await db.TenantFeatureFlags.AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.FeatureKey == TenantSmsGatewayReportFeatureKey)
+            .Select(x => x.IsEnabled)
+            .FirstOrDefaultAsync(ct);
+
+        return Ok(new
+        {
+            tenantId,
+            smsGatewayReportEnabled
+        });
+    }
+
+    [HttpPut("{tenantId:guid}/features")]
+    public async Task<IActionResult> UpsertTenantFeatures(Guid tenantId, [FromBody] TenantFeaturesRequest request, CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+
+        var tenantExists = await db.Tenants.AsNoTracking().AnyAsync(t => t.Id == tenantId, ct);
+        if (!tenantExists) return NotFound("Tenant not found.");
+
+        var row = await db.TenantFeatureFlags
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.FeatureKey == TenantSmsGatewayReportFeatureKey, ct);
+        if (row is null)
+        {
+            row = new TenantFeatureFlag
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                FeatureKey = TenantSmsGatewayReportFeatureKey
+            };
+            db.TenantFeatureFlags.Add(row);
+        }
+
+        row.IsEnabled = request.SmsGatewayReportEnabled;
+        row.UpdatedAtUtc = DateTime.UtcNow;
+        row.UpdatedByUserId = auth.UserId;
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("platform.customer.features.updated", $"tenant={tenantId}; smsGatewayReportEnabled={row.IsEnabled}", ct);
+
+        return Ok(new
+        {
+            tenantId,
+            smsGatewayReportEnabled = row.IsEnabled
+        });
+    }
+
     [HttpGet("{tenantId:guid}/subscriptions")]
     public async Task<IActionResult> Subscriptions(Guid tenantId, CancellationToken ct)
     {
@@ -502,5 +560,10 @@ public class PlatformCustomersController(
         public string BillingCycle { get; set; } = "monthly";
         public string Status { get; set; } = "active";
         public bool ResetStartDate { get; set; } = true;
+    }
+
+    public sealed class TenantFeaturesRequest
+    {
+        public bool SmsGatewayReportEnabled { get; set; }
     }
 }

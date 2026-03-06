@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { getPlatformCustomers, getPlatformCustomerDetails, getPlatformCustomerUsage, getPlatformCustomerSubscriptions, getPlatformCustomerInvoices, getPlatformCustomerMembers, getPlatformCustomerActivity, listPlatformBillingPlans, assignPlatformCustomerPlan, getPlatformUsers, getPlatformUserTenants } from "@/lib/api";
+import { getPlatformCustomers, getPlatformCustomerDetails, getPlatformCustomerUsage, getPlatformCustomerSubscriptions, getPlatformCustomerInvoices, getPlatformCustomerMembers, getPlatformCustomerActivity, listPlatformBillingPlans, assignPlatformCustomerPlan, getPlatformUsers, getPlatformUserTenants, getPlatformCustomerFeatures, savePlatformCustomerFeatures } from "@/lib/api";
 
 const AdminPage = () => {
   const [q, setQ] = useState("");
@@ -28,6 +28,8 @@ const AdminPage = () => {
   const [assignPlanCode, setAssignPlanCode] = useState("");
   const [assignCycle, setAssignCycle] = useState("monthly");
   const [assigningPlan, setAssigningPlan] = useState(false);
+  const [tenantFeatures, setTenantFeatures] = useState({ smsGatewayReportEnabled: false });
+  const [savingFeatures, setSavingFeatures] = useState(false);
 
   const loadCustomers = useCallback(async (query = "") => {
     try {
@@ -83,13 +85,14 @@ const AdminPage = () => {
     if (!selectedTenantId) return;
     (async () => {
       try {
-        const [d, u, s, i, m, a] = await Promise.all([
+        const [d, u, s, i, m, a, f] = await Promise.all([
           getPlatformCustomerDetails(selectedTenantId),
           getPlatformCustomerUsage(selectedTenantId, selectedMonth),
           getPlatformCustomerSubscriptions(selectedTenantId),
           getPlatformCustomerInvoices(selectedTenantId),
           getPlatformCustomerMembers(selectedTenantId),
           getPlatformCustomerActivity(selectedTenantId, 100),
+          getPlatformCustomerFeatures(selectedTenantId).catch(() => ({ smsGatewayReportEnabled: false })),
         ]);
         setDetails(d || null);
         setUsage(u || null);
@@ -97,6 +100,9 @@ const AdminPage = () => {
         setInvoices(Array.isArray(i) ? i : []);
         setMembers(Array.isArray(m) ? m : []);
         setActivity(Array.isArray(a) ? a : []);
+        setTenantFeatures({
+          smsGatewayReportEnabled: !!f?.smsGatewayReportEnabled,
+        });
       } catch (e) {
         toast.error(e.message || "Failed to load tenant details");
       }
@@ -266,6 +272,47 @@ const AdminPage = () => {
                     }}
                   >
                     {assigningPlan ? "Assigning..." : "Assign Plan"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {selectedTenantId ? (
+            <div className="rounded-lg border border-slate-200 p-4">
+              <p className="text-sm font-semibold text-slate-900 mb-3">Tenant Feature Controls</p>
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">User-side SMS Message Report</p>
+                  <p className="text-xs text-slate-600">When enabled, this tenant can view their own Tata request/response logs in SMS setup page.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant={tenantFeatures.smsGatewayReportEnabled ? "default" : "secondary"}>
+                    {tenantFeatures.smsGatewayReportEnabled ? "Enabled" : "Disabled"}
+                  </Badge>
+                  <Button
+                    variant={tenantFeatures.smsGatewayReportEnabled ? "outline" : "default"}
+                    className={!tenantFeatures.smsGatewayReportEnabled ? "bg-orange-500 hover:bg-orange-600" : ""}
+                    disabled={savingFeatures}
+                    onClick={async () => {
+                      try {
+                        setSavingFeatures(true);
+                        const nextValue = !tenantFeatures.smsGatewayReportEnabled;
+                        const updated = await savePlatformCustomerFeatures(selectedTenantId, {
+                          smsGatewayReportEnabled: nextValue,
+                        });
+                        setTenantFeatures({
+                          smsGatewayReportEnabled: !!updated?.smsGatewayReportEnabled,
+                        });
+                        toast.success(`SMS report ${nextValue ? "enabled" : "disabled"} for tenant.`);
+                      } catch (e) {
+                        toast.error(e?.message || "Failed to update tenant feature.");
+                      } finally {
+                        setSavingFeatures(false);
+                      }
+                    }}
+                  >
+                    {savingFeatures ? "Saving..." : (tenantFeatures.smsGatewayReportEnabled ? "Disable" : "Enable")}
                   </Button>
                 </div>
               </div>

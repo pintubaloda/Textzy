@@ -20,9 +20,11 @@ import {
   listSmsOptOuts,
   listSmsSenders,
   listSmsTemplates,
+  listTenantSmsGatewayReport,
   removeSmsOptOut,
   sendSmsTestFromDashboard,
   setSmsTemplateStatus,
+  getTenantSmsGatewayReportStatus,
   updateSmsSender,
   updateSmsTemplate,
 } from "@/lib/api";
@@ -72,6 +74,8 @@ const SmsSetupPage = () => {
 
   const [events, setEvents] = useState([]);
   const [billingRows, setBillingRows] = useState([]);
+  const [gatewayReportRows, setGatewayReportRows] = useState([]);
+  const [gatewayReportEnabled, setGatewayReportEnabled] = useState(false);
   const [kpis, setKpis] = useState({ templatesTotal: 0, templatesApproved: 0, templatesPending: 0, templatesRejected: 0, optOuts: 0, sentToday: 0, deliveredToday: 0, failedToday: 0, billedToday: 0 });
 
   const [busy, setBusy] = useState(false);
@@ -87,7 +91,7 @@ const SmsSetupPage = () => {
 
   const loadAll = async () => {
     try {
-      const [senderRes, senderStatRes, tplRes, optRes, eventRes, billingRes, kpiRes] = await Promise.all([
+      const [senderRes, senderStatRes, tplRes, optRes, eventRes, billingRes, kpiRes, reportStatus] = await Promise.all([
         listSmsSenders().catch(() => []),
         getSmsSenderStats().catch(() => null),
         listSmsTemplates().catch(() => []),
@@ -95,6 +99,7 @@ const SmsSetupPage = () => {
         listSmsComplianceEvents(200).catch(() => []),
         listSmsBillingLedger(300).catch(() => []),
         getSmsComplianceKpis().catch(() => null),
+        getTenantSmsGatewayReportStatus().catch(() => ({ enabled: false })),
       ]);
       setSenders(senderRes || []);
       if (senderStatRes) setSenderStats(senderStatRes);
@@ -102,6 +107,13 @@ const SmsSetupPage = () => {
       setOptOutRows(optRes || []);
       setEvents(eventRes || []);
       setBillingRows(billingRes || []);
+      setGatewayReportEnabled(!!reportStatus?.enabled);
+      if (reportStatus?.enabled) {
+        const logs = await listTenantSmsGatewayReport({ limit: 200 }).catch(() => []);
+        setGatewayReportRows(Array.isArray(logs) ? logs : []);
+      } else {
+        setGatewayReportRows([]);
+      }
       if (kpiRes) setKpis(kpiRes);
     } catch {
       toast.error("Failed to load SMS module data.");
@@ -321,7 +333,7 @@ const SmsSetupPage = () => {
       <Card className="border-slate-200"><CardContent className="pt-4"><p className="text-xs text-slate-500">Billed Today</p><p className="text-2xl font-semibold text-slate-900">INR {Number(kpis.billedToday || 0).toFixed(2)}</p></CardContent></Card>
 
       <div className="flex flex-wrap gap-2">
-        {[{k:"senders",l:"DLT Senders"},{k:"templates",l:"Template Registry"},{k:"optouts",l:"Opt-Out Control"},{k:"events",l:"Delivery Events"},{k:"billing",l:"Billing Ledger"}].map((x)=>(
+        {[{k:"senders",l:"DLT Senders"},{k:"templates",l:"Template Registry"},{k:"optouts",l:"Opt-Out Control"},{k:"events",l:"Delivery Events"},{k:"billing",l:"Billing Ledger"},{k:"gateway",l:"Message Report"}].map((x)=>(
           <Button key={x.k} variant={panel===x.k?"default":"outline"} className={panel===x.k?"bg-orange-500 hover:bg-orange-600":""} onClick={()=>setPanel(x.k)}>{x.l}</Button>
         ))}
       </div>
@@ -535,6 +547,47 @@ const SmsSetupPage = () => {
                 </TableRow>)}
               </TableBody>
             </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {panel === "gateway" && (
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle className="text-base">Tenant Message Report (Tata Request/Response)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {!gatewayReportEnabled ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                This report is disabled for this tenant. Ask platform admin to enable it from Platform Owner Panel.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Time</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Recipient</TableHead>
+                    <TableHead>Sender</TableHead>
+                    <TableHead>Template</TableHead>
+                    <TableHead>Message</TableHead>
+                    <TableHead>Response</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {gatewayReportRows.length===0?<TableRow><TableCell colSpan={7} className="text-slate-500">No gateway logs yet.</TableCell></TableRow>:null}
+                  {gatewayReportRows.map((row)=><TableRow key={row.id}>
+                    <TableCell>{row.createdAtUtc ? new Date(row.createdAtUtc).toLocaleString() : "-"}</TableCell>
+                    <TableCell>{row.isSuccess ? <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Success</Badge> : <Badge className="bg-red-100 text-red-700 hover:bg-red-100">Failed</Badge>}</TableCell>
+                    <TableCell className="font-mono">{row.recipient || "-"}</TableCell>
+                    <TableCell className="font-mono">{row.sender || "-"}</TableCell>
+                    <TableCell className="font-mono text-xs">{row.templateId || "-"}</TableCell>
+                    <TableCell className="max-w-[320px] truncate" title={row.decodedMessage || row.requestUrlMasked || ""}>{row.decodedMessage || "-"}</TableCell>
+                    <TableCell className="max-w-[320px] truncate text-xs" title={row.responseBody || row.error || ""}>{row.responseBody || row.error || "-"}</TableCell>
+                  </TableRow>)}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
       )}

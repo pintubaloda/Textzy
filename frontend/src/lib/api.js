@@ -728,6 +728,17 @@ export async function listSmsBillingLedger(take = 200) {
   return apiGet(`/api/sms/compliance/billing-ledger?take=${encodeURIComponent(String(take))}`)
 }
 
+export async function getTenantSmsGatewayReportStatus() {
+  return apiGet('/api/sms/gateway-report/status')
+}
+
+export async function listTenantSmsGatewayReport({ isSuccess = "", limit = 200 } = {}) {
+  const q = new URLSearchParams()
+  if (isSuccess !== "") q.set("isSuccess", String(isSuccess))
+  q.set("limit", String(limit))
+  return apiGet(`/api/sms/gateway-report?${q.toString()}`)
+}
+
 export async function getPlatformEmailReport({ days = 7, take = 100 } = {}) {
   const q = new URLSearchParams()
   q.set('days', String(days))
@@ -979,6 +990,14 @@ export async function getPlatformCustomerUsage(tenantId, month = '') {
   const qs = new URLSearchParams()
   if (month) qs.set('month', month)
   return apiGet(`/api/platform/customers/${tenantId}/usage${qs.toString() ? `?${qs.toString()}` : ''}`)
+}
+
+export async function getPlatformCustomerFeatures(tenantId) {
+  return apiGet(`/api/platform/customers/${encodeURIComponent(tenantId)}/features`)
+}
+
+export async function savePlatformCustomerFeatures(tenantId, payload) {
+  return apiPut(`/api/platform/customers/${encodeURIComponent(tenantId)}/features`, payload || {})
 }
 
 export async function getPlatformCustomerSubscriptions(tenantId) {
