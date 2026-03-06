@@ -212,6 +212,59 @@ public class AutomationController(
         }
     }
 
+    [HttpGet("debug/tenant-flow-counts")]
+    public async Task<IActionResult> DebugTenantFlowCounts(CancellationToken ct)
+    {
+        if (!rbac.HasPermission(AutomationRead)) return Forbid();
+        if (tenancy.TenantId == Guid.Empty) return BadRequest("Tenant context missing.");
+        if (!TryEnsureAutomationSchema(out _))
+            return StatusCode(StatusCodes.Status500InternalServerError, "Automation schema unavailable.");
+
+        var automationFlows = await db.AutomationFlows
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.UpdatedAtUtc)
+            .Select(x => new
+            {
+                x.Id,
+                x.Name,
+                x.IsActive,
+                x.LifecycleStatus,
+                x.UpdatedAtUtc
+            })
+            .ToListAsync(ct);
+
+        var smsFlows = await db.SmsFlows
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Select(x => new
+            {
+                x.Id,
+                x.Name,
+                x.Status,
+                x.CreatedAtUtc
+            })
+            .ToListAsync(ct);
+
+        return Ok(new
+        {
+            tenantId = tenancy.TenantId,
+            tenantSlug = tenancy.TenantSlug,
+            counts = new
+            {
+                automationFlows = automationFlows.Count,
+                smsFlows = smsFlows.Count,
+                automationPublished = automationFlows.Count(x =>
+                    string.Equals(x.LifecycleStatus, "published", StringComparison.OrdinalIgnoreCase)),
+                automationActive = automationFlows.Count(x => x.IsActive)
+            },
+            automationFlows = automationFlows.Take(50),
+            smsFlows = smsFlows.Take(50),
+            checkedAtUtc = DateTime.UtcNow
+        });
+    }
+
     [HttpPost("flows")]
     public async Task<IActionResult> CreateFlow([FromBody] CreateAutomationFlowRequest req, CancellationToken ct)
     {
