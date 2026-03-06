@@ -136,6 +136,9 @@ const DashboardLayout = () => {
         setProjects(rows);
         if (!rows.length) return;
 
+        // In platform-control mode we should not force tenant switching or reloads.
+        if (isPlatformView) return;
+
         const currentSlug = String(getSession().tenantSlug || "").trim().toLowerCase();
         const hasCurrent = !!rows.find((p) => String(p?.slug || "").trim().toLowerCase() === currentSlug);
         if (hasCurrent) return;
@@ -145,10 +148,12 @@ const DashboardLayout = () => {
         try {
           setSwitchingProject(fallbackSlug);
           await switchProject(fallbackSlug);
-          window.location.assign("/dashboard");
+          navigate(tenantHomePath, { replace: true });
         } catch {
-          clearSession();
-          navigate("/login", { replace: true });
+          if (!isPlatformOwner) {
+            clearSession();
+            navigate("/login", { replace: true });
+          }
         } finally {
           setSwitchingProject("");
         }
@@ -160,7 +165,7 @@ const DashboardLayout = () => {
     return () => {
       active = false;
     };
-  }, [navigate]);
+  }, [navigate, isPlatformOwner, isPlatformView, tenantHomePath]);
   useEffect(() => {
     let active = true;
     apiGet("/api/inbox/conversations")
@@ -286,7 +291,7 @@ const DashboardLayout = () => {
     try {
       setSwitchingProject(slug);
       await switchProject(slug);
-      window.location.assign("/dashboard");
+      navigate(tenantHomePath, { replace: true });
     } finally {
       setSwitchingProject("");
     }
