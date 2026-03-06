@@ -292,7 +292,22 @@ const DashboardLayout = () => {
     }
   };
 
+  const handleOwnerModeSwitch = (nextMode) => {
+    if (!isPlatformOwner) return;
+    const normalized = nextMode === "platform" ? "platform" : "self";
+    try {
+      localStorage.setItem("textzy_owner_mode", normalized);
+    } catch {}
+    setOwnerMode(normalized);
+    if (normalized === "platform") {
+      navigate("/dashboard", { replace: true });
+    } else {
+      navigate(tenantHomePath, { replace: true });
+    }
+  };
+
   const tenantNavigation = [
+    { name: "Dashboard", href: tenantHomePath, icon: LayoutDashboard },
     canViewInbox ? { name: "Inbox", href: "/dashboard/inbox", icon: Inbox, badge: inboxUnreadCount > 0 ? String(inboxUnreadCount) : "" } : null,
     canViewContacts ? { name: "Contacts", href: "/dashboard/contacts", icon: Users } : null,
     canViewCampaigns ? { name: "Campaigns", href: "/dashboard/campaigns", icon: Megaphone } : null,
@@ -416,7 +431,7 @@ const DashboardLayout = () => {
                 className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
                   !isPlatformView ? "bg-orange-50 text-orange-600 font-medium" : "text-slate-600 hover:bg-slate-50"
                 }`}
-                onClick={() => setOwnerMode("self")}
+                onClick={() => handleOwnerModeSwitch("self")}
                 data-testid="owner-mode-self"
               >
                 Self Use
@@ -425,7 +440,7 @@ const DashboardLayout = () => {
                 className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
                   isPlatformView ? "bg-orange-50 text-orange-600 font-medium" : "text-slate-600 hover:bg-slate-50"
                 }`}
-                onClick={() => setOwnerMode("platform")}
+                onClick={() => handleOwnerModeSwitch("platform")}
                 data-testid="owner-mode-platform"
               >
                 Platform Control
@@ -518,11 +533,11 @@ const DashboardLayout = () => {
               {isPlatformOwner && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setOwnerMode("self")}>
+                  <DropdownMenuItem onClick={() => handleOwnerModeSwitch("self")}>
                     <User className="w-4 h-4 mr-2" />
                     Self Use Mode
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setOwnerMode("platform")}>
+                  <DropdownMenuItem onClick={() => handleOwnerModeSwitch("platform")}>
                     <Shield className="w-4 h-4 mr-2" />
                     Platform Control Mode
                   </DropdownMenuItem>

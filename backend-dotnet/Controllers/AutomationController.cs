@@ -337,16 +337,31 @@ public class AutomationController(
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
         if (!TryEnsureAutomationSchema(out _)) return Ok(Array.Empty<object>());
 
+        List<AutomationFlow> flows;
         try
         {
-            var flows = await db.AutomationFlows
+            flows = await db.AutomationFlows
                 .AsNoTracking()
                 .Where(x => x.TenantId == tenancy.TenantId)
                 .OrderByDescending(x => x.UpdatedAtUtc)
                 .ToListAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError("Automation flows primary query failed for tenant {TenantId}: {Error}", tenancy.TenantId, redactor.RedactText(ex.Message));
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                error = "automation_flows_query_failed",
+                message = "Unable to load automation flows."
+            });
+        }
 
-            var flowIds = flows.Select(x => x.Id).ToList();
-            var versions = await db.AutomationFlowVersions
+        var flowIds = flows.Select(x => x.Id).ToList();
+
+        var versions = new Dictionary<Guid, (int totalVersions, int latestVersion)>();
+        try
+        {
+            var versionRows = await db.AutomationFlowVersions
                 .AsNoTracking()
                 .Where(x => x.TenantId == tenancy.TenantId && flowIds.Contains(x.FlowId))
                 .GroupBy(x => x.FlowId)
@@ -357,8 +372,17 @@ public class AutomationController(
                     latestVersion = g.Max(x => x.VersionNumber)
                 })
                 .ToListAsync(ct);
+            versions = versionRows.ToDictionary(x => x.flowId, x => (x.totalVersions, x.latestVersion));
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Automation flow versions query failed for tenant {TenantId}: {Error}", tenancy.TenantId, redactor.RedactText(ex.Message));
+        }
 
-            var runs = await db.AutomationRuns
+        var runs = new Dictionary<Guid, (int runs, int failed, DateTime? lastRunAtUtc)>();
+        try
+        {
+            var runRows = await db.AutomationRuns
                 .AsNoTracking()
                 .Where(x => x.TenantId == tenancy.TenantId && flowIds.Contains(x.FlowId))
                 .GroupBy(x => x.FlowId)
@@ -370,39 +394,41 @@ public class AutomationController(
                     lastRunAtUtc = g.Max(x => x.StartedAtUtc)
                 })
                 .ToListAsync(ct);
-
-            return Ok(flows.Select(flow =>
-            {
-                var v = versions.FirstOrDefault(x => x.flowId == flow.Id);
-                var r = runs.FirstOrDefault(x => x.flowId == flow.Id);
-                var successRate = r is null || r.runs == 0 ? 100 : Math.Round(((double)(r.runs - r.failed) / r.runs) * 100, 2);
-                return new
-                {
-                    flow.Id,
-                    flow.Name,
-                    flow.Description,
-                    flow.Channel,
-                    flow.TriggerType,
-                    flow.IsActive,
-                    flow.LifecycleStatus,
-                    flow.CurrentVersionId,
-                    flow.PublishedVersionId,
-                    flow.LastPublishedAtUtc,
-                    flow.UpdatedAtUtc,
-                    flow.CreatedAtUtc,
-                    versionCount = v?.totalVersions ?? 0,
-                    latestVersion = v?.latestVersion ?? 0,
-                    runs = r?.runs ?? 0,
-                    successRate,
-                    lastRunAtUtc = r?.lastRunAtUtc
-                };
-            }));
+            runs = runRows.ToDictionary(x => x.flowId, x => (x.runs, x.failed, (DateTime?)x.lastRunAtUtc));
         }
         catch (Exception ex)
         {
-            logger.LogError("Automation flows query failed for tenant {TenantId}: {Error}", tenancy.TenantId, redactor.RedactText(ex.Message));
-            return Ok(Array.Empty<object>());
+            logger.LogWarning("Automation flow runs query failed for tenant {TenantId}: {Error}", tenancy.TenantId, redactor.RedactText(ex.Message));
         }
+
+        return Ok(flows.Select(flow =>
+        {
+            versions.TryGetValue(flow.Id, out var v);
+            runs.TryGetValue(flow.Id, out var r);
+            var runsCount = r.runs;
+            var failedCount = r.failed;
+            var successRate = runsCount == 0 ? 100 : Math.Round(((double)(runsCount - failedCount) / runsCount) * 100, 2);
+            return new
+            {
+                flow.Id,
+                flow.Name,
+                flow.Description,
+                flow.Channel,
+                flow.TriggerType,
+                flow.IsActive,
+                flow.LifecycleStatus,
+                flow.CurrentVersionId,
+                flow.PublishedVersionId,
+                flow.LastPublishedAtUtc,
+                flow.UpdatedAtUtc,
+                flow.CreatedAtUtc,
+                versionCount = v.totalVersions,
+                latestVersion = v.latestVersion,
+                runs = runsCount,
+                successRate,
+                lastRunAtUtc = r.lastRunAtUtc
+            };
+        }));
     }
 
     [HttpGet("flows/{flowId:guid}")]

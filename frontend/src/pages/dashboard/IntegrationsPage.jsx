@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,13 +37,20 @@ import {
   Search,
 } from "lucide-react";
 import { toast } from "sonner";
+import { getPlatformSettings, savePlatformSettings } from "@/lib/api";
 
 const IntegrationsPage = () => {
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
   const [showWebhookDialog, setShowWebhookDialog] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
-
-  const apiKey = "tx_live_sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+  const [savingApiConfig, setSavingApiConfig] = useState(false);
+  const [apiConfig, setApiConfig] = useState({
+    enabled: false,
+    apiUsername: "",
+    apiPassword: "",
+    apiKey: "",
+    ipWhitelist: "",
+  });
 
   const integrations = [
     {
@@ -131,9 +138,55 @@ const IntegrationsPage = () => {
     },
   ];
 
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await getPlatformSettings("api-integration");
+        if (!active) return;
+        const values = res?.values || {};
+        setApiConfig({
+          enabled: String(values.enabled || "false").toLowerCase() === "true",
+          apiUsername: String(values.apiUsername || values.apiUser || "").trim(),
+          apiPassword: String(values.apiPassword || "").trim(),
+          apiKey: String(values.apiKey || "").trim(),
+          ipWhitelist: String(values.ipWhitelist || "").trim(),
+        });
+      } catch {
+        if (!active) return;
+        toast.error("Failed to load public API integration settings");
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const handleCopyApiKey = () => {
-    navigator.clipboard.writeText(apiKey);
+    if (!apiConfig.apiKey) {
+      toast.error("API key is empty");
+      return;
+    }
+    navigator.clipboard.writeText(apiConfig.apiKey);
     toast.success("API key copied to clipboard");
+  };
+
+  const saveApiIntegration = async () => {
+    try {
+      setSavingApiConfig(true);
+      await savePlatformSettings("api-integration", {
+        enabled: apiConfig.enabled ? "true" : "false",
+        apiUsername: apiConfig.apiUsername || "",
+        apiPassword: apiConfig.apiPassword || "",
+        apiKey: apiConfig.apiKey || "",
+        ipWhitelist: apiConfig.ipWhitelist || "",
+      });
+      toast.success("Public API integration settings saved");
+    } catch (e) {
+      toast.error(e?.message || "Failed to save public API integration settings");
+    } finally {
+      setSavingApiConfig(false);
+    }
   };
 
   const openApiDocs = () => {
@@ -165,37 +218,84 @@ const IntegrationsPage = () => {
                   <Key className="w-5 h-5 text-orange-600" />
                 </div>
                 <div>
-                  <CardTitle className="text-lg">API Keys</CardTitle>
-                  <CardDescription>Access the Textzy API</CardDescription>
+                  <CardTitle className="text-lg">Public API Integration</CardTitle>
+                  <CardDescription>Configure simple URL API access (username/password/key + optional IP whitelist)</CardDescription>
                 </div>
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="flex items-center justify-between rounded-lg border border-slate-200 p-3">
+              <div>
+                <Label className="text-sm font-medium">Enable Public API</Label>
+                <p className="text-xs text-slate-500">When disabled, `/api/public/messages/send` returns 403.</p>
+              </div>
+              <Switch
+                checked={apiConfig.enabled}
+                onCheckedChange={(checked) => setApiConfig((p) => ({ ...p, enabled: checked }))}
+                data-testid="public-api-enabled-switch"
+              />
+            </div>
+
             <div className="p-4 bg-slate-50 rounded-lg">
               <div className="flex items-center justify-between mb-2">
-                <Label className="text-sm font-medium">Live API Key</Label>
-                <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Active</Badge>
+                <Label className="text-sm font-medium">API Credentials</Label>
+                <Badge className={apiConfig.enabled ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>
+                  {apiConfig.enabled ? "Enabled" : "Disabled"}
+                </Badge>
               </div>
-              <div className="flex items-center gap-2">
-                <Input
-                  type={showApiKey ? "text" : "password"}
-                  value={apiKey}
-                  readOnly
-                  className="font-mono text-sm"
-                />
-                <Button variant="ghost" size="icon" onClick={() => setShowApiKey(!showApiKey)} data-testid="toggle-api-key">
-                  {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </Button>
-                <Button variant="ghost" size="icon" onClick={handleCopyApiKey} data-testid="copy-api-key">
-                  <Copy className="w-4 h-4" />
-                </Button>
+
+              <div className="grid grid-cols-1 gap-3">
+                <div>
+                  <Label className="text-xs text-slate-600">Username</Label>
+                  <Input
+                    value={apiConfig.apiUsername}
+                    onChange={(e) => setApiConfig((p) => ({ ...p, apiUsername: e.target.value }))}
+                    placeholder="MONEYART"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs text-slate-600">Password</Label>
+                  <Input
+                    type="password"
+                    value={apiConfig.apiPassword}
+                    onChange={(e) => setApiConfig((p) => ({ ...p, apiPassword: e.target.value }))}
+                    placeholder="Enter API password"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-600">API Key</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type={showApiKey ? "text" : "password"}
+                      value={apiConfig.apiKey}
+                      onChange={(e) => setApiConfig((p) => ({ ...p, apiKey: e.target.value }))}
+                      className="font-mono text-sm"
+                      placeholder="tx_live_sk_xxxxx"
+                    />
+                    <Button variant="ghost" size="icon" onClick={() => setShowApiKey(!showApiKey)} data-testid="toggle-api-key">
+                      {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={handleCopyApiKey} data-testid="copy-api-key">
+                      <Copy className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs text-slate-600">IP Whitelist (optional)</Label>
+                  <Textarea
+                    rows={2}
+                    value={apiConfig.ipWhitelist}
+                    onChange={(e) => setApiConfig((p) => ({ ...p, ipWhitelist: e.target.value }))}
+                    placeholder={"203.0.113.10\n203.0.113.0/24"}
+                  />
+                </div>
               </div>
             </div>
             <div className="flex items-center justify-between">
-              <Button variant="outline" className="gap-2" data-testid="regenerate-key-btn">
-                <RefreshCw className="w-4 h-4" />
-                Regenerate Key
+              <Button variant="outline" className="gap-2" onClick={saveApiIntegration} disabled={savingApiConfig} data-testid="save-public-api-btn">
+                <RefreshCw className={`w-4 h-4 ${savingApiConfig ? "animate-spin" : ""}`} />
+                {savingApiConfig ? "Saving..." : "Save Settings"}
               </Button>
               <Button variant="outline" className="gap-2" data-testid="view-docs-btn" onClick={openApiDocs}>
                 <Code className="w-4 h-4" />

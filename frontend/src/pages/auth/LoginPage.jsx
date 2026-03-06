@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { MessageSquare, Eye, EyeOff, ArrowRight, Download } from "lucide-react";
 import { toast } from "sonner";
-import { authLogin, authRequestEmailOtp, authEmailOtpStatus, authVerifyEmailOtp, checkApiHealth, getPublicMobileDownloadInfo, initializeMe } from "@/lib/api";
+import { authLogin, authRequestEmailOtp, authEmailOtpStatus, authVerifyEmailOtp, checkApiHealth, getLastTenantSlug, getPublicMobileDownloadInfo, initializeMe } from "@/lib/api";
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -32,10 +32,12 @@ const LoginPage = () => {
   });
 
   const completeLogin = async (emailVerificationId = "") => {
+    const preferredTenantSlug = getLastTenantSlug();
     const loginPayload = {
       email: formData.email,
       password: formData.password,
       emailVerificationId,
+      tenantSlug: preferredTenantSlug || undefined,
     };
     await authLogin(loginPayload);
     const me = await initializeMe();

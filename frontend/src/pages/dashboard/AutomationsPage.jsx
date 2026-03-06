@@ -1365,7 +1365,9 @@ export default function AutomationsPage() {
 
   const flowLimit = Number(billingLimits.flows || 0);
   const chatbotLimit = Number(billingLimits.chatbots || 0);
-  const flowUsed = Number(billingUsage.flows || flows.length || 0);
+  // In this screen, keep "used" aligned with visible tenant flows to avoid
+  // mismatch when billing counters are ahead of flow list refresh/migration.
+  const flowUsed = Number(flows.length || 0);
   const activeBots = Number(billingUsage.chatbots || flows.filter((x) => x.lifecycleStatus === "published").length || 0);
   const canCreateFlow = flowLimit <= 0 || flowUsed < flowLimit;
   const canPublishBot = chatbotLimit <= 0 || activeBots < chatbotLimit;
