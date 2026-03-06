@@ -357,6 +357,19 @@ public class AutomationController(
                         .OrderByDescending(x => x.UpdatedAtUtc)
                         .ToListAsync(ct);
                 }
+
+                if (flows.Count == 0)
+                {
+                    var imported = await TryImportLegacySmsFlowsAsync(ct);
+                    if (imported > 0)
+                    {
+                        flows = await db.AutomationFlows
+                            .AsNoTracking()
+                            .Where(x => x.TenantId == tenancy.TenantId)
+                            .OrderByDescending(x => x.UpdatedAtUtc)
+                            .ToListAsync(ct);
+                    }
+                }
             }
         }
         catch (Exception ex)
@@ -476,6 +489,89 @@ public class AutomationController(
             tenancy.TenantId);
 
         return legacyFlowCount;
+    }
+
+    private async Task<int> TryImportLegacySmsFlowsAsync(CancellationToken ct)
+    {
+        var legacyRows = await db.SmsFlows
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToListAsync(ct);
+        if (legacyRows.Count == 0) return 0;
+
+        var existingNames = await db.AutomationFlows
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .Select(x => x.Name)
+            .ToListAsync(ct);
+        var existingNameSet = new HashSet<string>(existingNames.Where(x => !string.IsNullOrWhiteSpace(x)), StringComparer.OrdinalIgnoreCase);
+
+        var now = DateTime.UtcNow;
+        var importedCount = 0;
+        foreach (var legacy in legacyRows)
+        {
+            var flowName = string.IsNullOrWhiteSpace(legacy.Name) ? $"Imported Flow {legacy.Id.ToString()[..8]}" : legacy.Name.Trim();
+            if (existingNameSet.Contains(flowName)) continue;
+
+            var legacyActive = string.Equals(legacy.Status, "Active", StringComparison.OrdinalIgnoreCase);
+            var lifecycleStatus = legacyActive ? "published" : "draft";
+
+            var flow = new AutomationFlow
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenancy.TenantId,
+                Name = flowName,
+                Description = "Imported from legacy SMS flow",
+                Channel = "waba",
+                TriggerType = "keyword",
+                TriggerConfigJson = "{}",
+                IsActive = legacyActive,
+                LifecycleStatus = lifecycleStatus,
+                CreatedAtUtc = legacy.CreatedAtUtc == default ? now : legacy.CreatedAtUtc,
+                UpdatedAtUtc = now
+            };
+
+            var version = new AutomationFlowVersion
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenancy.TenantId,
+                FlowId = flow.Id,
+                VersionNumber = 1,
+                Status = lifecycleStatus,
+                DefinitionJson = BuildDefaultDefinition(flow.TriggerType),
+                ChangeNote = "Imported from legacy SMS flow",
+                CreatedAtUtc = now,
+                PublishedAtUtc = legacyActive ? now : null
+            };
+
+            flow.CurrentVersionId = version.Id;
+            if (legacyActive)
+            {
+                flow.PublishedVersionId = version.Id;
+                flow.LastPublishedAtUtc = now;
+            }
+
+            db.AutomationFlows.Add(flow);
+            db.AutomationFlowVersions.Add(version);
+            existingNameSet.Add(flowName);
+            importedCount++;
+        }
+
+        if (importedCount > 0)
+        {
+            await db.SaveChangesAsync(ct);
+            try
+            {
+                await SyncAutomationUsageAsync(ct);
+            }
+            catch
+            {
+                // Best-effort sync. Listing is already fixed by imported rows.
+            }
+        }
+
+        return importedCount;
     }
 
     [HttpGet("flows/{flowId:guid}")]
