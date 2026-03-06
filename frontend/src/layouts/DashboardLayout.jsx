@@ -96,19 +96,7 @@ const DashboardLayout = () => {
   const canViewSettings = isPlatformOwner || (hasPermission("automation.read", session) && hasPermission("api.read", session));
   const canViewBilling = isPlatformOwner || hasPermission("billing.read", session);
   const canManageTeam = isPlatformOwner || hasPermission("api.write", session);
-  const tenantHomePath = canViewInbox
-    ? "/dashboard/inbox"
-    : canViewContacts
-      ? "/dashboard/contacts"
-      : canViewCampaigns
-        ? "/dashboard/campaigns"
-        : canViewAutomations
-          ? "/dashboard/automations"
-          : canViewBilling
-            ? "/dashboard/billing"
-            : canViewSettings
-              ? "/dashboard/settings"
-              : "/dashboard";
+  const tenantHomePath = "/dashboard";
   const isSettingsPage = location.pathname.startsWith("/dashboard/settings");
   const isBrandingPage = location.pathname.startsWith("/dashboard/platform-branding");
   const isTemplatesPage = location.pathname.startsWith("/dashboard/templates");
@@ -307,7 +295,7 @@ const DashboardLayout = () => {
     if (normalized === "platform") {
       navigate("/dashboard", { replace: true });
     } else {
-      navigate(tenantHomePath, { replace: true });
+      navigate("/dashboard", { replace: true });
     }
   };
 
@@ -722,6 +710,18 @@ const DashboardLayout = () => {
                 >
                   <Settings className="w-4 h-4 flex-shrink-0" />
                   <span className="flex-1 text-sm">SMTP Settings</span>
+                </Link>
+                <Link
+                  to="/dashboard/platform-settings?tab=sms-gateway"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "sms-gateway"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Settings className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">SMS Gateway</span>
                 </Link>
                 <Link
                   to="/dashboard/platform-settings?tab=payment-gateway"

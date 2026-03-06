@@ -80,7 +80,7 @@ function App() {
 
             {/* Dashboard Routes */}
             <Route path="/dashboard" element={authed ? <DashboardLayout /> : <Navigate to="/login" replace />}>
-              <Route index element={isPlatformView ? <DashboardOverview /> : <Navigate to={firstTenantPath} replace />} />
+              <Route index element={<DashboardOverview />} />
               <Route path="inbox" element={!isPlatformView && can("inbox.read") ? <InboxPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
               <Route path="contacts" element={!isPlatformView && can("contacts.read") ? <ContactsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
               <Route path="campaigns" element={!isPlatformView && can("campaigns.read") ? <CampaignsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
