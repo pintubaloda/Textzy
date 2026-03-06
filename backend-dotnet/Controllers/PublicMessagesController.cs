@@ -120,17 +120,41 @@ public class PublicMessagesController(
 
             return Ok(new
             {
-                ok = true,
-                tenantSlug = tenancy.TenantSlug,
-                messageId = queued.Id,
-                status = queued.Status,
-                channel = queued.Channel.ToString()
+                jobId = queued.Id.ToString(),
+                message = "Accepted"
             });
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(ex.Message);
+            return BuildPublicError(ex.Message);
         }
+    }
+
+    private static IActionResult BuildPublicError(string raw)
+    {
+        var text = (raw ?? string.Empty).Trim();
+        var lower = text.ToLowerInvariant();
+
+        if (lower.Contains("authorization") || lower.Contains("unauthorized") || lower.Contains("(401)") || lower.Contains(" 401"))
+            return new JsonResult(new { message = "Invalid authorization.", code = "401" }) { StatusCode = StatusCodes.Status401Unauthorized };
+
+        if (lower.Contains("(403)") || lower.Contains("forbidden"))
+            return new JsonResult(new { message = "Access denied.", code = "403" }) { StatusCode = StatusCodes.Status403Forbidden };
+
+        if (lower.Contains("(429)") || lower.Contains("rate"))
+            return new JsonResult(new { message = "Rate limit exceeded.", code = "429" }) { StatusCode = StatusCodes.Status429TooManyRequests };
+
+        if (lower.Contains("(500)") || lower.Contains("(502)") || lower.Contains("(503)") || lower.Contains("(504)") || lower.Contains("timeout"))
+            return new JsonResult(new { message = "Gateway temporarily unavailable.", code = "503" }) { StatusCode = StatusCodes.Status503ServiceUnavailable };
+
+        if (lower.Contains("sender is required"))
+            return new JsonResult(new { message = "Sender is required.", code = "422" }) { StatusCode = StatusCodes.Status422UnprocessableEntity };
+        if (lower.Contains("pe_id is required") || lower.Contains("peid is required"))
+            return new JsonResult(new { message = "PE_ID is required.", code = "422" }) { StatusCode = StatusCodes.Status422UnprocessableEntity };
+        if (lower.Contains("template_id is required") || lower.Contains("templateid is required"))
+            return new JsonResult(new { message = "Template_ID is required.", code = "422" }) { StatusCode = StatusCodes.Status422UnprocessableEntity };
+
+        return new JsonResult(new { message = "Request rejected.", code = "400" }) { StatusCode = StatusCodes.Status400BadRequest };
     }
 
     private static string GetValue(Dictionary<string, string> map, string key, string fallback)
