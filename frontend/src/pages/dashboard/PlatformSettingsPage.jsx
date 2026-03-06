@@ -45,7 +45,8 @@ import {
   platformLookupByWaba,
   getWabaDebugTenantProbe,
   getWabaDebugWebhookHealth,
-  exportPlatformSqlBackup
+  exportPlatformSqlBackup,
+  getSession
 } from "@/lib/api";
 
 const FEATURE_CATALOG = [
@@ -232,6 +233,7 @@ const PlatformSettingsPage = () => {
     pathContains: "",
     limit: "200",
   });
+  const isSuperAdmin = useMemo(() => String(getSession()?.role || "").toLowerCase() === "super_admin", []);
 
   const title = useMemo(
     () => (
@@ -457,13 +459,15 @@ const PlatformSettingsPage = () => {
           const [res, customers, rows] = await Promise.all([
             getPlatformSettings("sms-gateway"),
             getPlatformCustomers("").catch(() => []),
-            getPlatformSmsGatewayLogs({
-              provider: "tata",
-              tenantId: smsGatewayLogFilters.tenantId,
-              isSuccess: smsGatewayLogFilters.isSuccess === "all" ? "" : smsGatewayLogFilters.isSuccess === "success",
-              recipientContains: smsGatewayLogFilters.recipientContains,
-              limit: Number(smsGatewayLogFilters.limit || 200),
-            }).catch(() => []),
+            isSuperAdmin
+              ? getPlatformSmsGatewayLogs({
+                  provider: "tata",
+                  tenantId: smsGatewayLogFilters.tenantId,
+                  isSuccess: smsGatewayLogFilters.isSuccess === "all" ? "" : smsGatewayLogFilters.isSuccess === "success",
+                  recipientContains: smsGatewayLogFilters.recipientContains,
+                  limit: Number(smsGatewayLogFilters.limit || 200),
+                }).catch(() => [])
+              : Promise.resolve([]),
           ]);
           const values = res?.values || {};
           if (!active) return;
@@ -602,6 +606,7 @@ const PlatformSettingsPage = () => {
     smsGatewayLogFilters.recipientContains,
     smsGatewayLogFilters.limit,
     mobileTelemetryDays,
+    isSuperAdmin,
     isAppSettingsTab,
   ]);
 
@@ -1651,6 +1656,7 @@ const PlatformSettingsPage = () => {
               </div>
             </div>
 
+            {isSuperAdmin ? (
             <div className="md:col-span-2 mt-2 rounded-xl border border-slate-200 bg-white p-4">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <p className="text-sm font-semibold text-slate-900">TATA Request/Response Report</p>
@@ -1772,6 +1778,11 @@ const PlatformSettingsPage = () => {
                 </table>
               </div>
             </div>
+            ) : (
+              <div className="md:col-span-2 mt-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                Tata request/response report is visible only to super admin.
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

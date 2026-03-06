@@ -23,6 +23,7 @@ public class PlatformSmsGatewayLogsController(
         [FromQuery] int limit = 200,
         CancellationToken ct = default)
     {
+        if (!rbac.HasAnyRole("super_admin")) return Forbid();
         if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
 
         var q = db.SmsGatewayRequestLogs.AsNoTracking().AsQueryable();
