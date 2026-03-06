@@ -21,15 +21,6 @@ public class SmsWebhookController(
     [AllowAnonymous]
     public async Task<IActionResult> Tata([FromQuery] string tenantSlug = "", CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(tenantSlug))
-            return BadRequest("tenantSlug is required.");
-
-        var tenant = await controlDb.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Slug == tenantSlug, ct);
-        if (tenant is null) return NotFound("Tenant not found.");
-        await tenantSchemaGuard.EnsureContactEncryptionColumnsAsync(tenant.Id, tenant.DataConnectionString, ct);
-
-        using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
-
         var settings = await controlDb.PlatformSettings.AsNoTracking()
             .Where(x => x.Scope == "sms-gateway")
             .ToDictionaryAsync(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase, ct);
@@ -46,13 +37,41 @@ public class SmsWebhookController(
 
         var query = Request.Query.ToDictionary(x => x.Key, x => x.Value.ToString(), StringComparer.OrdinalIgnoreCase);
         var payload = ParsePayload(rawBody, query);
-        var providerMessageId = (payload.TryGetValue("msgid", out var id1) ? id1 : payload.TryGetValue("messageid", out var id2) ? id2 : string.Empty)?.Trim();
+        var providerMessageId = (
+            payload.TryGetValue("jobId", out var id5) ? id5 :
+            payload.TryGetValue("jobid", out var id9) ? id9 :
+            payload.TryGetValue("job_id", out var id6) ? id6 :
+            payload.TryGetValue("msgid", out var id1) ? id1 :
+            payload.TryGetValue("messageid", out var id2) ? id2 :
+            payload.TryGetValue("campaignId", out var id3) ? id3 :
+            payload.TryGetValue("campaign_id", out var id4) ? id4 :
+            payload.TryGetValue("cusTmId", out var id7) ? id7 :
+            payload.TryGetValue("custmId", out var id8) ? id8 :
+            string.Empty
+        )?.Trim();
         var statusRaw = (payload.TryGetValue("status", out var st1) ? st1 : payload.TryGetValue("dlrstatus", out var st2) ? st2 : string.Empty)?.Trim();
         var phone = (payload.TryGetValue("recipient", out var ph1) ? ph1 : payload.TryGetValue("mobile", out var ph2) ? ph2 : string.Empty)?.Trim();
         var reason = (payload.TryGetValue("reason", out var rs1) ? rs1 : payload.TryGetValue("error", out var rs2) ? rs2 : string.Empty)?.Trim();
 
         if (string.IsNullOrWhiteSpace(providerMessageId))
             return BadRequest("Missing provider message id.");
+
+        Tenant? tenant;
+        if (!string.IsNullOrWhiteSpace(tenantSlug))
+        {
+            tenant = await controlDb.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Slug == tenantSlug, ct);
+        }
+        else
+        {
+            tenant = await ResolveTenantForTataWebhookAsync(providerMessageId, phone ?? string.Empty, ct);
+            if (tenant is not null) tenantSlug = tenant.Slug;
+        }
+
+        if (tenant is null)
+            return BadRequest("Tenant could not be resolved for webhook. Pass tenantSlug or ensure provider message id is logged.");
+
+        await tenantSchemaGuard.EnsureContactEncryptionColumnsAsync(tenant.Id, tenant.DataConnectionString, ct);
+        using var tenantDb = SeedData.CreateTenantDbContext(tenant.DataConnectionString);
 
         var message = await tenantDb.Messages.FirstOrDefaultAsync(
             x => x.TenantId == tenant.Id && (x.ProviderMessageId == providerMessageId || x.ProviderMessageId.EndsWith("_" + providerMessageId)), ct);
@@ -260,5 +279,40 @@ public class SmsWebhookController(
         };
 
         return string.IsNullOrWhiteSpace(suffix) ? baseText : $"{baseText} ({suffix})";
+    }
+
+    private async Task<Tenant?> ResolveTenantForTataWebhookAsync(string providerMessageId, string recipient, CancellationToken ct)
+    {
+        var candidates = await controlDb.SmsGatewayRequestLogs.AsNoTracking()
+            .Where(x => x.Provider == "tata" &&
+                        (x.ProviderMessageId == providerMessageId ||
+                         x.ProviderMessageId.EndsWith("_" + providerMessageId)))
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Select(x => x.TenantId)
+            .Where(x => x.HasValue)
+            .ToListAsync(ct);
+
+        var tenantId = candidates.Select(x => x!.Value).FirstOrDefault();
+        if (tenantId != Guid.Empty)
+            return await controlDb.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == tenantId, ct);
+
+        // Fallback: resolve by recipient on recent logs if unique tenant in recent window.
+        if (!string.IsNullOrWhiteSpace(recipient))
+        {
+            var since = DateTime.UtcNow.AddHours(-6);
+            var recipientTenants = await controlDb.SmsGatewayRequestLogs.AsNoTracking()
+                .Where(x => x.Provider == "tata" &&
+                            x.CreatedAtUtc >= since &&
+                            x.Recipient == recipient &&
+                            x.TenantId.HasValue)
+                .Select(x => x.TenantId!.Value)
+                .Distinct()
+                .ToListAsync(ct);
+
+            if (recipientTenants.Count == 1)
+                return await controlDb.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == recipientTenants[0], ct);
+        }
+
+        return null;
     }
 }

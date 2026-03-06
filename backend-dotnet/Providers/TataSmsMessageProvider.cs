@@ -309,7 +309,7 @@ TenantDone:
     {
         if (string.IsNullOrWhiteSpace(response))
             return $"{provider}_{Guid.NewGuid():N}";
-        var m = Regex.Match(response, @"(?i)(msgid|messageid|id)\s*[:=]\s*([A-Za-z0-9\-_]+)");
+        var m = Regex.Match(response, @"(?i)(jobid|job_id|campaignid|campaign_id|msgid|messageid|custmid|custm_id|id)\s*[:=]\s*([A-Za-z0-9\-_]+)");
         if (m.Success) return $"{provider}_{m.Groups[2].Value}";
 
         try
@@ -318,7 +318,7 @@ TenantDone:
             var root = doc.RootElement;
             if (root.ValueKind == System.Text.Json.JsonValueKind.Object)
             {
-                foreach (var key in new[] { "request_id", "requestId", "message", "id", "msgid" })
+                foreach (var key in new[] { "jobId", "jobid", "job_id", "campaignId", "campaign_id", "cusTmId", "custmId", "request_id", "requestId", "message", "id", "msgid" })
                 {
                     if (root.TryGetProperty(key, out var val))
                     {
