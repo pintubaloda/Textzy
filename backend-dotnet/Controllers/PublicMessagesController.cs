@@ -111,7 +111,11 @@ public class PublicMessagesController(
                 IdempotencyKey = idempotency,
                 Recipient = recipient,
                 Body = message,
-                Channel = channel
+                Channel = channel,
+                SmsSenderId = request.Sender,
+                SmsPeId = request.PeId,
+                SmsTemplateId = request.TemplateId,
+                ForcePlatformSmsConfig = channel == ChannelType.Sms
             }, ct);
 
             return Ok(new

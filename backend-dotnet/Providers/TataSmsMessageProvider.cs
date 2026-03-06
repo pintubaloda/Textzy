@@ -40,8 +40,13 @@ public class TataSmsMessageProvider(
         var peId = gateway.DefaultPeId;
         var templateId = gateway.DefaultTemplateId;
         var parsedTemplate = ParseTemplateBody(body ?? string.Empty);
+        var smsConfig = ParseSmsConfigFromMessageType(context?.MessageType);
+        if (!string.IsNullOrWhiteSpace(smsConfig.Sender)) sender = smsConfig.Sender;
+        if (!string.IsNullOrWhiteSpace(smsConfig.PeId)) peId = smsConfig.PeId;
+        if (!string.IsNullOrWhiteSpace(smsConfig.TemplateId)) templateId = smsConfig.TemplateId;
+        var allowTenantOverride = !smsConfig.ForcePlatformConfig && !smsConfig.HasOverrideValues;
 
-        if (context is not null && context.TenantId != Guid.Empty)
+        if (allowTenantOverride && context is not null && context.TenantId != Guid.Empty)
         {
             var tenant = await controlDb.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == context.TenantId, ct);
             if (tenant is not null)
@@ -204,6 +209,39 @@ TenantDone:
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
         if (value.Length <= max) return value;
         return value[..max];
+    }
+
+    private sealed class SmsMessageConfig
+    {
+        public bool ForcePlatformConfig { get; init; }
+        public string Sender { get; init; } = string.Empty;
+        public string PeId { get; init; } = string.Empty;
+        public string TemplateId { get; init; } = string.Empty;
+        public bool HasOverrideValues =>
+            !string.IsNullOrWhiteSpace(Sender) ||
+            !string.IsNullOrWhiteSpace(PeId) ||
+            !string.IsNullOrWhiteSpace(TemplateId);
+    }
+
+    private static SmsMessageConfig ParseSmsConfigFromMessageType(string? messageType)
+    {
+        var raw = (messageType ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(raw)) return new SmsMessageConfig();
+        var parts = raw.Split('|');
+        var markerIndex = Array.FindIndex(parts, p => string.Equals(p, "smscfg", StringComparison.OrdinalIgnoreCase));
+        if (markerIndex < 0) return new SmsMessageConfig();
+
+        var force = markerIndex + 1 < parts.Length && parts[markerIndex + 1] == "1";
+        var sender = markerIndex + 2 < parts.Length ? Uri.UnescapeDataString(parts[markerIndex + 2]) : string.Empty;
+        var peId = markerIndex + 3 < parts.Length ? Uri.UnescapeDataString(parts[markerIndex + 3]) : string.Empty;
+        var templateId = markerIndex + 4 < parts.Length ? Uri.UnescapeDataString(parts[markerIndex + 4]) : string.Empty;
+        return new SmsMessageConfig
+        {
+            ForcePlatformConfig = force,
+            Sender = (sender ?? string.Empty).Trim(),
+            PeId = (peId ?? string.Empty).Trim(),
+            TemplateId = (templateId ?? string.Empty).Trim()
+        };
     }
 
     private async Task<GatewayConfig> ResolveGatewayConfigAsync(CancellationToken ct)

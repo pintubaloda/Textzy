@@ -27,4 +27,8 @@ public class SendMessageRequest
     public string InteractiveFlowScreen { get; set; } = string.Empty;
     public string InteractiveFlowDataJson { get; set; } = "{}";
     public int InteractiveFlowMessageVersion { get; set; } = 3;
+    public string SmsSenderId { get; set; } = string.Empty;
+    public string SmsPeId { get; set; } = string.Empty;
+    public string SmsTemplateId { get; set; } = string.Empty;
+    public bool ForcePlatformSmsConfig { get; set; }
 }

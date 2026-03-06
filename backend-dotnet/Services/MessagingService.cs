@@ -92,6 +92,18 @@ public class MessagingService(
         {
             request.Body = InputGuardService.RequireTrimmed(request.Body, "Message body", 4096);
         }
+        if (request.Channel == ChannelType.Sms)
+        {
+            request.SmsSenderId = (request.SmsSenderId ?? string.Empty).Trim().ToUpperInvariant();
+            request.SmsPeId = (request.SmsPeId ?? string.Empty).Trim();
+            request.SmsTemplateId = (request.SmsTemplateId ?? string.Empty).Trim();
+            if (request.SmsSenderId.Length > 20)
+                throw new InvalidOperationException("SMS sender ID is too long.");
+            if (request.SmsPeId.Length > 80)
+                throw new InvalidOperationException("SMS PE_ID is too long.");
+            if (request.SmsTemplateId.Length > 80)
+                throw new InvalidOperationException("SMS Template_ID is too long.");
+        }
         if (request.UseTemplate && request.Channel == ChannelType.WhatsApp)
         {
             request.TemplateName = InputGuardService.RequireTrimmed(request.TemplateName, "Template name", 128);
@@ -218,6 +230,19 @@ public class MessagingService(
                 : request.IsMedia
                     ? $"media:{request.MediaType}"
                     : "session";
+        if (request.Channel == ChannelType.Sms &&
+            (request.ForcePlatformSmsConfig ||
+             !string.IsNullOrWhiteSpace(request.SmsSenderId) ||
+             !string.IsNullOrWhiteSpace(request.SmsPeId) ||
+             !string.IsNullOrWhiteSpace(request.SmsTemplateId)))
+        {
+            messageType = BuildSmsMessageType(
+                messageType,
+                request.ForcePlatformSmsConfig,
+                request.SmsSenderId,
+                request.SmsPeId,
+                request.SmsTemplateId);
+        }
 
         var smsSegmentInfo = request.Channel == ChannelType.Sms
             ? EstimateSmsSegments(messageBody)
@@ -425,6 +450,18 @@ public class MessagingService(
     ];
 
     private static readonly HashSet<char> Gsm7ExtendedChars = ['^', '{', '}', '\\', '[', '~', ']', '|', '€'];
+
+    private static string BuildSmsMessageType(string baseType, bool forcePlatformConfig, string senderId, string peId, string templateId)
+    {
+        return string.Join("|", [
+            baseType,
+            "smscfg",
+            forcePlatformConfig ? "1" : "0",
+            Uri.EscapeDataString(senderId ?? string.Empty),
+            Uri.EscapeDataString(peId ?? string.Empty),
+            Uri.EscapeDataString(templateId ?? string.Empty)
+        ]);
+    }
 
     private static object ParseFlowDataObject(string json)
     {
