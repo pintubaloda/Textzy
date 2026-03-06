@@ -42,6 +42,8 @@ import { getPlatformSettings, savePlatformSettings } from "@/lib/api";
 const IntegrationsPage = () => {
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
   const [showWebhookDialog, setShowWebhookDialog] = useState(false);
+  const [showApiUsername, setShowApiUsername] = useState(false);
+  const [showApiPassword, setShowApiPassword] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [savingApiConfig, setSavingApiConfig] = useState(false);
   const [apiConfig, setApiConfig] = useState({
@@ -51,6 +53,30 @@ const IntegrationsPage = () => {
     apiKey: "",
     ipWhitelist: "",
   });
+
+  const generateToken = (length = 32) => {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let out = "";
+    for (let i = 0; i < length; i += 1) {
+      out += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return out;
+  };
+
+  const regenerateApiUsername = () => {
+    setApiConfig((p) => ({ ...p, apiUsername: `tx_user_${generateToken(10)}` }));
+    toast.success("API username regenerated");
+  };
+
+  const regenerateApiPassword = () => {
+    setApiConfig((p) => ({ ...p, apiPassword: `tx_pw_${generateToken(32)}` }));
+    toast.success("API password regenerated");
+  };
+
+  const regenerateApiKey = () => {
+    setApiConfig((p) => ({ ...p, apiKey: `tx_live_sk_${generateToken(36)}` }));
+    toast.success("API key regenerated");
+  };
 
   const integrations = [
     {
@@ -248,20 +274,37 @@ const IntegrationsPage = () => {
               <div className="grid grid-cols-1 gap-3">
                 <div>
                   <Label className="text-xs text-slate-600">Username</Label>
-                  <Input
-                    value={apiConfig.apiUsername}
-                    onChange={(e) => setApiConfig((p) => ({ ...p, apiUsername: e.target.value }))}
-                    placeholder="MONEYART"
-                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type={showApiUsername ? "text" : "password"}
+                      value={apiConfig.apiUsername}
+                      onChange={(e) => setApiConfig((p) => ({ ...p, apiUsername: e.target.value }))}
+                      placeholder="MONEYART"
+                    />
+                    <Button variant="ghost" size="icon" onClick={() => setShowApiUsername((v) => !v)} data-testid="toggle-api-username">
+                      {showApiUsername ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={regenerateApiUsername} data-testid="regen-api-username">
+                      <RefreshCw className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
                 <div>
                   <Label className="text-xs text-slate-600">Password</Label>
-                  <Input
-                    type="password"
-                    value={apiConfig.apiPassword}
-                    onChange={(e) => setApiConfig((p) => ({ ...p, apiPassword: e.target.value }))}
-                    placeholder="Enter API password"
-                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type={showApiPassword ? "text" : "password"}
+                      value={apiConfig.apiPassword}
+                      onChange={(e) => setApiConfig((p) => ({ ...p, apiPassword: e.target.value }))}
+                      placeholder="Enter API password"
+                    />
+                    <Button variant="ghost" size="icon" onClick={() => setShowApiPassword((v) => !v)} data-testid="toggle-api-password">
+                      {showApiPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={regenerateApiPassword} data-testid="regen-api-password">
+                      <RefreshCw className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-slate-600">API Key</Label>
@@ -278,6 +321,9 @@ const IntegrationsPage = () => {
                     </Button>
                     <Button variant="ghost" size="icon" onClick={handleCopyApiKey} data-testid="copy-api-key">
                       <Copy className="w-4 h-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={regenerateApiKey} data-testid="regen-api-key">
+                      <RefreshCw className="w-4 h-4" />
                     </Button>
                   </div>
                 </div>
