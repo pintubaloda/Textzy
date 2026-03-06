@@ -483,6 +483,31 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_PlatformRequestLogs_StatusCode_CreatedAtUtc" ON "PlatformRequestLogs" ("StatusCode","CreatedAtUtc");""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_PlatformRequestLogs_TenantId_CreatedAtUtc" ON "PlatformRequestLogs" ("TenantId","CreatedAtUtc");""");
     db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "SmsGatewayRequestLogs" (
+            "Id" uuid PRIMARY KEY,
+            "CreatedAtUtc" timestamp with time zone NOT NULL,
+            "Provider" text NOT NULL,
+            "TenantId" uuid NULL,
+            "Recipient" text NOT NULL,
+            "Sender" text NOT NULL,
+            "PeId" text NOT NULL,
+            "TemplateId" text NOT NULL,
+            "HttpMethod" text NOT NULL,
+            "RequestUrlMasked" text NOT NULL,
+            "RequestPayloadMasked" text NOT NULL,
+            "HttpStatusCode" integer NOT NULL,
+            "ResponseBody" text NOT NULL,
+            "IsSuccess" boolean NOT NULL,
+            "Error" text NOT NULL,
+            "DurationMs" integer NOT NULL,
+            "ProviderMessageId" text NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SmsGatewayRequestLogs_CreatedAtUtc" ON "SmsGatewayRequestLogs" ("CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SmsGatewayRequestLogs_Provider_CreatedAtUtc" ON "SmsGatewayRequestLogs" ("Provider","CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SmsGatewayRequestLogs_TenantId_CreatedAtUtc" ON "SmsGatewayRequestLogs" ("TenantId","CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SmsGatewayRequestLogs_IsSuccess_CreatedAtUtc" ON "SmsGatewayRequestLogs" ("IsSuccess","CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "WebhookReplayGuards" (
             "Id" uuid PRIMARY KEY,
             "Provider" text NOT NULL,

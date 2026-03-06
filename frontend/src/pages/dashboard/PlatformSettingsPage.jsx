@@ -15,6 +15,7 @@ import {
   getPlatformEmailReport,
   getPlatformWebhookLogs,
   getPlatformRequestLogs,
+  getPlatformSmsGatewayLogs,
   listPaymentWebhooks,
   autoCreatePaymentWebhook,
   upsertPaymentWebhook,
@@ -164,6 +165,13 @@ const PlatformSettingsPage = () => {
     timeoutMs: "15000",
     testPhone: "",
     testMessage: "Textzy SMS gateway test message.",
+  });
+  const [smsGatewayLogs, setSmsGatewayLogs] = useState([]);
+  const [smsGatewayLogFilters, setSmsGatewayLogFilters] = useState({
+    tenantId: "",
+    isSuccess: "all",
+    recipientContains: "",
+    limit: "200",
   });
   const [smtpDiag, setSmtpDiag] = useState(null);
   const [emailReport, setEmailReport] = useState(null);
@@ -446,7 +454,17 @@ const PlatformSettingsPage = () => {
           if (!active) return;
           setEmailReport(report);
         } else if (tab === "sms-gateway") {
-          const res = await getPlatformSettings("sms-gateway");
+          const [res, customers, rows] = await Promise.all([
+            getPlatformSettings("sms-gateway"),
+            getPlatformCustomers("").catch(() => []),
+            getPlatformSmsGatewayLogs({
+              provider: "tata",
+              tenantId: smsGatewayLogFilters.tenantId,
+              isSuccess: smsGatewayLogFilters.isSuccess === "all" ? "" : smsGatewayLogFilters.isSuccess === "success",
+              recipientContains: smsGatewayLogFilters.recipientContains,
+              limit: Number(smsGatewayLogFilters.limit || 200),
+            }).catch(() => []),
+          ]);
           const values = res?.values || {};
           if (!active) return;
           setSmsGateway((prev) => ({
@@ -460,6 +478,8 @@ const PlatformSettingsPage = () => {
             defaultTemplateId: values.defaultTemplateId || "",
             timeoutMs: values.timeoutMs || "15000",
           }));
+          setTenants(customers || []);
+          setSmsGatewayLogs(rows || []);
         } else {
           if (tab === "billing-plans") {
             const rows = await listPlatformBillingPlans();
@@ -577,6 +597,10 @@ const PlatformSettingsPage = () => {
     requestLogFilters.statusCode,
     requestLogFilters.pathContains,
     requestLogFilters.limit,
+    smsGatewayLogFilters.tenantId,
+    smsGatewayLogFilters.isSuccess,
+    smsGatewayLogFilters.recipientContains,
+    smsGatewayLogFilters.limit,
     mobileTelemetryDays,
     isAppSettingsTab,
   ]);
@@ -1624,6 +1648,128 @@ const PlatformSettingsPage = () => {
                 >
                   Send Test SMS
                 </Button>
+              </div>
+            </div>
+
+            <div className="md:col-span-2 mt-2 rounded-xl border border-slate-200 bg-white p-4">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-900">TATA Request/Response Report</p>
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    const rows = await getPlatformSmsGatewayLogs({
+                      provider: "tata",
+                      tenantId: smsGatewayLogFilters.tenantId,
+                      isSuccess: smsGatewayLogFilters.isSuccess === "all" ? "" : smsGatewayLogFilters.isSuccess === "success",
+                      recipientContains: smsGatewayLogFilters.recipientContains,
+                      limit: Number(smsGatewayLogFilters.limit || 200),
+                    }).catch(() => []);
+                    setSmsGatewayLogs(rows || []);
+                  }}
+                >
+                  Refresh Logs
+                </Button>
+              </div>
+              <div className="grid gap-2 md:grid-cols-5">
+                <Select
+                  value={smsGatewayLogFilters.tenantId || "all"}
+                  onValueChange={(v) => setSmsGatewayLogFilters((p) => ({ ...p, tenantId: v === "all" ? "" : v }))}
+                >
+                  <SelectTrigger><SelectValue placeholder="Tenant" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All tenants</SelectItem>
+                    {(tenants || []).map((t) => <SelectItem key={t.tenantId} value={t.tenantId}>{t.tenantName}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={smsGatewayLogFilters.isSuccess}
+                  onValueChange={(v) => setSmsGatewayLogFilters((p) => ({ ...p, isSuccess: v }))}
+                >
+                  <SelectTrigger><SelectValue placeholder="Result" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="success">Success</SelectItem>
+                    <SelectItem value="failed">Failed</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  placeholder="Recipient contains..."
+                  value={smsGatewayLogFilters.recipientContains}
+                  onChange={(e) => setSmsGatewayLogFilters((p) => ({ ...p, recipientContains: e.target.value }))}
+                />
+                <Input
+                  placeholder="Limit"
+                  value={smsGatewayLogFilters.limit}
+                  onChange={(e) => setSmsGatewayLogFilters((p) => ({ ...p, limit: e.target.value }))}
+                />
+              </div>
+
+              <div className="mt-3 rounded-lg border border-slate-200 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="text-left px-3 py-2">Time</th>
+                      <th className="text-left px-3 py-2">Tenant</th>
+                      <th className="text-left px-3 py-2">Recipient</th>
+                      <th className="text-left px-3 py-2">Sender</th>
+                      <th className="text-left px-3 py-2">PE_ID</th>
+                      <th className="text-left px-3 py-2">Template_ID</th>
+                      <th className="text-left px-3 py-2">HTTP</th>
+                      <th className="text-left px-3 py-2">Duration</th>
+                      <th className="text-left px-3 py-2">Result</th>
+                      <th className="text-left px-3 py-2">Payload</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(smsGatewayLogs || []).map((x) => (
+                      <tr key={x.id} className="border-t border-slate-100 align-top">
+                        <td className="px-3 py-2 whitespace-nowrap text-slate-600">{x.createdAtUtc ? new Date(x.createdAtUtc).toLocaleString() : "-"}</td>
+                        <td className="px-3 py-2 text-xs text-slate-700">{x.tenantId || "-"}</td>
+                        <td className="px-3 py-2 text-slate-900">{x.recipient || "-"}</td>
+                        <td className="px-3 py-2 text-slate-800">{x.sender || "-"}</td>
+                        <td className="px-3 py-2 text-slate-700">{x.peId || "-"}</td>
+                        <td className="px-3 py-2 text-slate-700">{x.templateId || "-"}</td>
+                        <td className="px-3 py-2 text-slate-700">{x.httpStatusCode || "-"}</td>
+                        <td className="px-3 py-2 text-slate-700">{x.durationMs || 0} ms</td>
+                        <td className="px-3 py-2">
+                          <span className={`inline-flex rounded-full px-2 py-1 text-xs ${x.isSuccess ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+                            {x.isSuccess ? "Success" : "Failed"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <details>
+                            <summary className="cursor-pointer text-xs text-orange-600">View</summary>
+                            <div className="mt-2 space-y-2">
+                              <div>
+                                <div className="text-[11px] font-medium text-slate-500">Request URL</div>
+                                <pre className="max-h-24 overflow-auto rounded border border-slate-100 bg-slate-50 p-2 text-[11px] text-slate-700 whitespace-pre-wrap">{x.requestUrlMasked || "-"}</pre>
+                              </div>
+                              <div>
+                                <div className="text-[11px] font-medium text-slate-500">Request Payload</div>
+                                <pre className="max-h-20 overflow-auto rounded border border-slate-100 bg-slate-50 p-2 text-[11px] text-slate-700 whitespace-pre-wrap">{x.requestPayloadMasked || "-"}</pre>
+                              </div>
+                              <div>
+                                <div className="text-[11px] font-medium text-slate-500">Response</div>
+                                <pre className="max-h-24 overflow-auto rounded border border-slate-100 bg-slate-50 p-2 text-[11px] text-slate-700 whitespace-pre-wrap">{x.responseBody || "-"}</pre>
+                              </div>
+                              {x.error ? (
+                                <div>
+                                  <div className="text-[11px] font-medium text-red-600">Error</div>
+                                  <pre className="max-h-20 overflow-auto rounded border border-red-100 bg-red-50 p-2 text-[11px] text-red-700 whitespace-pre-wrap">{x.error}</pre>
+                                </div>
+                              ) : null}
+                            </div>
+                          </details>
+                        </td>
+                      </tr>
+                    ))}
+                    {(smsGatewayLogs || []).length === 0 && (
+                      <tr>
+                        <td colSpan={10} className="px-3 py-6 text-center text-slate-500">No Tata logs found.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           </CardContent>

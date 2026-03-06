@@ -789,6 +789,26 @@ export async function getPlatformRequestLogs({ tenantId = "", method = "", statu
   return apiGet(`/api/platform/request-logs?${q.toString()}`)
 }
 
+export async function getPlatformSmsGatewayLogs({
+  provider = "",
+  tenantId = "",
+  isSuccess = "",
+  recipientContains = "",
+  fromUtc = "",
+  toUtc = "",
+  limit = 200
+} = {}) {
+  const q = new URLSearchParams()
+  if (provider) q.set("provider", provider)
+  if (tenantId) q.set("tenantId", tenantId)
+  if (isSuccess !== "") q.set("isSuccess", String(isSuccess))
+  if (recipientContains) q.set("recipientContains", recipientContains)
+  if (fromUtc) q.set("fromUtc", fromUtc)
+  if (toUtc) q.set("toUtc", toUtc)
+  q.set("limit", String(limit))
+  return apiGet(`/api/platform/sms-gateway-logs?${q.toString()}`)
+}
+
 export async function getPlatformQueueHealth() {
   return apiGet('/api/platform/queue-health')
 }

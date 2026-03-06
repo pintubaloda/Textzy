@@ -95,7 +95,7 @@ TenantDone:
             throw new InvalidOperationException("TATA gateway credentials are missing. Configure platform scope sms-gateway.");
         if (string.IsNullOrWhiteSpace(sender) || string.IsNullOrWhiteSpace(peId) || string.IsNullOrWhiteSpace(templateId))
             throw new InvalidOperationException("TATA SMS blocked: senderAddress / PE_ID / Template_ID is missing.");
-        return await SendViaTataAsync(recipient, messageText, sender, peId, templateId, gateway, ct);
+        return await SendViaTataAsync(recipient, messageText, sender, peId, templateId, gateway, context, ct);
     }
 
     private async Task<string> SendViaTataAsync(
@@ -105,6 +105,7 @@ TenantDone:
         string peId,
         string templateId,
         GatewayConfig gateway,
+        SmsSendContext? context,
         CancellationToken ct)
     {
         var query = new[]
@@ -120,18 +121,89 @@ TenantDone:
         };
 
         var url = $"{gateway.TataBaseUrl.TrimEnd('?')}{(gateway.TataBaseUrl.Contains('?') ? "&" : "?")}{string.Join("&", query)}";
+        var startedAt = DateTime.UtcNow;
+        var statusCode = 0;
+        var providerId = string.Empty;
+        var responseBody = string.Empty;
+        var error = string.Empty;
+        var isSuccess = false;
         var http = httpClientFactory.CreateClient();
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(TimeSpan.FromMilliseconds(gateway.TimeoutMs));
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        using var res = await http.SendAsync(req, cts.Token);
-        var responseBody = await res.Content.ReadAsStringAsync(cts.Token);
-        if (!res.IsSuccessStatusCode)
-            throw new InvalidOperationException($"TATA SMS failed ({(int)res.StatusCode}): {responseBody}");
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromMilliseconds(gateway.TimeoutMs));
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            using var res = await http.SendAsync(req, cts.Token);
+            statusCode = (int)res.StatusCode;
+            responseBody = await res.Content.ReadAsStringAsync(cts.Token);
+            if (!res.IsSuccessStatusCode)
+            {
+                error = $"TATA SMS failed ({(int)res.StatusCode})";
+                throw new InvalidOperationException($"{error}: {responseBody}");
+            }
 
-        var providerId = TryExtractProviderId(responseBody, "tata");
-        logger.LogInformation("TATA SMS accepted recipient={Recipient} providerId={ProviderId}", recipient, providerId);
-        return providerId;
+            providerId = TryExtractProviderId(responseBody, "tata");
+            isSuccess = true;
+            logger.LogInformation("TATA SMS accepted recipient={Recipient} providerId={ProviderId}", recipient, providerId);
+            return providerId;
+        }
+        catch (Exception ex)
+        {
+            if (string.IsNullOrWhiteSpace(error)) error = ex.Message;
+            logger.LogWarning(ex, "TATA SMS failed recipient={Recipient}", recipient);
+            throw;
+        }
+        finally
+        {
+            await SaveGatewayLogAsync(new SmsGatewayRequestLog
+            {
+                Id = Guid.NewGuid(),
+                CreatedAtUtc = DateTime.UtcNow,
+                Provider = "tata",
+                TenantId = context?.TenantId == Guid.Empty ? null : context?.TenantId,
+                Recipient = Truncate(recipient, 64),
+                Sender = Truncate(sender, 32),
+                PeId = Truncate(peId, 64),
+                TemplateId = Truncate(templateId, 64),
+                HttpMethod = "GET",
+                RequestUrlMasked = Truncate(MaskSensitiveQueryString(url), 4000),
+                RequestPayloadMasked = Truncate($"recipient={recipient};sender={sender};peId={peId};templateId={templateId};messageLength={messageText?.Length ?? 0}", 2000),
+                HttpStatusCode = statusCode,
+                ResponseBody = Truncate(responseBody, 4000),
+                IsSuccess = isSuccess,
+                Error = Truncate(error, 2000),
+                DurationMs = Math.Max(1, (int)(DateTime.UtcNow - startedAt).TotalMilliseconds),
+                ProviderMessageId = Truncate(providerId, 256)
+            }, ct);
+        }
+    }
+
+    private async Task SaveGatewayLogAsync(SmsGatewayRequestLog log, CancellationToken ct)
+    {
+        try
+        {
+            controlDb.SmsGatewayRequestLogs.Add(log);
+            await controlDb.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to persist SMS gateway request log.");
+        }
+    }
+
+    private static string MaskSensitiveQueryString(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+        var masked = Regex.Replace(url, @"([?&]pswd=)[^&]*", "$1***", RegexOptions.IgnoreCase);
+        masked = Regex.Replace(masked, @"([?&]user=)[^&]*", "$1***", RegexOptions.IgnoreCase);
+        return masked;
+    }
+
+    private static string Truncate(string? value, int max)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        if (value.Length <= max) return value;
+        return value[..max];
     }
 
     private async Task<GatewayConfig> ResolveGatewayConfigAsync(CancellationToken ct)
