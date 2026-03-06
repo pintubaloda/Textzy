@@ -358,6 +358,17 @@ const InboxPage = () => {
     vapidPublicKey: "",
     firebaseConfig: null,
   });
+  const loadConversationsRef = useRef(() => {});
+  const loadThreadRef = useRef(() => {});
+  const loadNotesRef = useRef(() => {});
+  const loadSlaRef = useRef(() => {});
+  const markRealtimeEventSeenRef = useRef(() => false);
+  const emitCrossTabEventRef = useRef(() => {});
+  const notifyDesktopRef = useRef(() => {});
+
+  const realtimeSession = getSession();
+  const realtimeTenantSlug = String(realtimeSession?.tenantSlug || "").trim();
+  const realtimeAccessToken = String(realtimeSession?.accessToken || realtimeSession?.token || "");
 
   const mapConversation = (x) => {
     const id = x.id ?? x.Id ?? "";
@@ -541,6 +552,16 @@ const InboxPage = () => {
       // ignore
     }
   }, [desktopNotificationsEnabled, dndUntilUtc]);
+
+  useEffect(() => {
+    loadConversationsRef.current = loadConversations;
+    loadThreadRef.current = loadThread;
+    loadNotesRef.current = loadNotes;
+    loadSlaRef.current = loadSla;
+    markRealtimeEventSeenRef.current = markRealtimeEventSeen;
+    emitCrossTabEventRef.current = emitCrossTabEvent;
+    notifyDesktopRef.current = notifyDesktop;
+  }, [loadConversations, loadThread, loadNotes, loadSla, markRealtimeEventSeen, emitCrossTabEvent, notifyDesktop]);
 
   const updateTabBadge = useCallback((count) => {
     if (typeof document === "undefined") return;
@@ -1133,8 +1154,7 @@ const InboxPage = () => {
   }, [selectedTemplate?.body, templateVars, tokenValueMap]);
 
   useEffect(() => {
-    const s = getSession();
-    if (!s?.tenantSlug) return;
+    if (!realtimeTenantSlug) return;
     let disposed = false;
     let joined = false;
     let startPromise = null;
@@ -1145,72 +1165,73 @@ const InboxPage = () => {
       process.env.VITE_API_BASE ||
       "https://textzy-backend-production.up.railway.app";
     const connection = new signalR.HubConnectionBuilder()
-      .withUrl(`${baseUrl}/hubs/inbox?tenantSlug=${encodeURIComponent(s.tenantSlug)}`, {
+      .withUrl(`${baseUrl}/hubs/inbox?tenantSlug=${encodeURIComponent(realtimeTenantSlug)}`, {
         withCredentials: true,
-        accessTokenFactory: () => s.accessToken || s.token || "",
+        accessTokenFactory: () => realtimeAccessToken,
+        transport: signalR.HttpTransportType.ServerSentEvents | signalR.HttpTransportType.LongPolling,
       })
       .withAutomaticReconnect()
       .build();
     signalRConnectionRef.current = connection;
 
-    const joinRoom = () => connection.invoke("JoinTenantRoom", s.tenantSlug).catch(() => {});
+    const joinRoom = () => connection.invoke("JoinTenantRoom", realtimeTenantSlug).catch(() => {});
     const activeConversationId = () => selectedChatIdRef.current;
     const markState = () => {
       const method = typeof document !== "undefined" && document.hidden ? "SetUserInactive" : "SetUserActive";
-      connection.invoke(method, s.tenantSlug, activeConversationId()).catch(() => {});
+      connection.invoke(method, realtimeTenantSlug, activeConversationId()).catch(() => {});
     };
 
     const refreshMessageViews = () => {
-      loadConversations();
+      loadConversationsRef.current?.();
       const activeId = activeConversationId();
-      if (activeId) loadThread(activeId);
+      if (activeId) loadThreadRef.current?.(activeId);
     };
     connection.on("message.queued", (evt) => {
       const key = `queued:${evt?.id || evt?.recipient || "x"}:${evt?.createdAtUtc || ""}`;
-      if (markRealtimeEventSeen(key)) return;
-      emitCrossTabEvent("message.queued", key);
+      if (markRealtimeEventSeenRef.current?.(key)) return;
+      emitCrossTabEventRef.current?.("message.queued", key);
       refreshMessageViews();
     });
     connection.on("message.sent", (evt) => {
       const key = `sent:${evt?.id || evt?.recipient || "x"}:${evt?.createdAtUtc || ""}`;
-      if (markRealtimeEventSeen(key)) return;
-      emitCrossTabEvent("message.sent", key);
+      if (markRealtimeEventSeenRef.current?.(key)) return;
+      emitCrossTabEventRef.current?.("message.sent", key);
       refreshMessageViews();
       playNotificationSoundRef.current?.(980);
     });
     connection.on("webhook.inbound", (evt) => {
       const key = `inbound:${evt?.phoneNumberId || "x"}:${evt?.inboundCount || 0}:${Date.now() / 1000 | 0}`;
-      if (markRealtimeEventSeen(key)) return;
-      emitCrossTabEvent("webhook.inbound", key);
-      loadConversations();
+      if (markRealtimeEventSeenRef.current?.(key)) return;
+      emitCrossTabEventRef.current?.("webhook.inbound", key);
+      loadConversationsRef.current?.();
       const activeId = activeConversationId();
-      if (activeId) loadThread(activeId);
-      loadSla();
+      if (activeId) loadThreadRef.current?.(activeId);
+      loadSlaRef.current?.();
       playNotificationSoundRef.current?.(760);
-      notifyDesktop("New WhatsApp message", "You received a new customer message.", `inbound:${evt?.phoneNumberId || "tenant"}`);
+      notifyDesktopRef.current?.("New WhatsApp message", "You received a new customer message.", `inbound:${evt?.phoneNumberId || "tenant"}`);
     });
     connection.on("conversation.assigned", () => {
-      loadConversations();
+      loadConversationsRef.current?.();
       const activeId = activeConversationId();
-      if (activeId) loadThread(activeId);
+      if (activeId) loadThreadRef.current?.(activeId);
     });
     connection.on("conversation.transferred", () => {
-      loadConversations();
+      loadConversationsRef.current?.();
       const activeId = activeConversationId();
-      if (activeId) loadThread(activeId);
+      if (activeId) loadThreadRef.current?.(activeId);
     });
-    connection.on("conversation.labels", () => loadConversations());
+    connection.on("conversation.labels", () => loadConversationsRef.current?.());
     connection.on("conversation.note", () => {
       const activeId = activeConversationId();
-      if (activeId) loadNotes(activeId);
+      if (activeId) loadNotesRef.current?.(activeId);
     });
     connection.onreconnected(() => {
       joinRoom();
       markState();
-      loadConversations();
+      loadConversationsRef.current?.();
       const activeId = activeConversationId();
-      if (activeId) loadThread(activeId);
-      loadSla();
+      if (activeId) loadThreadRef.current?.(activeId);
+      loadSlaRef.current?.();
     });
     connection.on("conversation.typing", (e) => {
       const activeId = activeConversationId();
@@ -1241,7 +1262,7 @@ const InboxPage = () => {
           markState();
           if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
           heartbeatIntervalRef.current = setInterval(() => {
-            connection.invoke("Heartbeat", s.tenantSlug, activeConversationId()).catch(() => {});
+            connection.invoke("Heartbeat", realtimeTenantSlug, activeConversationId()).catch(() => {});
           }, 30000);
         });
       })
@@ -1259,7 +1280,7 @@ const InboxPage = () => {
         document.removeEventListener("visibilitychange", markState);
       }
       if (joined) {
-        connection.invoke("LeaveTenantRoom", s.tenantSlug).catch(() => {});
+        connection.invoke("LeaveTenantRoom", realtimeTenantSlug).catch(() => {});
       }
       Promise.resolve(startPromise).finally(() => {
         if (connection.state === signalR.HubConnectionState.Connected || connection.state === signalR.HubConnectionState.Reconnecting) {
@@ -1267,7 +1288,7 @@ const InboxPage = () => {
         }
       });
     };
-  }, [emitCrossTabEvent, loadConversations, loadNotes, loadSla, loadThread, markRealtimeEventSeen, notifyDesktop]);
+  }, [realtimeTenantSlug, realtimeAccessToken]);
 
   useEffect(() => {
     const conn = signalRConnectionRef.current;
