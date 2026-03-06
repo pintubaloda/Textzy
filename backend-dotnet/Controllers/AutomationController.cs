@@ -431,7 +431,14 @@ public class AutomationController(
     public async Task<IActionResult> ListFlows(CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
-        if (!TryEnsureAutomationSchema(out _)) return Ok(Array.Empty<object>());
+        var schemaReady = TryEnsureAutomationSchema(out var schemaError);
+        if (!schemaReady)
+        {
+            logger.LogWarning(
+                "Automation schema ensure failed for tenant {TenantId}; continuing with best-effort flow read. Error={Error}",
+                tenancy.TenantId,
+                schemaError?.ToString() ?? "unknown");
+        }
 
         List<AutomationFlow> flows;
         try
