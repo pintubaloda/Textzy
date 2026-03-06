@@ -56,6 +56,21 @@ public class SmsWebhookController(
 
         var message = await tenantDb.Messages.FirstOrDefaultAsync(
             x => x.TenantId == tenant.Id && (x.ProviderMessageId == providerMessageId || x.ProviderMessageId.EndsWith("_" + providerMessageId)), ct);
+        if (message is null && !string.IsNullOrWhiteSpace(phone))
+        {
+            // Fallback for providers that returned an unparseable send response id:
+            // map by recipient + latest pending SMS message.
+            var recentFrom = DateTime.UtcNow.AddDays(-3);
+            message = await tenantDb.Messages
+                .Where(x => x.TenantId == tenant.Id &&
+                            x.Channel == ChannelType.Sms &&
+                            x.Recipient == phone &&
+                            x.CreatedAtUtc >= recentFrom &&
+                            x.Status != MessageStateMachine.Delivered &&
+                            x.Status != MessageStateMachine.Failed)
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .FirstOrDefaultAsync(ct);
+        }
         if (message is null)
         {
             logger.LogWarning("TATA DLR ignored: message not found tenant={TenantSlug} providerMessageId={ProviderMessageId}", tenantSlug, providerMessageId);
@@ -68,6 +83,14 @@ public class SmsWebhookController(
             message.Status = MessageStateMachine.Delivered;
         else if (normalized == "failed")
             message.Status = MessageStateMachine.Failed;
+        else if (normalized == "submitted")
+            message.Status = MessageStateMachine.AcceptedByMeta;
+
+        if (string.IsNullOrWhiteSpace(message.ProviderMessageId) ||
+            !message.ProviderMessageId.EndsWith("_" + providerMessageId, StringComparison.OrdinalIgnoreCase))
+        {
+            message.ProviderMessageId = $"tata_{providerMessageId}";
+        }
 
         if (!string.IsNullOrWhiteSpace(reason))
             message.LastError = redactor.RedactText(reason);
@@ -101,7 +124,9 @@ public class SmsWebhookController(
         var ledger = await tenantDb.SmsBillingLedgers.FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.MessageId == message.Id, ct);
         if (ledger is not null)
         {
-            ledger.ProviderMessageId = string.IsNullOrWhiteSpace(ledger.ProviderMessageId) ? message.ProviderMessageId ?? providerMessageId : ledger.ProviderMessageId;
+            if (string.IsNullOrWhiteSpace(ledger.ProviderMessageId) ||
+                !ledger.ProviderMessageId.EndsWith("_" + providerMessageId, StringComparison.OrdinalIgnoreCase))
+                ledger.ProviderMessageId = $"tata_{providerMessageId}";
             ledger.DeliveryState = normalized;
             ledger.UpdatedAtUtc = DateTime.UtcNow;
             ledger.Notes = string.IsNullOrWhiteSpace(reason) ? deliveryMessage : $"{deliveryMessage} ({reason})";
@@ -210,10 +235,12 @@ public class SmsWebhookController(
         var s = (status ?? string.Empty).Trim().ToLowerInvariant();
         var r = (reason ?? string.Empty).Trim().ToLowerInvariant();
         var full = $"{s} {r}";
-        if (full.Contains("deliver")) return "delivered";
-        if (full.Contains("failed") || full.Contains("reject") || full.Contains("undeliver") || full.Contains("invalid") || full.Contains("dlt"))
+        // Common DLR states across Indian gateways:
+        // delivered/delivrd | failed/undeliv/rejectd/expired
+        if (full.Contains("deliver") || full.Contains("deliv")) return "delivered";
+        if (full.Contains("failed") || full.Contains("fail") || full.Contains("reject") || full.Contains("undeliv") || full.Contains("invalid") || full.Contains("expired") || full.Contains("dlt"))
             return "failed";
-        if (full.Contains("submit") || full.Contains("accept") || full.Contains("sent"))
+        if (full.Contains("submit") || full.Contains("accept") || full.Contains("sent") || full.Contains("queued") || full.Contains("process"))
             return "submitted";
         return "unknown";
     }
