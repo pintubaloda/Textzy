@@ -182,7 +182,8 @@ async function baseFetch(path, options = {}, useAuth = true) {
     '/api/auth/',
     '/api/public/',
     '/api/platform/',
-    '/api/payment/webhooks'
+    '/api/payment/webhooks',
+    '/api/payments/webhook/'
   ]
   const requiresTenant = useAuth && !tenantOptionalPrefixes.some((p) => path.startsWith(p))
   if (requiresTenant && s.tenantSlug) headers['X-Tenant-Slug'] = s.tenantSlug
@@ -522,6 +523,10 @@ export async function createPairingQr(payload = {}) {
   return apiPost('/api/auth/devices/pair-qr', payload)
 }
 
+export async function getPairingQrImage() {
+  return apiGet('/api/auth/devices/pair-qr-image')
+}
+
 export async function removeConnectedDevice(deviceId) {
   return apiDelete(`/api/auth/devices/${encodeURIComponent(deviceId)}`)
 }
@@ -772,15 +777,27 @@ export async function createSmsSender(payload) {
 }
 
 export async function updateSmsSender(id, payload) {
-  return apiPut(`/api/sms/senders/${id}`, payload)
+  try {
+    return await apiPut(`/api/sms/senders/${id}`, payload)
+  } catch {
+    return apiPut(`/api/sms/sender/${id}`, payload)
+  }
 }
 
 export async function archiveSmsSender(id) {
-  return apiDelete(`/api/sms/senders/${id}`)
+  try {
+    return await apiDelete(`/api/sms/senders/${id}`)
+  } catch {
+    return apiDelete(`/api/sms/sender/${id}`)
+  }
 }
 
 export async function getSmsSenderStats() {
-  return apiGet('/api/sms/senders/stats')
+  try {
+    return await apiGet('/api/sms/senders/stats')
+  } catch {
+    return apiGet('/api/sms/sender/stats')
+  }
 }
 
 export async function getPlatformWebhookLogs({ provider = "", limit = 100 } = {}) {
@@ -1072,6 +1089,21 @@ export async function downloadAllBillingInvoices() {
   return apiGetBlob('/api/billing/invoices/download-all')
 }
 
+export async function verifyBillingInvoice(invoiceId) {
+  return apiGet(`/api/billing/invoices/${encodeURIComponent(invoiceId)}/verify`)
+}
+
+export async function exportBillingReconciliation(month = '') {
+  const q = new URLSearchParams()
+  if (month) q.set('month', month)
+  const qs = q.toString()
+  return apiGet(`/api/billing/reconciliation/export${qs ? `?${qs}` : ''}`)
+}
+
+export async function resyncBillingUsage() {
+  return apiPost('/api/billing/usage/resync', {})
+}
+
 export async function getPublicPlans() {
   const res = await fetch(`${API_BASE}/api/public/plans`)
   if (!res.ok) throw new Error(`GET /api/public/plans failed (${res.status})`)
@@ -1092,4 +1124,214 @@ export async function getNotificationSettings() {
 
 export async function saveNotificationSettings(payload) {
   return apiPut('/api/settings/notifications', payload)
+}
+
+export async function updateContactGroupById(id, payload) {
+  return apiPut(`/api/contact-groups/${encodeURIComponent(id)}`, payload || {})
+}
+
+export async function deleteContactGroupById(id) {
+  return apiDelete(`/api/contact-groups/${encodeURIComponent(id)}`)
+}
+
+export async function upsertContactCustomFields(contactId, payload) {
+  return apiPost(`/api/contact-data/contacts/${encodeURIComponent(contactId)}/custom-fields`, payload || {})
+}
+
+export async function getWabaStatus() {
+  return apiGet('/api/waba/status')
+}
+
+export async function getMessageMedia(mediaId) {
+  return apiGet(`/api/messages/media/${encodeURIComponent(mediaId)}`)
+}
+
+// ---- Additional explicit API helpers (safe wiring, no behavior change) ----
+export async function getAutomationNodeTypeCatalog() {
+  return apiGet('/api/automation/catalogs/node-types')
+}
+
+export async function getAutomationFlowJsonSchema() {
+  return apiGet('/api/automation/flow-json-schema')
+}
+
+export async function getAutomationFlow(flowId) {
+  return apiGet(`/api/automation/flows/${encodeURIComponent(flowId)}`)
+}
+
+export async function getAutomationFlowVersions(flowId) {
+  return apiGet(`/api/automation/flows/${encodeURIComponent(flowId)}/versions`)
+}
+
+export async function requestAutomationFlowApproval(flowId) {
+  return apiPost(`/api/automation/flows/${encodeURIComponent(flowId)}/approvals/request`, {})
+}
+
+export async function decideAutomationFlowApproval(flowId, approvalId, payload) {
+  return apiPost(`/api/automation/flows/${encodeURIComponent(flowId)}/approvals/${encodeURIComponent(approvalId)}/decide`, payload || {})
+}
+
+export async function publishAutomationFlowVersion(flowId, versionId, payload = {}) {
+  return apiPost(`/api/automation/flows/${encodeURIComponent(flowId)}/versions/${encodeURIComponent(versionId)}/publish`, payload)
+}
+
+export async function rollbackAutomationFlowVersion(flowId, versionId, payload = {}) {
+  return apiPost(`/api/automation/flows/${encodeURIComponent(flowId)}/versions/${encodeURIComponent(versionId)}/rollback`, payload)
+}
+
+export async function validateAutomationFlowVersion(flowId, versionId, payload = {}) {
+  return apiPost(`/api/automation/flows/${encodeURIComponent(flowId)}/versions/${encodeURIComponent(versionId)}/validate`, payload)
+}
+
+export async function unpublishAutomationFlow(flowId) {
+  return apiPost(`/api/automation/flows/${encodeURIComponent(flowId)}/unpublish`, {})
+}
+
+export async function addAutomationFlowNode(flowId, payload) {
+  return apiPost(`/api/automation/flows/${encodeURIComponent(flowId)}/nodes`, payload || {})
+}
+
+export async function runAutomationFlow(flowId, payload) {
+  return apiPost(`/api/automation/flows/${encodeURIComponent(flowId)}/run`, payload || {})
+}
+
+export async function simulateAutomationFlow(flowId, payload) {
+  return apiPost(`/api/automation/flows/${encodeURIComponent(flowId)}/simulate`, payload || {})
+}
+
+export async function sendAutomationFlow(flowId, payload) {
+  return apiPost(`/api/automation/flows/${encodeURIComponent(flowId)}/send-flow`, payload || {})
+}
+
+export async function importMetaFlowIntoAutomation(flowId, payload) {
+  return apiPost(`/api/automation/flows/${encodeURIComponent(flowId)}/import-meta`, payload || {})
+}
+
+export async function getAutomationFlowRuns(flowId = '') {
+  const q = new URLSearchParams()
+  if (flowId) q.set('flowId', flowId)
+  const qs = q.toString()
+  return apiGet(`/api/automation/runs${qs ? `?${qs}` : ''}`)
+}
+
+export async function getAutomationFlowRun(runId) {
+  return apiGet(`/api/automation/runs/${encodeURIComponent(runId)}`)
+}
+
+export async function getAutomationTriggerAudit(params = {}) {
+  const q = new URLSearchParams()
+  if (params.flowId) q.set('flowId', params.flowId)
+  if (params.inboundMessageId) q.set('inboundMessageId', params.inboundMessageId)
+  if (params.matched !== undefined && params.matched !== null && params.matched !== '') q.set('matched', String(params.matched))
+  if (params.take) q.set('take', String(params.take))
+  const qs = q.toString()
+  return apiGet(`/api/automation/trigger-audit${qs ? `?${qs}` : ''}`)
+}
+
+export async function getAutomationMetricsFlows(days = 7) {
+  return apiGet(`/api/automation/metrics/flows?days=${encodeURIComponent(String(days))}`)
+}
+
+export async function getAutomationMetricsFlowEvents(params = {}) {
+  const q = new URLSearchParams()
+  if (params.flowId) q.set('flowId', params.flowId)
+  if (params.days) q.set('days', String(params.days))
+  if (params.limit) q.set('limit', String(params.limit))
+  const qs = q.toString()
+  return apiGet(`/api/automation/metrics/flows/events${qs ? `?${qs}` : ''}`)
+}
+
+export async function getMetaFlow(metaFlowId) {
+  return apiGet(`/api/automation/meta/flows/${encodeURIComponent(metaFlowId)}`)
+}
+
+export async function publishMetaFlow(metaFlowId, payload = {}) {
+  return apiPost(`/api/automation/meta/flows/${encodeURIComponent(metaFlowId)}/publish`, payload)
+}
+
+export async function getConversationMessages(conversationId, { take = 80, cursor = '' } = {}) {
+  const q = new URLSearchParams()
+  if (take) q.set('take', String(take))
+  if (cursor) q.set('cursor', cursor)
+  return apiGet(`/api/inbox/conversations/${encodeURIComponent(conversationId)}/messages?${q.toString()}`)
+}
+
+export async function assignConversation(conversationId, payload) {
+  return apiPost(`/api/inbox/conversations/${encodeURIComponent(conversationId)}/assign`, payload || {})
+}
+
+export async function transferConversation(conversationId, payload) {
+  return apiPost(`/api/inbox/conversations/${encodeURIComponent(conversationId)}/transfer`, payload || {})
+}
+
+export async function updateConversationLabels(conversationId, labels = []) {
+  return apiPost(`/api/inbox/conversations/${encodeURIComponent(conversationId)}/labels`, { labels })
+}
+
+export async function getConversationNotes(conversationId, take = 50) {
+  return apiGet(`/api/inbox/conversations/${encodeURIComponent(conversationId)}/notes?take=${encodeURIComponent(String(take))}`)
+}
+
+export async function addConversationNote(conversationId, body) {
+  return apiPost(`/api/inbox/conversations/${encodeURIComponent(conversationId)}/notes`, { body })
+}
+
+export async function updateTeamMemberRole(userId, role) {
+  return apiPatch(`/api/team/members/${encodeURIComponent(userId)}/role`, { role })
+}
+
+export async function removeTeamMember(userId) {
+  return apiDelete(`/api/team/members/${encodeURIComponent(userId)}`)
+}
+
+export async function getTeamMemberActivity(userId, limit = 50) {
+  return apiGet(`/api/team/members/${encodeURIComponent(userId)}/activity?limit=${encodeURIComponent(String(limit))}`)
+}
+
+export async function getTeamMemberPermissions(userId) {
+  return apiGet(`/api/team/members/${encodeURIComponent(userId)}/permissions`)
+}
+
+export async function updateTeamMemberPermissions(userId, overrides = []) {
+  return apiPut(`/api/team/members/${encodeURIComponent(userId)}/permissions`, { overrides })
+}
+
+export async function cancelTeamInvitation(email) {
+  return apiPost('/api/team/invitations/cancel', { email })
+}
+
+export async function templateLifecycleSubmit(id) {
+  return apiPost(`/api/template-lifecycle/${encodeURIComponent(id)}/submit`, {})
+}
+
+export async function templateLifecycleApprove(id) {
+  return apiPost(`/api/template-lifecycle/${encodeURIComponent(id)}/approve`, {})
+}
+
+export async function templateLifecycleReject(id) {
+  return apiPost(`/api/template-lifecycle/${encodeURIComponent(id)}/reject`, {})
+}
+
+export async function templateLifecycleDisable(id) {
+  return apiPost(`/api/template-lifecycle/${encodeURIComponent(id)}/disable`, {})
+}
+
+export async function templateLifecycleNewVersion(id) {
+  return apiPost(`/api/template-lifecycle/${encodeURIComponent(id)}/version`, {})
+}
+
+export async function updateCampaignById(id, payload) {
+  return apiPut(`/api/campaigns/${encodeURIComponent(id)}`, payload || {})
+}
+
+export async function deleteCampaignById(id) {
+  return apiDelete(`/api/campaigns/${encodeURIComponent(id)}`)
+}
+
+export async function updateContactById(id, payload) {
+  return apiPut(`/api/contacts/${encodeURIComponent(id)}`, payload || {})
+}
+
+export async function deleteContactById(id) {
+  return apiDelete(`/api/contacts/${encodeURIComponent(id)}`)
 }
