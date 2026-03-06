@@ -1375,14 +1375,25 @@ export default function AutomationsPage() {
   /* ── API ── */
   const loadAll = useCallback(async () => {
     try {
-      const [f, l] = await Promise.all([
+      const [flowsRes, limitsRes] = await Promise.allSettled([
         apiGet("/api/automation/flows"),
         apiGet("/api/automation/limits"),
       ]);
-      const normalizedFlows = (f || []).map(normalizeFlow);
+
+      const flowsRaw = flowsRes.status === "fulfilled" ? (flowsRes.value || []) : [];
+      const limitsRaw = limitsRes.status === "fulfilled" ? (limitsRes.value || null) : null;
+
+      const normalizedFlows = (flowsRaw || []).map(normalizeFlow);
       setFlows(normalizedFlows);
-      setLimits(l || null);
+      setLimits(limitsRaw);
       if (normalizedFlows.length) setSelectedFlowId((prev) => prev || String(normalizedFlows[0].id));
+
+      if (flowsRes.status === "rejected") {
+        toast.error("Failed to load automation bots");
+      }
+      if (limitsRes.status === "rejected") {
+        toast.error("Automation limits unavailable");
+      }
 
       // Load secondary data in background to keep first paint fast.
       Promise.all([
@@ -1396,7 +1407,9 @@ export default function AutomationsPage() {
         setBillingLimits(planRes?.plan?.limits || {});
         setTriggerAuditSummary(triggerSummary || null);
       }).catch(() => {});
-    } catch { toast.error("Failed to load automations"); }
+    } catch {
+      toast.error("Failed to load automations");
+    }
   }, [normalizeFlow]);
 
   const loadFlowDetails = useCallback(async (flowId) => {
