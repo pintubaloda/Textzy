@@ -31,6 +31,9 @@ public class PublicMessagesController(
             ApiKey = q["apikey"].FirstOrDefault() ?? q["apiKey"].FirstOrDefault() ?? string.Empty,
             TenantSlug = q["tenantSlug"].FirstOrDefault() ?? string.Empty,
             Channel = q["channel"].FirstOrDefault() ?? "sms",
+            Sender = q["sender"].FirstOrDefault() ?? q["senderid"].FirstOrDefault() ?? string.Empty,
+            PeId = q["PE_ID"].FirstOrDefault() ?? q["peid"].FirstOrDefault() ?? q["entityid"].FirstOrDefault() ?? string.Empty,
+            TemplateId = q["Template_ID"].FirstOrDefault() ?? q["templateid"].FirstOrDefault() ?? string.Empty,
             IdempotencyKey = q["idempotencyKey"].FirstOrDefault() ?? string.Empty
         };
         return await SendCore(req, ct);
@@ -88,6 +91,15 @@ public class PublicMessagesController(
         if (string.IsNullOrWhiteSpace(message)) return BadRequest("msg is required.");
 
         var channel = ParseChannel(request.Channel);
+        if (channel == ChannelType.Sms)
+        {
+            var sender = (request.Sender ?? string.Empty).Trim();
+            var peId = (request.PeId ?? string.Empty).Trim();
+            var templateId = (request.TemplateId ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(sender)) return BadRequest("sender is required for SMS DLT.");
+            if (string.IsNullOrWhiteSpace(peId)) return BadRequest("PE_ID is required for SMS DLT.");
+            if (string.IsNullOrWhiteSpace(templateId)) return BadRequest("Template_ID is required for SMS DLT.");
+        }
         var idempotency = string.IsNullOrWhiteSpace(request.IdempotencyKey)
             ? $"public-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{Guid.NewGuid():N}"[..48]
             : request.IdempotencyKey.Trim();
@@ -213,7 +225,9 @@ public class PublicMessagesController(
         public string ApiKey { get; set; } = string.Empty;
         public string TenantSlug { get; set; } = string.Empty;
         public string Channel { get; set; } = "sms";
+        public string Sender { get; set; } = string.Empty;
+        public string PeId { get; set; } = string.Empty;
+        public string TemplateId { get; set; } = string.Empty;
         public string IdempotencyKey { get; set; } = string.Empty;
     }
 }
-

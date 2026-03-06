@@ -104,7 +104,7 @@
     <section class="card">
       <h2>1) Browser-Simple Send API <span class="badge">No Bearer / No CSRF</span></h2>
       <p>Use backend URL directly from browser or server. Authentication uses query credentials.</p>
-      <pre>GET https://textzy-backend-production.up.railway.app/api/public/messages/send?recipient=91XXXXXXXXXX&amp;msg=YOUR_MESSAGE&amp;user=MONEYART&amp;pswd=YOUR_PASSWORD&amp;apikey=YOUR_API_KEY&amp;tenantSlug=moneyart&amp;channel=sms</pre>
+      <pre>GET https://textzy-backend-production.up.railway.app/api/public/messages/send?recipient=91XXXXXXXXXX&amp;msg=APPROVED_TEMPLATE_TEXT&amp;user=MONEYART&amp;pswd=YOUR_PASSWORD&amp;apikey=YOUR_API_KEY&amp;tenantSlug=moneyart&amp;channel=sms&amp;sender=MNYART&amp;PE_ID=1601100000000006533&amp;Template_ID=1107170370949382709</pre>
       <h3>Required Query Params</h3>
       <ul>
         <li><code>recipient</code></li>
@@ -112,12 +112,16 @@
         <li><code>user</code></li>
         <li><code>pswd</code></li>
         <li><code>apikey</code></li>
+        <li><code>sender</code> (DLT-approved Sender ID)</li>
+        <li><code>PE_ID</code> (DLT-approved Entity ID)</li>
+        <li><code>Template_ID</code> (DLT-approved Template ID)</li>
       </ul>
       <h3>Optional</h3>
       <ul>
         <li><code>tenantSlug</code> (if omitted, fallback to <code>user</code>)</li>
         <li><code>channel</code>: <code>sms</code> or <code>whatsapp</code></li>
       </ul>
+      <div class="note">For SMS in India DLT mode, message text must match your approved template policy.</div>
       <div class="note">Always call backend domain, not frontend domain.</div>
     </section>
 

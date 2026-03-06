@@ -62,14 +62,18 @@ If one account has multiple projects/tenants:
 ### 4.0 Browser-simple URL mode (no bearer/CSRF/headers)
 You can call this directly using query parameters:
 
-`GET https://textzy-backend-production.up.railway.app/api/public/messages/send?recipient=91XXXXXXXXXX&msg=Hello&user=MONEYART&pswd=YOUR_PASSWORD&apikey=YOUR_API_KEY&tenantSlug=moneyart&channel=sms`
+`GET https://textzy-backend-production.up.railway.app/api/public/messages/send?recipient=91XXXXXXXXXX&msg=APPROVED_TEMPLATE_TEXT&user=MONEYART&pswd=YOUR_PASSWORD&apikey=YOUR_API_KEY&tenantSlug=moneyart&channel=sms&sender=MNYART&PE_ID=1601100000000006533&Template_ID=1107170370949382709`
 
 Notes:
 - Use **backend URL** (`textzy-backend-production...`), not frontend URL.
 - HTTPS required.
 - Optional IP whitelist enforced if configured.
-- Required query params: `recipient`, `msg`, `user`, `pswd`, `apikey`
+- Required query params (SMS DLT mode): `recipient`, `msg`, `user`, `pswd`, `apikey`, `sender`, `PE_ID`, `Template_ID`
 - `tenantSlug` optional if `user` equals tenant slug.
+- `msg` must follow approved DLT template content.
+- `sender` must be DLT-approved sender ID.
+- `PE_ID` must be DLT-approved Entity ID.
+- `Template_ID` must be DLT-approved Template ID.
 
 ## 4.1 Send SMS through Textzy
 Endpoint:
@@ -92,6 +96,10 @@ Body example:
 
 Important:
 - SMS credits are checked before send.
+- For India DLT, sender/entity/template details must be approved and mapped:
+  - `SmsSenderId` (Sender ID)
+  - `DltEntityId` (PE ID / Entity ID)
+  - `DltTemplateId` (Template ID)
 - Segment billing:
   - English: 160 chars (single), 153 per segment (multipart)
   - Unicode: 70 chars (single), 67 per segment (multipart)
