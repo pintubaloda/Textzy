@@ -137,7 +137,7 @@ const IntegrationsPage = () => {
   };
 
   const openApiDocs = () => {
-    window.open("/docs/API_INTEGRATION_SIMPLE_GUIDE.md", "_blank", "noopener,noreferrer");
+    window.open("/docs/api-integration.html", "_blank", "noopener,noreferrer");
   };
 
   const openFullDocs = () => {

@@ -28,7 +28,48 @@ public class TenantMiddleware(RequestDelegate next)
         var isPaymentWebhook = path.StartsWith("/api/payments/webhook", StringComparison.OrdinalIgnoreCase);
         var isAuthPath = path.StartsWith("/api/auth/", StringComparison.OrdinalIgnoreCase);
         var isPublicPath = path.StartsWith("/api/public", StringComparison.OrdinalIgnoreCase);
-        if (isSwaggerPath || isHubPath || isWabaWebhook || isPaymentWebhook || isAuthPath || isPublicPath)
+        var isPublicMessagesSendPath = path.StartsWith("/api/public/messages/send", StringComparison.OrdinalIgnoreCase);
+        if (isPublicMessagesSendPath)
+        {
+            var msgTenantSlug = context.Request.Query["tenantSlug"].FirstOrDefault()?.Trim();
+            if (string.IsNullOrWhiteSpace(msgTenantSlug))
+                msgTenantSlug = context.Request.Headers["X-Tenant-Slug"].FirstOrDefault()?.Trim();
+            if (string.IsNullOrWhiteSpace(msgTenantSlug))
+                msgTenantSlug = context.Request.Query["user"].FirstOrDefault()?.Trim();
+
+            if (string.IsNullOrWhiteSpace(msgTenantSlug))
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await context.Response.WriteAsync("tenantSlug (or user) query parameter is required.");
+                return;
+            }
+
+            msgTenantSlug = msgTenantSlug.ToLowerInvariant();
+            var msgTenant = db.Tenants.FirstOrDefault(t => t.Slug == msgTenantSlug);
+            if (msgTenant is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                await context.Response.WriteAsync("Tenant not found.");
+                return;
+            }
+
+            tenancy.SetTenant(msgTenant.Id, msgTenant.Slug, msgTenant.DataConnectionString);
+            try
+            {
+                await schemaGuard.EnsureContactEncryptionColumnsAsync(msgTenant.Id, msgTenant.DataConnectionString, context.RequestAborted);
+            }
+            catch
+            {
+                context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                await context.Response.WriteAsync("Tenant schema initialization failed.");
+                return;
+            }
+
+            await _next(context);
+            return;
+        }
+
+        if (isSwaggerPath || isHubPath || isWabaWebhook || isPaymentWebhook || isAuthPath || (isPublicPath && !isPublicMessagesSendPath))
         {
             await _next(context);
             return;

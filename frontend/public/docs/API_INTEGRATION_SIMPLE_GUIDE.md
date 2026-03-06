@@ -59,6 +59,18 @@ If one account has multiple projects/tenants:
 
 ## 4. SMS API (TATA-oriented)
 
+### 4.0 Browser-simple URL mode (no bearer/CSRF/headers)
+You can call this directly using query parameters:
+
+`GET https://textzy-backend-production.up.railway.app/api/public/messages/send?recipient=91XXXXXXXXXX&msg=Hello&user=MONEYART&pswd=YOUR_PASSWORD&apikey=YOUR_API_KEY&tenantSlug=moneyart&channel=sms`
+
+Notes:
+- Use **backend URL** (`textzy-backend-production...`), not frontend URL.
+- HTTPS required.
+- Optional IP whitelist enforced if configured.
+- Required query params: `recipient`, `msg`, `user`, `pswd`, `apikey`
+- `tenantSlug` optional if `user` equals tenant slug.
+
 ## 4.1 Send SMS through Textzy
 Endpoint:
 - `POST /api/messages/send`
