@@ -37,7 +37,7 @@ import {
   Search,
 } from "lucide-react";
 import { toast } from "sonner";
-import { getPlatformSettings, savePlatformSettings } from "@/lib/api";
+import { getPlatformSettings, getSession, savePlatformSettings } from "@/lib/api";
 
 const IntegrationsPage = () => {
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
@@ -53,6 +53,7 @@ const IntegrationsPage = () => {
     apiKey: "",
     ipWhitelist: "",
   });
+  const session = getSession();
 
   const generateToken = (length = 32) => {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -197,6 +198,24 @@ const IntegrationsPage = () => {
     toast.success("API key copied to clipboard");
   };
 
+  const handleCopyApiUsername = () => {
+    if (!apiConfig.apiUsername) {
+      toast.error("API username is empty");
+      return;
+    }
+    navigator.clipboard.writeText(apiConfig.apiUsername);
+    toast.success("API username copied");
+  };
+
+  const handleCopyApiPassword = () => {
+    if (!apiConfig.apiPassword) {
+      toast.error("API password is empty");
+      return;
+    }
+    navigator.clipboard.writeText(apiConfig.apiPassword);
+    toast.success("API password copied");
+  };
+
   const saveApiIntegration = async () => {
     try {
       setSavingApiConfig(true);
@@ -263,6 +282,14 @@ const IntegrationsPage = () => {
               />
             </div>
 
+            <div className="rounded-lg border border-slate-200 p-3 bg-white">
+              <div className="text-xs font-semibold text-slate-700">Current Login Project</div>
+              <div className="mt-1 text-sm text-slate-900">{session.projectName || session.tenantSlug || "Not selected"}</div>
+              <div className="mt-2 text-xs text-slate-500">
+                Tenant Slug: <span className="font-mono text-slate-700">{session.tenantSlug || "-"}</span>
+              </div>
+            </div>
+
             <div className="p-4 bg-slate-50 rounded-lg">
               <div className="flex items-center justify-between mb-2">
                 <Label className="text-sm font-medium">API Credentials</Label>
@@ -284,6 +311,9 @@ const IntegrationsPage = () => {
                     <Button variant="ghost" size="icon" onClick={() => setShowApiUsername((v) => !v)} data-testid="toggle-api-username">
                       {showApiUsername ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </Button>
+                    <Button variant="ghost" size="icon" onClick={handleCopyApiUsername} data-testid="copy-api-username">
+                      <Copy className="w-4 h-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" onClick={regenerateApiUsername} data-testid="regen-api-username">
                       <RefreshCw className="w-4 h-4" />
                     </Button>
@@ -300,6 +330,9 @@ const IntegrationsPage = () => {
                     />
                     <Button variant="ghost" size="icon" onClick={() => setShowApiPassword((v) => !v)} data-testid="toggle-api-password">
                       {showApiPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={handleCopyApiPassword} data-testid="copy-api-password">
+                      <Copy className="w-4 h-4" />
                     </Button>
                     <Button variant="ghost" size="icon" onClick={regenerateApiPassword} data-testid="regen-api-password">
                       <RefreshCw className="w-4 h-4" />
