@@ -345,6 +345,19 @@ public class AutomationController(
                 .Where(x => x.TenantId == tenancy.TenantId)
                 .OrderByDescending(x => x.UpdatedAtUtc)
                 .ToListAsync(ct);
+
+            if (flows.Count == 0)
+            {
+                var repaired = await TryRebindLegacyAutomationRowsAsync(ct);
+                if (repaired > 0)
+                {
+                    flows = await db.AutomationFlows
+                        .AsNoTracking()
+                        .Where(x => x.TenantId == tenancy.TenantId)
+                        .OrderByDescending(x => x.UpdatedAtUtc)
+                        .ToListAsync(ct);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -429,6 +442,40 @@ public class AutomationController(
                 lastRunAtUtc = r.lastRunAtUtc
             };
         }));
+    }
+
+    private async Task<int> TryRebindLegacyAutomationRowsAsync(CancellationToken ct)
+    {
+        // Backward-compatibility repair:
+        // some legacy rows were inserted with TenantId=Guid.Empty and became invisible to tenant-scoped queries.
+        var legacyFlowCount = await db.AutomationFlows.CountAsync(x => x.TenantId == Guid.Empty, ct);
+        if (legacyFlowCount == 0) return 0;
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var totalUpdated = 0;
+        totalUpdated += await db.Database.ExecuteSqlInterpolatedAsync($"""UPDATE "AutomationFlows" SET "TenantId" = {tenancy.TenantId} WHERE "TenantId" = {Guid.Empty};""", ct);
+        totalUpdated += await db.Database.ExecuteSqlInterpolatedAsync($"""UPDATE "AutomationFlowVersions" SET "TenantId" = {tenancy.TenantId} WHERE "TenantId" = {Guid.Empty};""", ct);
+        totalUpdated += await db.Database.ExecuteSqlInterpolatedAsync($"""UPDATE "AutomationNodes" SET "TenantId" = {tenancy.TenantId} WHERE "TenantId" = {Guid.Empty};""", ct);
+        totalUpdated += await db.Database.ExecuteSqlInterpolatedAsync($"""UPDATE "AutomationRuns" SET "TenantId" = {tenancy.TenantId} WHERE "TenantId" = {Guid.Empty};""", ct);
+        totalUpdated += await db.Database.ExecuteSqlInterpolatedAsync($"""UPDATE "AutomationApprovals" SET "TenantId" = {tenancy.TenantId} WHERE "TenantId" = {Guid.Empty};""", ct);
+        await tx.CommitAsync(ct);
+
+        try
+        {
+            await SyncAutomationUsageAsync(ct);
+        }
+        catch
+        {
+            // usage sync is best-effort; flow list should still work.
+        }
+
+        logger.LogWarning(
+            "Rebound {LegacyFlowCount} legacy automation flows (updated rows: {TotalUpdated}) to tenant {TenantId}",
+            legacyFlowCount,
+            totalUpdated,
+            tenancy.TenantId);
+
+        return legacyFlowCount;
     }
 
     [HttpGet("flows/{flowId:guid}")]
