@@ -1266,9 +1266,10 @@ const InboxPage = () => {
           }, 30000);
         });
       })
-      .catch(() => {
+      .catch((err) => {
         if (disposed) return;
-        toast.error("Realtime connection failed. Inbox will auto-refresh on actions.");
+        // Keep inbox usable without noisy banner flashes during tenant/project switches.
+        console.warn("Realtime connection start failed; falling back to action-based refresh.", err);
       });
 
     return () => {
