@@ -62,14 +62,14 @@ If one account has multiple projects/tenants:
 ### 4.0 Browser-simple URL mode (no bearer/CSRF/headers)
 You can call this directly using query parameters:
 
-`GET https://textzy-backend-production.up.railway.app/api/public/messages/send?recipient=91XXXXXXXXXX&msg=APPROVED_TEMPLATE_TEXT&user=MONEYART&pswd=YOUR_PASSWORD&apikey=YOUR_API_KEY&tenantSlug=moneyart&channel=sms&sender=MNYART&PE_ID=1601100000000006533&Template_ID=1107170370949382709`
+`GET https://textzy-backend-production.up.railway.app/api/public/messages/send?recipient=91XXXXXXXXXX&msg=APPROVED_TEMPLATE_TEXT&user=MONEYART&pswd=YOUR_PASSWORD&apikey=YOUR_API_KEY&channel=sms&sender=MNYART&PE_ID=1601100000000006533&Template_ID=1107170370949382709&tenantSlug=moneyart`
 
 Notes:
 - Use **backend URL** (`textzy-backend-production...`), not frontend URL.
 - HTTPS required.
 - Optional IP whitelist enforced if configured.
 - Required query params (SMS DLT mode): `recipient`, `msg`, `user`, `pswd`, `apikey`, `sender`, `PE_ID`, `Template_ID`
-- `tenantSlug` optional if `user` equals tenant slug.
+- `tenantSlug` optional. If not passed, system fallback uses `user` for tenant resolution.
 - `msg` must follow approved DLT template content.
 - `sender` must be DLT-approved sender ID.
 - `PE_ID` must be DLT-approved Entity ID.

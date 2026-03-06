@@ -8,6 +8,7 @@ const API_BASE =
   'https://textzy-backend-production.up.railway.app'
 const STORAGE_KEY = 'textzy.session'
 const CSRF_STORAGE_KEY = 'textzy.csrf'
+const LAST_TENANT_KEY = 'textzy.lastTenantSlug'
 const WABA_STATUS_CACHE_PREFIX = 'textzy.wabaStatus'
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 let refreshPromise = null
@@ -74,6 +75,13 @@ export function setSession(next) {
   merged.permissions = Array.isArray(merged.permissions)
     ? merged.permissions.filter((x) => typeof x === 'string' && x.trim())
     : []
+  if (merged.tenantSlug) {
+    try {
+      localStorage.setItem(LAST_TENANT_KEY, String(merged.tenantSlug).trim().toLowerCase())
+    } catch {
+      // ignore storage failures
+    }
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
   return merged
 }
@@ -81,6 +89,14 @@ export function setSession(next) {
 export function clearSession() {
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(CSRF_STORAGE_KEY)
+}
+
+export function getLastTenantSlug() {
+  try {
+    return (localStorage.getItem(LAST_TENANT_KEY) || '').trim().toLowerCase()
+  } catch {
+    return ''
+  }
 }
 
 const ROLE_PERMISSION_FALLBACK = {
@@ -478,11 +494,10 @@ export async function authInvitePreview({ token }) {
 export async function initializeMe() {
   try {
     const me = await apiGet('/api/auth/me')
-    const current = getSession()
     setSession({
       role: me.role || '',
       email: me.email || '',
-      tenantSlug: current.tenantSlug || me.tenantSlug || '',
+      tenantSlug: me.tenantSlug || getSession().tenantSlug || '',
       permissions: Array.isArray(me.permissions) ? me.permissions : []
     })
     return me
@@ -648,6 +663,30 @@ export async function deleteSmsTemplate(id) {
 
 export async function setSmsTemplateStatus(id, payload) {
   return apiPost(`/api/sms/templates/${id}/status`, payload)
+}
+
+export async function sendSmsTestFromDashboard(payload) {
+  const recipient = String(payload?.phone || '').trim()
+  const useTemplate = !!payload?.useTemplate
+  const body = String(payload?.message || '').trim()
+  if (!recipient) throw new Error('Phone is required')
+  if (!useTemplate && !body) throw new Error('Message is required')
+
+  const req = {
+    recipient,
+    channel: 'Sms',
+    body: useTemplate ? '' : body,
+    useTemplate
+  }
+
+  if (useTemplate) {
+    req.templateName = String(payload?.templateName || '').trim()
+    req.templateLanguageCode = String(payload?.templateLanguageCode || 'en').trim() || 'en'
+    req.templateParameters = Array.isArray(payload?.templateParameters) ? payload.templateParameters : []
+    if (!req.templateName) throw new Error('Template name is required')
+  }
+
+  return apiPost('/api/messages/send', req)
 }
 
 export async function importApprovedSmsTemplatesCsv(file) {

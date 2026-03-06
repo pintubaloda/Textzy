@@ -21,6 +21,7 @@ import {
   listSmsSenders,
   listSmsTemplates,
   removeSmsOptOut,
+  sendSmsTestFromDashboard,
   setSmsTemplateStatus,
   updateSmsSender,
   updateSmsTemplate,
@@ -74,6 +75,15 @@ const SmsSetupPage = () => {
   const [kpis, setKpis] = useState({ templatesTotal: 0, templatesApproved: 0, templatesPending: 0, templatesRejected: 0, optOuts: 0, sentToday: 0, deliveredToday: 0, failedToday: 0, billedToday: 0 });
 
   const [busy, setBusy] = useState(false);
+  const [testSmsBusy, setTestSmsBusy] = useState(false);
+  const [testSmsForm, setTestSmsForm] = useState({
+    phone: "",
+    useTemplate: false,
+    message: "",
+    templateName: "",
+    templateLanguageCode: "en",
+    templateParametersCsv: "",
+  });
 
   const loadAll = async () => {
     try {
@@ -258,6 +268,41 @@ const SmsSetupPage = () => {
 
   const statusOptions = useMemo(() => ["draft", "submitted", "approved", "rejected", "expired"], []);
 
+  const sendTestSms = async () => {
+    if (!testSmsForm.phone.trim()) {
+      toast.error("Phone is required.");
+      return;
+    }
+    if (!testSmsForm.useTemplate && !testSmsForm.message.trim()) {
+      toast.error("Message is required.");
+      return;
+    }
+    if (testSmsForm.useTemplate && !testSmsForm.templateName.trim()) {
+      toast.error("Template name is required.");
+      return;
+    }
+    try {
+      setTestSmsBusy(true);
+      const templateParameters = testSmsForm.templateParametersCsv
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      const res = await sendSmsTestFromDashboard({
+        phone: testSmsForm.phone.trim(),
+        message: testSmsForm.message.trim(),
+        useTemplate: testSmsForm.useTemplate,
+        templateName: testSmsForm.templateName.trim(),
+        templateLanguageCode: testSmsForm.templateLanguageCode.trim() || "en",
+        templateParameters,
+      });
+      toast.success(`Test SMS queued. Message ID: ${res?.id || "-"}`);
+    } catch (e) {
+      toast.error(e?.message || "Failed to send test SMS.");
+    } finally {
+      setTestSmsBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="sms-setup-page">
       <div>
@@ -280,6 +325,77 @@ const SmsSetupPage = () => {
           <Button key={x.k} variant={panel===x.k?"default":"outline"} className={panel===x.k?"bg-orange-500 hover:bg-orange-600":""} onClick={()=>setPanel(x.k)}>{x.l}</Button>
         ))}
       </div>
+
+      <Card className="border-slate-200">
+        <CardHeader>
+          <CardTitle className="text-base">Send Test SMS</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="space-y-2">
+            <Label>Phone</Label>
+            <Input
+              placeholder="+919876543210"
+              value={testSmsForm.phone}
+              onChange={(e) => setTestSmsForm((p) => ({ ...p, phone: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Mode</Label>
+            <Select
+              value={testSmsForm.useTemplate ? "template" : "text"}
+              onValueChange={(v) => setTestSmsForm((p) => ({ ...p, useTemplate: v === "template" }))}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="text">Text</SelectItem>
+                <SelectItem value="template">Template</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {!testSmsForm.useTemplate ? (
+            <div className="space-y-2 md:col-span-2">
+              <Label>Message</Label>
+              <Input
+                placeholder="Type test SMS text"
+                value={testSmsForm.message}
+                onChange={(e) => setTestSmsForm((p) => ({ ...p, message: e.target.value }))}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <Label>Template Name</Label>
+                <Input
+                  placeholder="otp_login"
+                  value={testSmsForm.templateName}
+                  onChange={(e) => setTestSmsForm((p) => ({ ...p, templateName: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Language</Label>
+                <Input
+                  placeholder="en"
+                  value={testSmsForm.templateLanguageCode}
+                  onChange={(e) => setTestSmsForm((p) => ({ ...p, templateLanguageCode: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label>Template Parameters (comma separated)</Label>
+                <Input
+                  placeholder="123456, John"
+                  value={testSmsForm.templateParametersCsv}
+                  onChange={(e) => setTestSmsForm((p) => ({ ...p, templateParametersCsv: e.target.value }))}
+                />
+              </div>
+            </>
+          )}
+          <div>
+            <Button className="bg-orange-500 hover:bg-orange-600 w-full" disabled={testSmsBusy} onClick={sendTestSms}>
+              {testSmsBusy ? "Sending..." : "Send Test SMS"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {panel === "senders" && (
         <>
