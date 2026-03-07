@@ -316,7 +316,6 @@ const DashboardLayout = () => {
   const platformNavigation = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Admin", href: "/dashboard/admin", icon: Shield },
-    { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
     { name: "Branding", href: "/dashboard/platform-branding", icon: Palette },
   ];
 
@@ -824,7 +823,7 @@ const DashboardLayout = () => {
           </nav>
 
           {/* Usage Stats */}
-          {sidebarOpen && canViewBilling && (
+          {sidebarOpen && canViewBilling && !isPlatformView && (
             <div className="mx-3 mt-8 p-4 bg-slate-50 rounded-xl">
               <p className="text-sm font-medium text-slate-900 mb-3">Monthly Usage</p>
               <div className="space-y-3">
