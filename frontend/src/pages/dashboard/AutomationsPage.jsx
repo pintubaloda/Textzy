@@ -1359,6 +1359,19 @@ export default function AutomationsPage() {
     publishedAtUtc: v?.publishedAtUtc ?? v?.PublishedAtUtc ?? null,
   }), []);
 
+  const parseDefinitionNodes = useCallback((raw) => {
+    if (!raw) return [];
+    try {
+      let parsed = raw;
+      if (typeof parsed === "string") parsed = JSON.parse(parsed);
+      if (typeof parsed === "string") parsed = JSON.parse(parsed); // handle double-encoded payloads
+      if (parsed && Array.isArray(parsed.nodes)) return parsed.nodes;
+      return [];
+    } catch {
+      return [];
+    }
+  }, []);
+
   const selectedFlow = useMemo(() => flows.find((f) => String(f.id) === String(selectedFlowId)) || null, [flows, selectedFlowId]);
   const selectedNode = useMemo(() => nodes.find((n) => n.id === selectedNodeId) || null, [nodes, selectedNodeId]);
   const edges = useMemo(() => computeEdges(nodes), [nodes]);
@@ -1415,19 +1428,20 @@ export default function AutomationsPage() {
   const loadFlowDetails = useCallback(async (flowId) => {
     if (!flowId) return;
     try {
-      const versRaw = await apiGet(`/api/automation/flows/${flowId}/versions`);
-      const vers = (versRaw || []).map(normalizeVersion);
+      let versRaw = await apiGet(`/api/automation/flows/${flowId}/versions`);
+      let vers = (versRaw || []).map(normalizeVersion);
+      if (!vers.length) {
+        const full = await apiGet(`/api/automation/flows/${flowId}`).catch(() => null);
+        vers = ((full?.versions || []) || []).map(normalizeVersion);
+      }
       setVersions(vers);
-      if (vers?.[0]?.definitionJson) {
-        const def = JSON.parse(vers[0].definitionJson);
-        const loadedNodes = Array.isArray(def.nodes) ? def.nodes : [];
-        resetNodes(loadedNodes);
-        setSelectedNodeId(loadedNodes[0]?.id || "");
-      } else resetNodes([]);
+      const loadedNodes = parseDefinitionNodes(vers?.[0]?.definitionJson);
+      resetNodes(loadedNodes);
+      setSelectedNodeId(loadedNodes[0]?.id || "");
       setIsDirty(false);
       setLastSaved(vers?.[0]?.createdAtUtc ? new Date(vers[0].createdAtUtc) : null);
     } catch { toast.error("Failed to load workflow"); }
-  }, [normalizeVersion, resetNodes]);
+  }, [normalizeVersion, resetNodes, parseDefinitionNodes]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
   useEffect(() => { if (selectedFlowId) loadFlowDetails(selectedFlowId); }, [selectedFlowId, loadFlowDetails]);
