@@ -2314,7 +2314,7 @@ function WorkflowCanvas({
             {!isDirty && lastSaved && <span className="text-[10px] text-slate-400">Saved {lastSaved.toLocaleTimeString()}</span>}
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             {/* Validation */}
             {validation.errors.length > 0 && (
               <Tooltip>
@@ -2408,9 +2408,9 @@ function WorkflowCanvas({
 
             <div className="w-px h-5 bg-slate-200" />
 
-            <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={saveDraft}>
-              <Save size={12} />Save
-              <kbd className="ml-1 text-[9px] bg-slate-100 rounded px-1 text-slate-400">⌘S</kbd>
+            <Button size="sm" className="h-7 text-xs gap-1 text-white" style={{ background: T.orange }} onClick={saveDraft}>
+              <Save size={12} />Save Flow
+              <kbd className="ml-1 text-[9px] bg-white/20 rounded px-1 text-white/90">Ctrl+S</kbd>
             </Button>
             <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={validateServerSchema}>
               <CheckSquare size={12} />Validate Schema
