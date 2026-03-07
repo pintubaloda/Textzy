@@ -221,6 +221,11 @@ public class WabaWebhookWorker(
 
                 foreach (var status in parse.Statuses)
                 {
+                    var statusName = (status.Status ?? string.Empty).Trim();
+                    var statusRecipientId = status.RecipientId ?? string.Empty;
+                    var statusConversationId = status.ConversationId ?? string.Empty;
+                    var statusConversationOriginType = status.ConversationOriginType ?? string.Empty;
+                    var normalizedStatus = MessageStateMachine.NormalizeWebhookStatus(statusName);
                     var msg = await tenantDb.Set<Message>()
                         .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.ProviderMessageId == status.MessageId, stoppingToken);
                     if (msg is not null)
@@ -230,8 +235,7 @@ public class WabaWebhookWorker(
                             msg.MessageType.StartsWith("interactive:flow:", StringComparison.OrdinalIgnoreCase))
                         {
                             var metaFlowId = msg.MessageType["interactive:flow:".Length..];
-                            var normalized = MessageStateMachine.NormalizeWebhookStatus(status.Status);
-                            var flowEventType = normalized switch
+                            var flowEventType = normalizedStatus switch
                             {
                                 "FailedPermanent" or "FailedRetryable" => "flow.error",
                                 "Delivered" => "flow.delivered",
@@ -244,15 +248,15 @@ public class WabaWebhookWorker(
                                 TenantId = resolved.TenantId,
                                 FlowId = null,
                                 MetaFlowId = metaFlowId,
-                                ConversationExternalId = status.ConversationId ?? string.Empty,
-                                CustomerPhone = status.RecipientId ?? string.Empty,
+                                ConversationExternalId = statusConversationId,
+                                CustomerPhone = statusRecipientId,
                                 EventType = flowEventType,
                                 EventSource = "status_webhook",
-                                Success = !(normalized is "FailedPermanent" or "FailedRetryable"),
+                                Success = !(normalizedStatus is "FailedPermanent" or "FailedRetryable"),
                                 StatusCode = 200,
                                 DurationMs = 0,
                                 ScreenId = string.Empty,
-                                ActionName = status.Status ?? string.Empty,
+                                ActionName = statusName,
                                 PayloadJson = status.RawJson,
                                 ErrorDetail = $"{status.ErrorCode} {status.ErrorTitle} {status.ErrorDetail}".Trim(),
                                 CreatedAtUtc = status.AtUtc ?? DateTime.UtcNow
@@ -266,14 +270,14 @@ public class WabaWebhookWorker(
                         MessageId = msg?.Id,
                         ProviderMessageId = status.MessageId,
                         Direction = "outbound",
-                        EventType = $"status.{status.Status.ToLowerInvariant()}",
-                        State = MessageStateMachine.NormalizeWebhookStatus(status.Status),
-                        StatePriority = MessageStateMachine.Priority(MessageStateMachine.NormalizeWebhookStatus(status.Status)),
+                        EventType = $"status.{statusName.ToLowerInvariant()}",
+                        State = normalizedStatus,
+                        StatePriority = MessageStateMachine.Priority(normalizedStatus),
                         EventTimestampUtc = status.AtUtc ?? DateTime.UtcNow,
-                        RecipientId = status.RecipientId,
-                        CustomerPhone = status.RecipientId,
-                        ConversationId = status.ConversationId,
-                        ConversationOriginType = status.ConversationOriginType,
+                        RecipientId = statusRecipientId,
+                        CustomerPhone = statusRecipientId,
+                        ConversationId = statusConversationId,
+                        ConversationOriginType = statusConversationOriginType,
                         ConversationExpirationUtc = status.ConversationExpirationUtc,
                         PricingBillable = status.PricingBillable,
                         PricingCategory = status.PricingCategory,
@@ -285,16 +289,25 @@ public class WabaWebhookWorker(
 
                 foreach (var inbound in parse.Inbound)
                 {
+                    var inboundFrom = inbound.From ?? string.Empty;
+                    var inboundName = inbound.Name ?? string.Empty;
+                    var inboundMessageType = inbound.MessageType ?? string.Empty;
+                    var inboundInteractiveType = inbound.InteractiveType ?? string.Empty;
+                    var inboundListReplyId = inbound.ListReplyId ?? string.Empty;
+                    var inboundListReplyTitle = inbound.ListReplyTitle ?? string.Empty;
+                    var inboundButtonPayload = inbound.ButtonPayload ?? string.Empty;
+                    var inboundButtonText = inbound.ButtonText ?? string.Empty;
+                    var inboundContextMessageId = inbound.ContextMessageId ?? string.Empty;
                     TriggerInboundContext? triggerInbound = null;
                     var window = await tenantDb.Set<ConversationWindow>()
-                        .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.Recipient == inbound.From, stoppingToken);
+                        .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.Recipient == inboundFrom, stoppingToken);
                     if (window is null)
                     {
                         window = new ConversationWindow
                         {
                             Id = Guid.NewGuid(),
                             TenantId = resolved.TenantId,
-                            Recipient = inbound.From,
+                            Recipient = inboundFrom,
                             LastInboundAtUtc = DateTime.UtcNow,
                             UpdatedAtUtc = DateTime.UtcNow
                         };
@@ -307,15 +320,15 @@ public class WabaWebhookWorker(
                     }
 
                     var convo = await tenantDb.Set<Conversation>()
-                        .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.CustomerPhone == inbound.From, stoppingToken);
+                        .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.CustomerPhone == inboundFrom, stoppingToken);
                     if (convo is null)
                     {
                         convo = new Conversation
                         {
                             Id = Guid.NewGuid(),
                             TenantId = resolved.TenantId,
-                            CustomerPhone = inbound.From,
-                            CustomerName = string.IsNullOrWhiteSpace(inbound.Name) ? inbound.From : inbound.Name,
+                            CustomerPhone = inboundFrom,
+                            CustomerName = string.IsNullOrWhiteSpace(inboundName) ? inboundFrom : inboundName,
                             Status = "Open",
                             LastMessageAtUtc = DateTime.UtcNow,
                             CreatedAtUtc = DateTime.UtcNow
@@ -324,17 +337,17 @@ public class WabaWebhookWorker(
                     }
                     else
                     {
-                        if (!string.IsNullOrWhiteSpace(inbound.Name)) convo.CustomerName = inbound.Name;
+                        if (!string.IsNullOrWhiteSpace(inboundName)) convo.CustomerName = inboundName;
                         convo.Status = "Open";
                         convo.LastMessageAtUtc = DateTime.UtcNow;
                     }
 
-                    var inboundPhoneHash = contactPii.IsEnabled ? contactPii.ComputePhoneHash(inbound.From) : string.Empty;
+                    var inboundPhoneHash = contactPii.IsEnabled ? contactPii.ComputePhoneHash(inboundFrom) : string.Empty;
                     var existingContact = contactPii.IsEnabled
                         ? await tenantDb.Set<Contact>()
                             .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.PhoneHash == inboundPhoneHash, stoppingToken)
                         : await tenantDb.Set<Contact>()
-                            .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.Phone == inbound.From, stoppingToken);
+                            .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.Phone == inboundFrom, stoppingToken);
                     if (existingContact is null)
                     {
                         var defaultSegment = await tenantDb.Set<ContactSegment>()
@@ -356,8 +369,8 @@ public class WabaWebhookWorker(
                         {
                             Id = Guid.NewGuid(),
                             TenantId = resolved.TenantId,
-                            Name = string.IsNullOrWhiteSpace(inbound.Name) ? inbound.From : inbound.Name,
-                            Phone = inbound.From,
+                            Name = string.IsNullOrWhiteSpace(inboundName) ? inboundFrom : inboundName,
+                            Phone = inboundFrom,
                             SegmentId = defaultSegment.Id,
                             TagsCsv = "New",
                             OptInStatus = "opted_in",
@@ -366,9 +379,9 @@ public class WabaWebhookWorker(
                         contactPii.Protect(newContact);
                         tenantDb.Set<Contact>().Add(newContact);
                     }
-                    else if (!string.IsNullOrWhiteSpace(inbound.Name))
+                    else if (!string.IsNullOrWhiteSpace(inboundName))
                     {
-                        existingContact.Name = inbound.Name;
+                        existingContact.Name = inboundName;
                         contactPii.Protect(existingContact);
                     }
 
@@ -377,19 +390,19 @@ public class WabaWebhookWorker(
                         .FirstOrDefaultAsync(x => x.TenantId == resolved.TenantId && x.ProviderMessageId == inboundProviderId, stoppingToken);
                     if (existingInbound is null)
                     {
-                        var inboundMessageType = IsMediaType(inbound.MessageType) ? $"media:{inbound.MessageType}" : "session";
-                        var normalizedInboundBody = IsMediaType(inbound.MessageType)
+                        var resolvedInboundMessageType = IsMediaType(inboundMessageType) ? $"media:{inboundMessageType}" : "session";
+                        var normalizedInboundBody = IsMediaType(inboundMessageType)
                             ? ComposeInboundMediaBody(inbound)
                             : ComposeInboundBody(inbound);
-                        if (!string.IsNullOrWhiteSpace(inbound.ContextMessageId))
+                        if (!string.IsNullOrWhiteSpace(inboundContextMessageId))
                         {
                             var replyPrefix = await BuildInboundReplyPrefixAsync(
                                 tenantDb,
                                 resolved.TenantId,
-                                inbound.ContextMessageId,
-                                string.IsNullOrWhiteSpace(inbound.Name) ? "Customer" : inbound.Name,
+                                inboundContextMessageId,
+                                string.IsNullOrWhiteSpace(inboundName) ? "Customer" : inboundName,
                                 stoppingToken);
-                            if (!string.IsNullOrWhiteSpace(replyPrefix) && !IsMediaType(inbound.MessageType))
+                            if (!string.IsNullOrWhiteSpace(replyPrefix) && !IsMediaType(inboundMessageType))
                             {
                                 normalizedInboundBody = $"{replyPrefix}\n{normalizedInboundBody}".Trim();
                             }
@@ -399,9 +412,9 @@ public class WabaWebhookWorker(
                             Id = Guid.NewGuid(),
                             TenantId = resolved.TenantId,
                             Channel = ChannelType.WhatsApp,
-                            Recipient = inbound.From,
+                            Recipient = inboundFrom,
                             Body = normalizedInboundBody,
-                            MessageType = inboundMessageType,
+                            MessageType = resolvedInboundMessageType,
                             Status = "Received",
                             ProviderMessageId = inboundProviderId,
                             CreatedAtUtc = inbound.AtUtc ?? DateTime.UtcNow
@@ -409,22 +422,22 @@ public class WabaWebhookWorker(
                         triggerInbound = new TriggerInboundContext
                         {
                             MessageId = inboundProviderId,
-                            From = inbound.From,
-                            Name = inbound.Name,
+                            From = inboundFrom,
+                            Name = inboundName,
                             MessageText = ComposeInboundBody(inbound),
-                            MatchKey = !string.IsNullOrWhiteSpace(inbound.ButtonPayload)
-                                ? inbound.ButtonPayload
-                                : !string.IsNullOrWhiteSpace(inbound.ListReplyId)
-                                    ? inbound.ListReplyId
-                                    : !string.IsNullOrWhiteSpace(inbound.ButtonText)
-                                        ? inbound.ButtonText
-                                        : inbound.ListReplyTitle,
-                            ContextMessageId = inbound.ContextMessageId,
+                            MatchKey = !string.IsNullOrWhiteSpace(inboundButtonPayload)
+                                ? inboundButtonPayload
+                                : !string.IsNullOrWhiteSpace(inboundListReplyId)
+                                    ? inboundListReplyId
+                                    : !string.IsNullOrWhiteSpace(inboundButtonText)
+                                        ? inboundButtonText
+                                        : inboundListReplyTitle,
+                            ContextMessageId = inboundContextMessageId,
                             IsInteractiveReply =
-                                !string.IsNullOrWhiteSpace(inbound.ButtonText) ||
-                                !string.IsNullOrWhiteSpace(inbound.ListReplyTitle) ||
-                                string.Equals(inbound.InteractiveType, "button_reply", StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(inbound.InteractiveType, "list_reply", StringComparison.OrdinalIgnoreCase)
+                                !string.IsNullOrWhiteSpace(inboundButtonText) ||
+                                !string.IsNullOrWhiteSpace(inboundListReplyTitle) ||
+                                string.Equals(inboundInteractiveType, "button_reply", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(inboundInteractiveType, "list_reply", StringComparison.OrdinalIgnoreCase)
                         };
                     }
                     tenantDb.MessageEvents.Add(new MessageEvent
@@ -438,17 +451,17 @@ public class WabaWebhookWorker(
                         State = MessageStateMachine.Received,
                         StatePriority = MessageStateMachine.Priority(MessageStateMachine.Received),
                         EventTimestampUtc = inbound.AtUtc ?? DateTime.UtcNow,
-                        RecipientId = inbound.From,
-                        CustomerPhone = inbound.From,
-                        MessageType = string.IsNullOrWhiteSpace(inbound.MessageType) ? "text" : inbound.MessageType,
+                        RecipientId = inboundFrom,
+                        CustomerPhone = inboundFrom,
+                        MessageType = string.IsNullOrWhiteSpace(inboundMessageType) ? "text" : inboundMessageType,
                         MediaId = inbound.MediaId,
                         MediaMimeType = inbound.MediaMimeType,
                         MediaSha256 = inbound.MediaSha256,
-                        ButtonPayload = inbound.ButtonPayload,
-                        ButtonText = inbound.ButtonText,
-                        InteractiveType = inbound.InteractiveType,
-                        ListReplyId = inbound.ListReplyId,
-                        ListReplyTitle = inbound.ListReplyTitle,
+                        ButtonPayload = inboundButtonPayload,
+                        ButtonText = inboundButtonText,
+                        InteractiveType = inboundInteractiveType,
+                        ListReplyId = inboundListReplyId,
+                        ListReplyTitle = inboundListReplyTitle,
                         RawPayloadJson = inbound.RawJson,
                         CreatedAtUtc = DateTime.UtcNow
                     });
@@ -462,7 +475,7 @@ public class WabaWebhookWorker(
                             FlowId = null,
                             MetaFlowId = inbound.FlowId ?? string.Empty,
                             ConversationExternalId = convo.Id.ToString("N"),
-                            CustomerPhone = inbound.From ?? string.Empty,
+                            CustomerPhone = inboundFrom,
                             EventType = inbound.FlowEventType,
                             EventSource = "webhook",
                             Success = true,

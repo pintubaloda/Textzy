@@ -11,8 +11,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Plus, Filter, MoreVertical, FileText, CheckCircle, XCircle, Clock, AlertCircle, Trash2, MessageSquare, Send, Image as ImageIcon, Video, Paperclip, Upload } from "lucide-react";
-import { apiDelete, apiGet, apiPost, apiPostForm, listSmsSenders } from "@/lib/api";
+import { Search, Plus, Filter, MoreVertical, FileText, CheckCircle, XCircle, Clock, AlertCircle, Trash2, Send, Image as ImageIcon, Video, Paperclip, Upload } from "lucide-react";
+import { apiDelete, apiGet, apiPost, apiPostForm } from "@/lib/api";
 import { toast } from "sonner";
 
 const initialDraft = {
@@ -188,7 +188,6 @@ const TemplatesPage = () => {
   const tab = "whatsapp";
 
   const [templates, setTemplates] = useState([]);
-  const [smsSenders, setSmsSenders] = useState([]);
   const [draft, setDraft] = useState(initialDraft);
   const [tableSearch, setTableSearch] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -196,7 +195,6 @@ const TemplatesPage = () => {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
 
-  const isSms = draft.channel === "sms";
   const isMediaHeader = ["image", "video", "document"].includes((draft.headerType || "none").toLowerCase());
 
   useEffect(() => {
@@ -213,20 +211,11 @@ const TemplatesPage = () => {
 
   const loadAll = async () => {
     try {
-      const [tpl, senders] = await Promise.all([
-        apiGet("/api/templates/project-list"),
-        listSmsSenders().catch(() => []),
-      ]);
-      let projectTemplates = normalizeListPayload(tpl?.items ?? tpl?.Items ?? tpl);
-      if (projectTemplates.length === 0) {
-        const legacy = await apiGet("/api/templates").catch(() => null);
-        projectTemplates = normalizeListPayload(legacy);
-      }
+      const tpl = await apiGet("/api/templates/project-list");
+      const projectTemplates = normalizeListPayload(tpl?.items ?? tpl?.Items ?? tpl);
       setTemplates(projectTemplates);
-      setSmsSenders(senders || []);
     } catch (e) {
       setTemplates([]);
-      setSmsSenders([]);
       toast.error(e?.message || "Template list load failed");
     }
   };
@@ -280,12 +269,6 @@ const TemplatesPage = () => {
       }
       if (draft.headerType === "text" && draft.headerText.trim().length > 60) return "Header text max length is 60.";
       if (draft.footerText.trim().length > 60) return "Footer text max length is 60.";
-    }
-    if (isSms) {
-      if (!draft.dltEntityId.trim()) return "DLT Entity ID is required for SMS.";
-      if (!draft.dltTemplateId.trim()) return "DLT Template ID is required for SMS.";
-      if (!draft.smsSenderId.trim()) return "SMS Sender ID is required.";
-      if (draft.smsSenderId.trim().length < 3 || draft.smsSenderId.trim().length > 6) return "SMS Sender ID must be 3-6 characters.";
     }
     return "";
   };
@@ -373,53 +356,6 @@ const TemplatesPage = () => {
         buttonsJson: "[]",
       }));
       setWizardStep(3);
-    }
-  };
-
-  const uploadSmsTemplates = async (file) => {
-    if (!file) return;
-    try {
-      setUploading(true);
-      const text = await file.text();
-      const lines = text.split(/\r?\n/).filter(Boolean);
-      if (lines.length < 2) throw new Error("CSV must include header + at least one row.");
-      const header = lines[0].split(",").map((x) => x.trim().toLowerCase());
-      const idx = {
-        name: header.indexOf("name"),
-        body: header.indexOf("body"),
-        dltentityid: header.indexOf("dltentityid"),
-        dlttemplateid: header.indexOf("dlttemplateid"),
-        smssenderid: header.indexOf("smssenderid"),
-      };
-      if (Object.values(idx).some((v) => v < 0)) throw new Error("CSV headers required: name,body,dltEntityId,dltTemplateId,smsSenderId");
-      let created = 0;
-      for (let i = 1; i < lines.length; i += 1) {
-        const cols = lines[i].split(",").map((x) => x.trim());
-        if (!cols[idx.name] || !cols[idx.body]) continue;
-        await apiPost("/api/templates", {
-          name: cols[idx.name],
-          body: cols[idx.body],
-          channel: 1,
-          category: "UTILITY",
-          language: "en",
-          dltEntityId: cols[idx.dltentityid] || "",
-          dltTemplateId: cols[idx.dlttemplateid] || "",
-          smsSenderId: (cols[idx.smssenderid] || "").toUpperCase(),
-          headerType: "none",
-          headerText: "",
-          headerMediaId: "",
-          headerMediaName: "",
-          footerText: "",
-          buttonsJson: "",
-        });
-        created += 1;
-      }
-      toast.success(`Uploaded ${created} SMS templates.`);
-      await loadAll();
-    } catch (e) {
-      toast.error(e?.message || "SMS template upload failed.");
-    } finally {
-      setUploading(false);
     }
   };
 
@@ -662,17 +598,16 @@ const TemplatesPage = () => {
                 <TableRow>
                   <TableHead>Template</TableHead>
                   <TableHead>Category</TableHead>
-                  <TableHead>Channel</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>DLT ID</TableHead>
-                  <TableHead>Sender</TableHead>
+                  <TableHead>Language</TableHead>
+                  <TableHead>Updated</TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredTemplates.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-slate-500">
+                    <TableCell colSpan={6} className="text-slate-500">
                       No project templates found. Click <b>Sync Meta</b> to fetch WhatsApp templates for this project.
                     </TableCell>
                   </TableRow>
@@ -686,13 +621,6 @@ const TemplatesPage = () => {
                     </TableCell>
                     <TableCell>{getCategoryBadge(categoryValue(template))}</TableCell>
                     <TableCell>
-                      {channelValue(template) === 2 ? (
-                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200"><MessageSquare className="w-3 h-3 mr-1" />WhatsApp</Badge>
-                      ) : (
-                        <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200"><Send className="w-3 h-3 mr-1" />SMS</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
                       <div className="space-y-1">
                         {getStatusBadge(statusValue(template))}
                         {(template?.rejectionReason || template?.RejectionReason) && <p className="text-xs text-red-600 flex items-center gap-1"><AlertCircle className="w-3 h-3" />{template?.rejectionReason || template?.RejectionReason}</p>}
@@ -704,8 +632,8 @@ const TemplatesPage = () => {
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="text-slate-600 text-sm font-mono">{template?.dltTemplateId || template?.DltTemplateId || "-"}</TableCell>
-                    <TableCell className="text-slate-600 text-sm font-mono">{template?.smsSenderId || template?.SmsSenderId || "-"}</TableCell>
+                    <TableCell className="text-slate-600 text-sm">{languageValue(template)}</TableCell>
+                    <TableCell className="text-slate-600 text-sm">{template?.updatedAtUtc || template?.UpdatedAtUtc ? new Date(template?.updatedAtUtc || template?.UpdatedAtUtc).toLocaleDateString() : "-"}</TableCell>
                     <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -752,9 +680,7 @@ const TemplatesPage = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete template?</AlertDialogTitle>
             <AlertDialogDescription>
-              {Number(deleteTarget?.channel) === 2
-                ? "This will delete the WhatsApp template from Meta and from your project database. This action cannot be undone."
-                : "This will delete the SMS template from your project database. This action cannot be undone."}
+              This will delete the WhatsApp template from Meta and from your project database. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

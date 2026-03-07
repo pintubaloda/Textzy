@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -35,7 +36,6 @@ import {
   getBillingPaymentConfig,
   getBillingPlans,
   getBillingUsage,
-  getPlatformSettings,
   getSession,
   getCompanySettings,
   getCurrentBillingPlan,
@@ -44,6 +44,7 @@ import {
 import { toast } from "sonner";
 
 const BillingPage = () => {
+  const navigate = useNavigate();
   const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);
   const [plans, setPlans] = useState([]);
   const [sub, setSub] = useState(null);
@@ -52,8 +53,9 @@ const BillingPage = () => {
   const [dunningStatus, setDunningStatus] = useState(null);
   const [paymentConfig, setPaymentConfig] = useState(null);
   const [company, setCompany] = useState(null);
-  const [platformBranding, setPlatformBranding] = useState(null);
   const [payingCode, setPayingCode] = useState("");
+  const session = useMemo(() => getSession() || {}, []);
+  const isSuperAdmin = String(session?.role || "").toLowerCase() === "super_admin";
 
   useEffect(() => {
     (async () => {
@@ -67,10 +69,6 @@ const BillingPage = () => {
         ]);
         const companyCfg = await getCompanySettings().catch(() => null);
         const paymentCfg = await getBillingPaymentConfig().catch(() => null);
-        const role = String(getSession()?.role || "").toLowerCase();
-        const platformBrandingCfg = role === "super_admin"
-          ? await getPlatformSettings("platform-branding").catch(() => null)
-          : null;
         setPlans(Array.isArray(p) ? p : []);
         setSub(c || null);
         setUsageValues(u?.values || {});
@@ -78,7 +76,6 @@ const BillingPage = () => {
         setDunningStatus(d || null);
         setCompany(companyCfg || null);
         setPaymentConfig(paymentCfg);
-        setPlatformBranding(platformBrandingCfg?.values || null);
       } catch (e) {
         toast.error(e.message || "Failed to load billing");
       }
@@ -86,23 +83,21 @@ const BillingPage = () => {
   }, []);
 
   const currentPlan = sub?.plan || null;
+  const taxRatePercent = Number(company?.taxRatePercent ?? 18);
+  const planCost = Number(currentPlan?.priceMonthly || 0);
+  const taxAmount = company?.isTaxExempt ? 0 : Math.round(planCost * (taxRatePercent / 100));
+  const totalAmount = planCost + taxAmount;
   const companyName =
     String(company?.companyName || "").trim() ||
-    String(platformBranding?.legalName || "").trim() ||
-    String(platformBranding?.platformName || "").trim() ||
+    String(session?.projectName || "").trim() ||
+    String(session?.tenantSlug || "").trim() ||
     "Your company";
-  const billingAddressText =
-    String(company?.address || "").trim() ||
-    String(platformBranding?.address || "").trim();
+  const billingAddressText = String(company?.address || "").trim();
   const billingEmail =
     String(company?.billingEmail || "").trim() ||
-    String(platformBranding?.billingEmail || "").trim();
-  const billingPhone =
-    String(company?.billingPhone || "").trim() ||
-    String(platformBranding?.billingPhone || "").trim();
-  const gstin =
-    String(company?.gstin || "").trim() ||
-    String(platformBranding?.gstin || "").trim();
+    String(session?.email || "").trim();
+  const billingPhone = String(company?.billingPhone || "").trim();
+  const gstin = String(company?.gstin || "").trim();
   const pct = (used, limit) => !limit ? 0 : Math.min(100, Math.round((used / limit) * 100));
   const usage = useMemo(() => {
     const limits = currentPlan?.limits || {};
@@ -478,21 +473,31 @@ const BillingPage = () => {
           <CardContent className="space-y-4">
             <div className="p-4 bg-slate-50 rounded-lg flex items-center gap-4">
               <div className="w-12 h-8 bg-gradient-to-r from-blue-600 to-blue-800 rounded flex items-center justify-center text-white text-xs font-bold uppercase">
-                {(paymentConfig?.provider || "na").slice(0, 4)}
+                {isSuperAdmin ? (paymentConfig?.provider || "na").slice(0, 4) : "BILL"}
               </div>
               <div>
                 <p className="font-medium text-slate-900">
-                  {(paymentConfig?.provider || "Not configured").toUpperCase()}
-                  {paymentConfig?.razorpay?.keyId ? " | Key configured" : " | Key missing"}
+                  {isSuperAdmin
+                    ? `${(paymentConfig?.provider || "Not configured").toUpperCase()}${paymentConfig?.razorpay?.keyId ? " | Key configured" : " | Key missing"}`
+                    : "Managed by platform owner"}
                 </p>
                 <p className="text-sm text-slate-500">
-                  Mode: {(paymentConfig?.mode || "test").toUpperCase()}
+                  {isSuperAdmin
+                    ? `Mode: ${(paymentConfig?.mode || "test").toUpperCase()}`
+                    : "Payment gateway credentials are hidden from tenant users."}
                 </p>
               </div>
             </div>
-            <Button variant="outline" className="w-full" data-testid="update-payment-btn" onClick={() => toast.info("Open Platform Settings -> Payment Gateway")}>
-              Open Payment Setup
-            </Button>
+            {isSuperAdmin ? (
+              <Button
+                variant="outline"
+                className="w-full"
+                data-testid="update-payment-btn"
+                onClick={() => navigate("/dashboard/platform-settings?tab=payment-gateway")}
+              >
+                Open Payment Setup
+              </Button>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -510,7 +515,12 @@ const BillingPage = () => {
               <p>{billingPhone || "Billing phone not configured"}</p>
               <p className="pt-2">GSTIN: {gstin || "-"}</p>
             </div>
-            <Button variant="outline" className="w-full" data-testid="update-address-btn" onClick={() => toast.info("Open Dashboard Settings -> Company")}>
+            <Button
+              variant="outline"
+              className="w-full"
+              data-testid="update-address-btn"
+              onClick={() => navigate("/dashboard/settings?tab=company")}
+            >
               Open Company Settings
             </Button>
           </CardContent>
@@ -524,19 +534,21 @@ const BillingPage = () => {
           <CardContent className="space-y-4">
             <div className="flex justify-between items-center">
               <span className="text-slate-600">Plan Cost</span>
-              <span className="font-medium text-slate-900">₹{Number(currentPlan?.priceMonthly || 0).toLocaleString()}</span>
+              <span className="font-medium text-slate-900">{"\u20B9"}{planCost.toLocaleString()}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-slate-600">Additional SMS</span>
-              <span className="font-medium text-slate-900">₹0</span>
+              <span className="font-medium text-slate-900">{"\u20B9"}0</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-slate-600">Taxes (18% GST)</span>
-              <span className="font-medium text-slate-900">₹{Math.round(Number(currentPlan?.priceMonthly || 0) * 0.18).toLocaleString()}</span>
+              <span className="text-slate-600">
+                Taxes ({company?.isTaxExempt ? "Tax Exempt" : `${taxRatePercent}% ${company?.isReverseCharge ? "Reverse Charge" : "GST"}`})
+              </span>
+              <span className="font-medium text-slate-900">{"\u20B9"}{taxAmount.toLocaleString()}</span>
             </div>
             <div className="border-t border-slate-200 pt-4 flex justify-between items-center">
               <span className="font-medium text-slate-900">Total</span>
-              <span className="text-xl font-bold text-slate-900">₹{Math.round(Number(currentPlan?.priceMonthly || 0) * 1.18).toLocaleString()}</span>
+              <span className="text-xl font-bold text-slate-900">{"\u20B9"}{totalAmount.toLocaleString()}</span>
             </div>
           </CardContent>
         </Card>
@@ -595,3 +607,4 @@ const BillingPage = () => {
 };
 
 export default BillingPage;
+

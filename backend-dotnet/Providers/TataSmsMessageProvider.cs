@@ -28,12 +28,12 @@ public class TataSmsMessageProvider(
     public async Task<string> SendAsync(ChannelType channel, string recipient, string body, SmsSendContext? context = null, CancellationToken ct = default)
     {
         if (channel != ChannelType.Sms)
-            return $"mock_{channel.ToString().ToLowerInvariant()}_{Guid.NewGuid():N}";
+            throw new InvalidOperationException("TATA provider only supports SMS sends.");
 
         var gateway = await ResolveGatewayConfigAsync(ct);
         var provider = gateway.Provider;
         if (provider != "tata")
-            return $"mock_sms_{Guid.NewGuid():N}";
+            throw new InvalidOperationException("SMS gateway provider is not configured as tata.");
 
         var messageText = body ?? string.Empty;
         var sender = gateway.DefaultSender;

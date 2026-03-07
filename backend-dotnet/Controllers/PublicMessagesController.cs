@@ -91,11 +91,14 @@ public class PublicMessagesController(
         if (string.IsNullOrWhiteSpace(message)) return BadRequest("msg is required.");
 
         var channel = ParseChannel(request.Channel);
+        var sender = string.Empty;
+        var peId = string.Empty;
+        var templateId = string.Empty;
         if (channel == ChannelType.Sms)
         {
-            var sender = (request.Sender ?? string.Empty).Trim();
-            var peId = (request.PeId ?? string.Empty).Trim();
-            var templateId = (request.TemplateId ?? string.Empty).Trim();
+            sender = (request.Sender ?? string.Empty).Trim();
+            peId = (request.PeId ?? string.Empty).Trim();
+            templateId = (request.TemplateId ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(sender)) return BadRequest("sender is required for SMS DLT.");
             if (string.IsNullOrWhiteSpace(peId)) return BadRequest("PE_ID is required for SMS DLT.");
             if (string.IsNullOrWhiteSpace(templateId)) return BadRequest("Template_ID is required for SMS DLT.");
@@ -112,9 +115,9 @@ public class PublicMessagesController(
                 Recipient = recipient,
                 Body = message,
                 Channel = channel,
-                SmsSenderId = request.Sender,
-                SmsPeId = request.PeId,
-                SmsTemplateId = request.TemplateId,
+                SmsSenderId = sender,
+                SmsPeId = peId,
+                SmsTemplateId = templateId,
                 ForcePlatformSmsConfig = channel == ChannelType.Sms
             }, ct);
 

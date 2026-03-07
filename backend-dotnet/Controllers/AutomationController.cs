@@ -24,7 +24,6 @@ public class AutomationController(
     BillingGuardService billingGuard,
     SecretCryptoService crypto,
     IHttpClientFactory httpClientFactory,
-    IConfiguration configuration,
     SensitiveDataRedactor redactor,
     ILogger<AutomationController> logger) : ControllerBase
 {
@@ -126,8 +125,7 @@ public class AutomationController(
             errorResult = StatusCode(500, new
             {
                 error = "automation_schema_init_failed",
-                message = "Automation DB initialization failed.",
-                detail = ex.Message
+                message = "Automation DB initialization failed."
             });
             return false;
         }
@@ -174,8 +172,7 @@ public class AutomationController(
                     apiCallsToday = 0,
                     activeFlows = 0,
                     bucketDateUtc = DateTime.UtcNow.Date
-                },
-                warning = "automation_schema_unavailable"
+                }
             });
         }
 

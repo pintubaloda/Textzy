@@ -76,7 +76,7 @@ public class TeamController(
             {
                 id = inv.Id,
                 name = string.IsNullOrWhiteSpace(inv.Name) ? inv.Email : inv.Name.Trim(),
-                email = inv.Email,
+                email = (string?)inv.Email,
                 role = inv.Role,
                 status = "pending",
                 invitationStatus = inv.Status,

@@ -35,6 +35,7 @@ import {
 
 const DashboardOverview = () => {
   const navigate = useNavigate();
+  const session = getSession();
   const [messages, setMessages] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
@@ -60,6 +61,11 @@ const DashboardOverview = () => {
     const state = String(wabaStatus?.state || "").toLowerCase();
     return !!wabaStatus?.isConnected || !!wabaStatus?.readyToSend || state === "ready";
   }, [wabaStatus]);
+
+  const displayValue = useCallback((value, fallback = "Not available") => {
+    const raw = String(value ?? "").trim();
+    return raw ? raw : fallback;
+  }, []);
 
   const ensureEmbeddedConfig = useCallback(async () => {
     if (embeddedCfg.appId && embeddedCfg.configId) return;
@@ -337,7 +343,7 @@ const DashboardOverview = () => {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-heading font-bold text-slate-900">Dashboard</h1>
-          <p className="text-slate-600">Welcome back, Rahul! Here's what's happening today.</p>
+          <p className="text-slate-600">Project {displayValue(session.projectName || session.tenantSlug, "workspace")} live overview and activity.</p>
         </div>
         <div className="flex items-center gap-3">
           <Button variant="outline" className="gap-2" data-testid="date-range-btn">
@@ -387,7 +393,7 @@ const DashboardOverview = () => {
         <div className="absolute -bottom-16 -left-16 h-44 w-44 rounded-full bg-blue-100/30 blur-2xl" />
         <div className="space-y-6 relative z-10">
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <div className="px-5 py-2 rounded-full bg-white border border-slate-200 text-slate-700 shadow-sm">WhatsApp Business API Status: <b className={wabaConnected ? "text-green-600" : "text-orange-600"}>{wabaConnected ? "Connected" : "Pending"}</b></div>
+            <div className="px-5 py-2 rounded-full bg-white border border-slate-200 text-slate-700 shadow-sm">WhatsApp Business API Status: <b className={wabaConnected ? "text-green-600" : "text-orange-600"}>{wabaConnected ? "Connected" : "Setup Required"}</b></div>
             {!wabaConnected ? (
               <Button className="rounded-full bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-500/25" onClick={handleEmbeddedConnect} disabled={connectingWaba}>
                 {connectingWaba ? "Connecting..." : "Apply Now"}
@@ -452,15 +458,15 @@ const DashboardOverview = () => {
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs text-slate-500">Quality</p>
-                    <p className="text-sm font-semibold text-slate-900">{wabaStatus.phoneQualityRating || "Unknown"}</p>
+                    <p className="text-sm font-semibold text-slate-900">{displayValue(wabaStatus.phoneQualityRating)}</p>
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs text-slate-500">Messaging Limit Tier</p>
-                    <p className="text-sm font-semibold text-slate-900">{wabaStatus.messagingLimitTier || "Unknown"}</p>
+                    <p className="text-sm font-semibold text-slate-900">{displayValue(wabaStatus.messagingLimitTier)}</p>
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs text-slate-500">Account Health</p>
-                    <p className="text-sm font-semibold text-slate-900">{wabaStatus.accountHealth || "Unknown"}</p>
+                    <p className="text-sm font-semibold text-slate-900">{displayValue(wabaStatus.accountHealth)}</p>
                   </div>
                 </div>
               )}
@@ -473,16 +479,16 @@ const DashboardOverview = () => {
                   <QrCode className="w-24 h-24 text-slate-700" />
                 )}
               </div>
-              <p className="text-3xl font-semibold leading-tight">{wabaStatus.businessName || "Project Business Name"}</p>
-              <p className="text-slate-600 mt-2 text-xl">{wabaStatus.phone || "+91 72496 30121"}</p>
-              <p className="text-sm text-slate-500 mt-2">{wabaConnected ? "Connected / Ready" : (wabaStatus.state || "requested")}</p>
+              <p className="text-3xl font-semibold leading-tight">{displayValue(wabaStatus.businessName, displayValue(session.projectName, "Business not linked"))}</p>
+              <p className="text-slate-600 mt-2 text-xl">{displayValue(wabaStatus.phone, "Phone number not linked")}</p>
+              <p className="text-sm text-slate-500 mt-2">{wabaConnected ? "Connected / Ready" : displayValue(wabaStatus.state, "Awaiting setup")}</p>
               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-left text-xs space-y-1">
-                <div className="flex justify-between gap-2"><span className="text-slate-500">WABA ID</span><span className="text-slate-900 font-medium break-all">{wabaStatus.wabaId || "Pending"}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-slate-500">Phone Number ID</span><span className="text-slate-900 font-medium break-all">{wabaStatus.phoneNumberId || "Pending"}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-slate-500">Business Manager ID</span><span className="text-slate-900 font-medium break-all">{wabaStatus.businessManagerId || "Pending"}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-slate-500">Token Source</span><span className="text-slate-900 font-medium">{wabaStatus.tokenSource || "exchanged_token"}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-slate-500">Messaging Limit Tier</span><span className="text-slate-900 font-medium">{wabaStatus.messagingLimitTier || "Unknown"}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-slate-500">Account Health</span><span className="text-slate-900 font-medium">{wabaStatus.accountHealth || "Unknown"}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">WABA ID</span><span className="text-slate-900 font-medium break-all">{displayValue(wabaStatus.wabaId)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Phone Number ID</span><span className="text-slate-900 font-medium break-all">{displayValue(wabaStatus.phoneNumberId)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Business Manager ID</span><span className="text-slate-900 font-medium break-all">{displayValue(wabaStatus.businessManagerId)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Token Source</span><span className="text-slate-900 font-medium">{displayValue(wabaStatus.tokenSource)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Messaging Limit Tier</span><span className="text-slate-900 font-medium">{displayValue(wabaStatus.messagingLimitTier)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-slate-500">Account Health</span><span className="text-slate-900 font-medium">{displayValue(wabaStatus.accountHealth)}</span></div>
               </div>
             </div>
           </div>
