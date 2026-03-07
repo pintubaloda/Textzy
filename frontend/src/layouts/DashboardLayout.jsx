@@ -185,7 +185,6 @@ const DashboardLayout = () => {
       "/dashboard/templates",
       "/dashboard/sms-setup",
       "/dashboard/automations",
-      "/dashboard/analytics",
       "/dashboard/integrations",
       "/dashboard/whatsapp-onboarding",
       "/dashboard/billing",
@@ -316,6 +315,7 @@ const DashboardLayout = () => {
 
   const platformNavigation = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+    { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
     { name: "Admin", href: "/dashboard/admin", icon: Shield },
     { name: "Branding", href: "/dashboard/platform-branding", icon: Palette },
   ];

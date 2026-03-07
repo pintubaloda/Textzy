@@ -942,6 +942,12 @@ export async function getTenantWebhookAnalytics(days = 7) {
   return apiGet(`/api/analytics/webhook?${q.toString()}`)
 }
 
+export async function getTenantAnalyticsOverview(days = 30) {
+  const q = new URLSearchParams()
+  q.set('days', String(days))
+  return apiGet(`/api/analytics/overview?${q.toString()}`)
+}
+
 export async function getTenantIdempotencyDiagnostics({ status = '', staleMinutes = 30, limit = 200 } = {}) {
   const q = new URLSearchParams()
   if (status) q.set('status', status)

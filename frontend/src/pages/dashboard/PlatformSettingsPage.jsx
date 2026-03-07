@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
+import { BadgeIndianRupee, Boxes, Layers3, ShieldCheck, Sparkles } from "lucide-react";
 import {
   getPlatformSettings,
   savePlatformSettings,
@@ -238,6 +239,22 @@ const PlatformSettingsPage = () => {
     limit: "200",
   });
   const isSuperAdmin = useMemo(() => String(getSession()?.role || "").toLowerCase() === "super_admin", []);
+  const billingPlanStats = useMemo(() => {
+    const active = plans.filter((p) => p?.isActive);
+    const usagePacks = plans.filter((p) => p?.pricingModel === "usage_pack");
+    const subscriptions = plans.filter((p) => p?.pricingModel !== "usage_pack");
+    const topMonthly = [...plans].sort((a, b) => Number(b?.priceMonthly || 0) - Number(a?.priceMonthly || 0))[0] || null;
+    const featureCount = new Set(plans.flatMap((p) => Array.isArray(p?.features) ? p.features : [])).size;
+    return {
+      total: plans.length,
+      active: active.length,
+      archived: Math.max(0, plans.length - active.length),
+      usagePacks: usagePacks.length,
+      subscriptions: subscriptions.length,
+      topMonthly,
+      featureCount,
+    };
+  }, [plans]);
 
   const title = useMemo(
     () => (
@@ -2954,210 +2971,370 @@ const PlatformSettingsPage = () => {
       )}
 
       {tab === "billing-plans" && (
-        <Card className="border-slate-200">
-          <CardHeader>
-            <CardTitle>Plan Management</CardTitle>
-            <CardDescription>Create and manage platform plans with limits for contacts, team, sms, chatbot, flowbuilder.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="space-y-1"><Label>Code</Label><Input value={planForm.code} onChange={(e) => setPlanForm((p) => ({ ...p, code: e.target.value }))} /></div>
-              <div className="space-y-1"><Label>Name</Label><Input value={planForm.name} onChange={(e) => setPlanForm((p) => ({ ...p, name: e.target.value }))} /></div>
-              <div className="space-y-1">
-                <Label>Pricing Model</Label>
-                <Select value={planForm.pricingModel} onValueChange={(value) => setPlanForm((p) => ({ ...p, pricingModel: value }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="subscription">Subscription Plan</SelectItem>
-                    <SelectItem value="usage_pack">Usage Pack</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1"><Label>Currency</Label><Input value={planForm.currency} onChange={(e) => setPlanForm((p) => ({ ...p, currency: e.target.value }))} /></div>
-              <div className="space-y-1"><Label>{planForm.pricingModel === "usage_pack" ? "Pack Price" : "Monthly Price"}</Label><Input type="number" value={planForm.priceMonthly} onChange={(e) => setPlanForm((p) => ({ ...p, priceMonthly: Number(e.target.value || 0) }))} /></div>
-              <div className="space-y-1">
-                <Label>{planForm.pricingModel === "usage_pack" ? "Usage Quantity" : "Yearly Price"}</Label>
-                {planForm.pricingModel === "usage_pack" ? (
-                  <Input type="number" value={planForm.includedQuantity ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, includedQuantity: Number(e.target.value || 0) }))} />
-                ) : (
-                  <Input type="number" value={planForm.priceYearly} onChange={(e) => setPlanForm((p) => ({ ...p, priceYearly: Number(e.target.value || 0) }))} />
-                )}
-              </div>
-              <div className="space-y-1">
-                <Label>GST Mode</Label>
-                <Select value={planForm.taxMode} onValueChange={(value) => setPlanForm((p) => ({ ...p, taxMode: value }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="exclusive">GST Excluded</SelectItem>
-                    <SelectItem value="inclusive">GST Included</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              {planForm.pricingModel === "usage_pack" ? (
-                <div className="space-y-1">
-                  <Label>Usage Metric</Label>
-                  <Select value={planForm.usageUnitName} onValueChange={(value) => setPlanForm((p) => ({ ...p, usageUnitName: value }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="smsCredits">SMS Credits</SelectItem>
-                      <SelectItem value="whatsappMessages">WhatsApp Messages</SelectItem>
-                    </SelectContent>
-                  </Select>
+        <div className="space-y-6">
+          <Card className="border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-orange-950 text-white shadow-sm">
+            <CardContent className="p-6">
+              <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+                <div className="max-w-3xl">
+                  <Badge className="border border-white/15 bg-white/10 text-white hover:bg-white/10">Commercial Control</Badge>
+                  <h2 className="mt-4 text-3xl font-bold tracking-tight">Billing plan studio</h2>
+                  <p className="mt-3 text-sm text-slate-200">
+                    Build SaaS subscriptions, prepaid usage packs, GST-inclusive pricing, and operational limits from one structured control panel.
+                  </p>
                 </div>
-              ) : null}
-              <div className="space-y-1"><Label>Sort Order</Label><Input type="number" value={planForm.sortOrder} onChange={(e) => setPlanForm((p) => ({ ...p, sortOrder: Number(e.target.value || 1) }))} /></div>
-            </div>
-            <div className="space-y-2">
-              <Label>Features</Label>
-              <div className="grid gap-2 md:grid-cols-3">
-                {FEATURE_CATALOG.map((feature) => {
-                  const selected = planForm.features.includes(feature);
-                  return (
-                    <button
-                      key={feature}
+                <div className="grid min-w-full grid-cols-2 gap-3 xl:min-w-[420px] xl:grid-cols-4">
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Total Plans</p>
+                    <p className="mt-2 text-2xl font-bold">{billingPlanStats.total}</p>
+                    <p className="mt-1 text-xs text-slate-300">{billingPlanStats.active} live</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Subscriptions</p>
+                    <p className="mt-2 text-2xl font-bold">{billingPlanStats.subscriptions}</p>
+                    <p className="mt-1 text-xs text-slate-300">Recurring plans</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Usage Packs</p>
+                    <p className="mt-2 text-2xl font-bold">{billingPlanStats.usagePacks}</p>
+                    <p className="mt-1 text-xs text-slate-300">Prepaid credits</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Feature Library</p>
+                    <p className="mt-2 text-2xl font-bold">{billingPlanStats.featureCount}</p>
+                    <p className="mt-1 text-xs text-slate-300">Reusable entitlements</p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-6 2xl:grid-cols-[1.25fr_0.9fr]">
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="border-b border-slate-100 bg-slate-50/70">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <CardTitle>{planForm.id ? "Edit billing plan" : "Create billing plan"}</CardTitle>
+                    <CardDescription>Define commercial model, tax treatment, entitlements, and operational limits.</CardDescription>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge className="bg-orange-50 text-orange-600 hover:bg-orange-50">{planForm.pricingModel === "usage_pack" ? "Usage Pack" : "Subscription"}</Badge>
+                    <Badge variant="outline">{planForm.taxMode === "inclusive" ? "GST Included" : "GST Extra"}</Badge>
+                    <Badge variant="outline">{planForm.currency || "INR"}</Badge>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6 p-6">
+                <section className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Layers3 className="h-4 w-4 text-orange-500" />
+                    <h3 className="text-sm font-semibold text-slate-900">Identity</h3>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="space-y-1.5">
+                      <Label>Plan Code</Label>
+                      <Input value={planForm.code} onChange={(e) => setPlanForm((p) => ({ ...p, code: e.target.value }))} placeholder="ENTERPRISE_2026" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Plan Name</Label>
+                      <Input value={planForm.name} onChange={(e) => setPlanForm((p) => ({ ...p, name: e.target.value }))} placeholder="Enterprise Growth" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Pricing Model</Label>
+                      <Select value={planForm.pricingModel} onValueChange={(value) => setPlanForm((p) => ({ ...p, pricingModel: value }))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="subscription">Subscription Plan</SelectItem>
+                          <SelectItem value="usage_pack">Usage Pack</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Currency</Label>
+                      <Input value={planForm.currency} onChange={(e) => setPlanForm((p) => ({ ...p, currency: e.target.value.toUpperCase() }))} />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <BadgeIndianRupee className="h-4 w-4 text-orange-500" />
+                    <h3 className="text-sm font-semibold text-slate-900">Commercial model</h3>
+                  </div>
+                  <div className="grid gap-4 xl:grid-cols-4">
+                    <div className="space-y-1.5">
+                      <Label>{planForm.pricingModel === "usage_pack" ? "Pack Price" : "Monthly Price"}</Label>
+                      <Input type="number" value={planForm.priceMonthly} onChange={(e) => setPlanForm((p) => ({ ...p, priceMonthly: Number(e.target.value || 0) }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>{planForm.pricingModel === "usage_pack" ? "Usage Quantity" : "Yearly Price"}</Label>
+                      {planForm.pricingModel === "usage_pack" ? (
+                        <Input type="number" value={planForm.includedQuantity ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, includedQuantity: Number(e.target.value || 0) }))} />
+                      ) : (
+                        <Input type="number" value={planForm.priceYearly} onChange={(e) => setPlanForm((p) => ({ ...p, priceYearly: Number(e.target.value || 0) }))} />
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>GST Mode</Label>
+                      <Select value={planForm.taxMode} onValueChange={(value) => setPlanForm((p) => ({ ...p, taxMode: value }))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="exclusive">GST Excluded</SelectItem>
+                          <SelectItem value="inclusive">GST Included</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Sort Order</Label>
+                      <Input type="number" value={planForm.sortOrder} onChange={(e) => setPlanForm((p) => ({ ...p, sortOrder: Number(e.target.value || 1) }))} />
+                    </div>
+                  </div>
+                  {planForm.pricingModel === "usage_pack" ? (
+                    <div className="grid gap-4 md:grid-cols-[220px_1fr]">
+                      <div className="space-y-1.5">
+                        <Label>Usage Metric</Label>
+                        <Select value={planForm.usageUnitName} onValueChange={(value) => setPlanForm((p) => ({ ...p, usageUnitName: value }))}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="smsCredits">SMS Credits</SelectItem>
+                            <SelectItem value="whatsappMessages">WhatsApp Messages</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="rounded-2xl border border-orange-200 bg-orange-50/60 p-4 text-sm text-slate-700">
+                        Buyer receives <span className="font-semibold text-slate-950">{Number(planForm.includedQuantity || 0).toLocaleString()}</span>{" "}
+                        <span className="font-semibold text-slate-950">{planForm.usageUnitName || "units"}</span> for
+                        <span className="font-semibold text-slate-950"> {planForm.currency} {Number(planForm.priceMonthly || 0).toLocaleString()}</span>.
+                        {planForm.taxMode === "inclusive" ? " GST is already included in the published price." : " GST will be added on top at checkout."}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                      Customer pays <span className="font-semibold text-slate-950">{planForm.currency} {Number(planForm.priceMonthly || 0).toLocaleString()}</span> monthly
+                      {Number(planForm.priceYearly || 0) > 0 ? <> or <span className="font-semibold text-slate-950">{planForm.currency} {Number(planForm.priceYearly || 0).toLocaleString()}</span> yearly</> : null}.
+                      {planForm.taxMode === "inclusive" ? " Plan rates already include GST." : " GST will be charged separately."}
+                    </div>
+                  )}
+                </section>
+
+                <section className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-orange-500" />
+                    <h3 className="text-sm font-semibold text-slate-900">Entitlements</h3>
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                    {FEATURE_CATALOG.map((feature) => {
+                      const selected = planForm.features.includes(feature);
+                      return (
+                        <button
+                          key={feature}
+                          type="button"
+                          className={`rounded-2xl border px-4 py-3 text-left text-sm transition ${
+                            selected
+                              ? "border-orange-300 bg-orange-50 text-orange-700 shadow-sm"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-orange-200 hover:bg-orange-50/40"
+                          }`}
+                          onClick={() =>
+                            setPlanForm((p) => ({
+                              ...p,
+                              features: selected ? p.features.filter((f) => f !== feature) : [...p.features, feature],
+                            }))
+                          }
+                        >
+                          {feature}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex flex-col gap-2 md:flex-row">
+                    <Input
+                      placeholder="Add custom feature"
+                      value={planForm.customFeature}
+                      onChange={(e) => setPlanForm((p) => ({ ...p, customFeature: e.target.value }))}
+                    />
+                    <Button
+                      variant="outline"
                       type="button"
-                      className={`rounded-md border px-3 py-2 text-left text-sm transition ${
-                        selected
-                          ? "border-orange-300 bg-orange-50 text-orange-700"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-orange-200"
-                      }`}
-                      onClick={() =>
-                        setPlanForm((p) => ({
-                          ...p,
-                          features: selected ? p.features.filter((f) => f !== feature) : [...p.features, feature],
-                        }))
-                      }
+                      onClick={() => {
+                        const value = (planForm.customFeature || "").trim();
+                        if (!value) return;
+                        if (planForm.features.includes(value)) {
+                          setPlanForm((p) => ({ ...p, customFeature: "" }));
+                          return;
+                        }
+                        setPlanForm((p) => ({ ...p, features: [...p.features, value], customFeature: "" }));
+                      }}
                     >
-                      {feature}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Add custom feature"
-                  value={planForm.customFeature}
-                  onChange={(e) => setPlanForm((p) => ({ ...p, customFeature: e.target.value }))}
-                />
-                <Button
-                  variant="outline"
-                  type="button"
-                  onClick={() => {
-                    const value = (planForm.customFeature || "").trim();
-                    if (!value) return;
-                    if (planForm.features.includes(value)) {
-                      setPlanForm((p) => ({ ...p, customFeature: "" }));
-                      return;
-                    }
-                    setPlanForm((p) => ({ ...p, features: [...p.features, value], customFeature: "" }));
-                  }}
-                >
-                  Add
-                </Button>
-              </div>
-              {planForm.features.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {planForm.features.map((f) => (
-                    <span key={f} className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs text-orange-700">
-                      {f}
-                      <button
-                        type="button"
-                        className="text-orange-500 hover:text-orange-700"
-                        onClick={() => setPlanForm((p) => ({ ...p, features: p.features.filter((x) => x !== f) }))}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
+                      Add feature
+                    </Button>
+                  </div>
+                  {planForm.features.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {planForm.features.map((f) => (
+                        <span key={f} className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs text-orange-700">
+                          {f}
+                          <button
+                            type="button"
+                            className="text-orange-500 hover:text-orange-700"
+                            onClick={() => setPlanForm((p) => ({ ...p, features: p.features.filter((x) => x !== f) }))}
+                          >
+                            �
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                      No features selected yet.
+                    </div>
+                  )}
+                </section>
+
+                <section className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-orange-500" />
+                    <h3 className="text-sm font-semibold text-slate-900">Operational limits</h3>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="space-y-1.5"><Label className="text-xs text-slate-500">Contacts</Label><Input type="number" value={planForm.limits.contacts ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, contacts: Number(e.target.value || 0) } }))} /></div>
+                    <div className="space-y-1.5"><Label className="text-xs text-slate-500">Team Members</Label><Input type="number" value={planForm.limits.teamMembers ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, teamMembers: Number(e.target.value || 0) } }))} /></div>
+                    <div className="space-y-1.5"><Label className="text-xs text-slate-500">SMS Credits</Label><Input type="number" value={planForm.limits.smsCredits ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, smsCredits: Number(e.target.value || 0) } }))} /></div>
+                    <div className="space-y-1.5"><Label className="text-xs text-slate-500">WhatsApp Messages</Label><Input type="number" value={planForm.limits.whatsappMessages ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, whatsappMessages: Number(e.target.value || 0) } }))} /></div>
+                    <div className="space-y-1.5"><Label className="text-xs text-slate-500">Chatbots</Label><Input type="number" value={planForm.limits.chatbots ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, chatbots: Number(e.target.value || 0) } }))} /></div>
+                    <div className="space-y-1.5"><Label className="text-xs text-slate-500">Flows</Label><Input type="number" value={planForm.limits.flows ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, flows: Number(e.target.value || 0) } }))} /></div>
+                    <div className="space-y-1.5"><Label className="text-xs text-slate-500">API Calls</Label><Input type="number" value={planForm.limits.apiCalls ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, apiCalls: Number(e.target.value || 0) } }))} /></div>
+                  </div>
+                </section>
+
+                <div className="flex flex-col gap-3 border-t border-slate-100 pt-5 md:flex-row md:items-center md:justify-between">
+                  <div className="text-sm text-slate-500">
+                    {planForm.id ? "Editing existing plan. Saving updates the current commercial definition." : "New plans appear immediately in platform owner purchase flows."}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => setPlanForm({ id: "", code: "", name: "", pricingModel: "subscription", priceMonthly: 0, priceYearly: 0, taxMode: "exclusive", usageUnitName: "smsCredits", includedQuantity: 0, currency: "INR", isActive: true, sortOrder: 1, features: [], customFeature: "", limits: { ...DEFAULT_LIMITS } })}
+                    >
+                      Clear draft
+                    </Button>
+                    <Button className="bg-orange-500 hover:bg-orange-600" onClick={async () => {
+                      try {
+                        const payload = {
+                          code: planForm.code,
+                          name: planForm.name,
+                          pricingModel: planForm.pricingModel,
+                          priceMonthly: planForm.priceMonthly,
+                          priceYearly: planForm.priceYearly,
+                          taxMode: planForm.taxMode,
+                          usageUnitName: planForm.usageUnitName,
+                          includedQuantity: planForm.includedQuantity,
+                          currency: planForm.currency,
+                          isActive: planForm.isActive,
+                          sortOrder: planForm.sortOrder,
+                          features: (planForm.features || []).filter(Boolean),
+                          limits: planForm.limits || {}
+                        };
+                        if (planForm.id) await updatePlatformBillingPlan(planForm.id, payload);
+                        else await createPlatformBillingPlan(payload);
+                        toast.success("Plan saved");
+                        setPlans(await listPlatformBillingPlans());
+                        setPlanForm({ id: "", code: "", name: "", pricingModel: "subscription", priceMonthly: 0, priceYearly: 0, taxMode: "exclusive", usageUnitName: "smsCredits", includedQuantity: 0, currency: "INR", isActive: true, sortOrder: 1, features: [], customFeature: "", limits: { ...DEFAULT_LIMITS } });
+                      } catch {
+                        toast.error("Failed to save plan");
+                      }
+                    }}>{planForm.id ? "Update plan" : "Create plan"}</Button>
+                  </div>
                 </div>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label>Plan Limits</Label>
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-500">Contacts</Label>
-                  <Input type="number" value={planForm.limits.contacts ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, contacts: Number(e.target.value || 0) } }))} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-500">Team Members</Label>
-                  <Input type="number" value={planForm.limits.teamMembers ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, teamMembers: Number(e.target.value || 0) } }))} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-500">SMS Credits</Label>
-                  <Input type="number" value={planForm.limits.smsCredits ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, smsCredits: Number(e.target.value || 0) } }))} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-500">WhatsApp Messages</Label>
-                  <Input type="number" value={planForm.limits.whatsappMessages ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, whatsappMessages: Number(e.target.value || 0) } }))} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-500">Chatbots</Label>
-                  <Input type="number" value={planForm.limits.chatbots ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, chatbots: Number(e.target.value || 0) } }))} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-500">Flows</Label>
-                  <Input type="number" value={planForm.limits.flows ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, flows: Number(e.target.value || 0) } }))} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-500">API Calls</Label>
-                  <Input type="number" value={planForm.limits.apiCalls ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, limits: { ...p.limits, apiCalls: Number(e.target.value || 0) } }))} />
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button className="bg-orange-500 hover:bg-orange-600" onClick={async () => {
-                try {
-                  const payload = {
-                    code: planForm.code,
-                    name: planForm.name,
-                    pricingModel: planForm.pricingModel,
-                    priceMonthly: planForm.priceMonthly,
-                    priceYearly: planForm.priceYearly,
-                    taxMode: planForm.taxMode,
-                    usageUnitName: planForm.usageUnitName,
-                    includedQuantity: planForm.includedQuantity,
-                    currency: planForm.currency,
-                    isActive: planForm.isActive,
-                    sortOrder: planForm.sortOrder,
-                    features: (planForm.features || []).filter(Boolean),
-                    limits: planForm.limits || {}
-                  };
-                  if (planForm.id) await updatePlatformBillingPlan(planForm.id, payload);
-                  else await createPlatformBillingPlan(payload);
-                  toast.success("Plan saved");
-                  setPlans(await listPlatformBillingPlans());
-                  setPlanForm({ id: "", code: "", name: "", pricingModel: "subscription", priceMonthly: 0, priceYearly: 0, taxMode: "exclusive", usageUnitName: "smsCredits", includedQuantity: 0, currency: "INR", isActive: true, sortOrder: 1, features: [], customFeature: "", limits: { ...DEFAULT_LIMITS } });
-                } catch {
-                  toast.error("Failed to save plan");
-                }
-              }}>{planForm.id ? "Update Plan" : "Create Plan"}</Button>
-            </div>
-            <div className="rounded-lg border border-slate-200 overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="text-left px-3 py-2">Code</th>
-                    <th className="text-left px-3 py-2">Name</th>
-                    <th className="text-left px-3 py-2">Pricing</th>
-                    <th className="text-left px-3 py-2">Status</th>
-                    <th className="text-right px-3 py-2">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
+              </CardContent>
+            </Card>
+
+            <div className="space-y-6">
+              <Card className="border-slate-200 shadow-sm">
+                <CardHeader className="border-b border-slate-100 bg-slate-50/70">
+                  <CardTitle>Portfolio snapshot</CardTitle>
+                  <CardDescription>Commercial inventory and current pricing posture.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4 p-6 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Active vs archived</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-950">{billingPlanStats.active} / {billingPlanStats.archived}</p>
+                    <p className="mt-1 text-sm text-slate-500">Live plans vs archived definitions</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Highest entry price</p>
+                    <p className="mt-2 text-2xl font-bold text-slate-950">
+                      {billingPlanStats.topMonthly ? `${billingPlanStats.topMonthly.currency || "INR"} ${Number(billingPlanStats.topMonthly.priceMonthly || 0).toLocaleString()}` : "�"}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-500">{billingPlanStats.topMonthly?.name || "No plans yet"}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 sm:col-span-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Commercial mix</p>
+                        <p className="mt-2 text-lg font-semibold text-slate-950">{billingPlanStats.subscriptions} subscriptions and {billingPlanStats.usagePacks} prepaid packs</p>
+                        <p className="mt-1 text-sm text-slate-500">Balanced portfolio for recurring SaaS and prepaid transactional sales.</p>
+                      </div>
+                      <Boxes className="h-6 w-6 text-orange-500" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-slate-200 shadow-sm">
+                <CardHeader className="border-b border-slate-100 bg-slate-50/70">
+                  <CardTitle>Plan portfolio</CardTitle>
+                  <CardDescription>Edit, archive, or review the commercial shape of each plan.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4 p-6">
                   {plans.map((p) => (
-                    <tr key={p.id} className="border-t border-slate-100">
-                      <td className="px-3 py-2">{p.code}</td>
-                      <td className="px-3 py-2">{p.name}</td>
-                      <td className="px-3 py-2">
-                        {p.pricingModel === "usage_pack"
-                          ? `${p.currency} ${Number(p.priceMonthly || 0).toLocaleString()} for ${Number(p.includedQuantity || 0).toLocaleString()} ${p.usageUnitName || "units"}`
-                          : `${p.currency} ${Number(p.priceMonthly || 0).toLocaleString()}/month`}
-                        <div className="text-xs text-slate-500">{p.taxMode === "inclusive" ? "GST included" : "GST extra"}</div>
-                      </td>
-                      <td className="px-3 py-2">{p.isActive ? "Active" : "Archived"}</td>
-                      <td className="px-3 py-2 text-right">
-                        <Button variant="outline" size="sm" className="mr-2" onClick={() => setPlanForm({
+                    <div key={p.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-lg font-semibold text-slate-950">{p.name}</h3>
+                            <Badge className={p.isActive ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-50" : "bg-slate-100 text-slate-600 hover:bg-slate-100"}>
+                              {p.isActive ? "Active" : "Archived"}
+                            </Badge>
+                            <Badge variant="outline">{p.code}</Badge>
+                            <Badge variant="outline">{p.pricingModel === "usage_pack" ? "Usage Pack" : "Subscription"}</Badge>
+                          </div>
+                          <div className="text-sm text-slate-600">
+                            {p.pricingModel === "usage_pack"
+                              ? `${p.currency} ${Number(p.priceMonthly || 0).toLocaleString()} for ${Number(p.includedQuantity || 0).toLocaleString()} ${p.usageUnitName || "units"}`
+                              : `${p.currency} ${Number(p.priceMonthly || 0).toLocaleString()}/month${Number(p.priceYearly || 0) > 0 ? ` � ${p.currency} ${Number(p.priceYearly || 0).toLocaleString()}/year` : ""}`}
+                            <span className="ml-2 text-xs text-slate-500">{p.taxMode === "inclusive" ? "GST included" : "GST extra"}</span>
+                          </div>
+                          {Array.isArray(p.features) && p.features.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                              {p.features.slice(0, 5).map((feature) => (
+                                <span key={feature} className="inline-flex items-center rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs text-orange-700">
+                                  {feature}
+                                </span>
+                              ))}
+                              {p.features.length > 5 ? (
+                                <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+                                  +{p.features.length - 5} more
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[360px]">
+                          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Contacts</p>
+                            <p className="mt-2 text-xl font-bold text-slate-950">{Number(p.limits?.contacts || 0).toLocaleString()}</p>
+                          </div>
+                          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">SMS</p>
+                            <p className="mt-2 text-xl font-bold text-slate-950">{Number(p.limits?.smsCredits || 0).toLocaleString()}</p>
+                          </div>
+                          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">WA Messages</p>
+                            <p className="mt-2 text-xl font-bold text-slate-950">{Number(p.limits?.whatsappMessages || 0).toLocaleString()}</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+                        <Button variant="outline" size="sm" onClick={() => setPlanForm({
                           id: p.id,
                           code: p.code,
                           name: p.name,
@@ -3173,22 +3350,34 @@ const PlatformSettingsPage = () => {
                           features: Array.isArray(p.features) ? p.features : [],
                           customFeature: "",
                           limits: { ...DEFAULT_LIMITS, ...(p.limits || {}) }
-                        })}>Edit</Button>
+                        })}>Edit plan</Button>
                         <Button variant="outline" size="sm" onClick={async () => {
-                          try { await archivePlatformBillingPlan(p.id); setPlans(await listPlatformBillingPlans()); toast.success("Plan archived"); } catch { toast.error("Archive failed"); }
-                        }}>Archive</Button>
-                      </td>
-                    </tr>
+                          try {
+                            await archivePlatformBillingPlan(p.id);
+                            setPlans(await listPlatformBillingPlans());
+                            toast.success("Plan archived");
+                          } catch {
+                            toast.error("Archive failed");
+                          }
+                        }}>Archive plan</Button>
+                      </div>
+                    </div>
                   ))}
-                  {plans.length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No plans</td></tr>}
-                </tbody>
-              </table>
+                  {plans.length === 0 ? (
+                    <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-12 text-center text-sm text-slate-500">
+                      No billing plans created yet.
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
+      )}
       )}
     </div>
   );
 };
 
 export default PlatformSettingsPage;
+

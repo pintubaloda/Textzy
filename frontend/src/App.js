@@ -90,7 +90,7 @@ function App() {
               <Route path="automations" element={!isPlatformView && can("automation.read") ? <AutomationsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
               <Route path="automations/workflow" element={!isPlatformView && can("automation.read") ? <AutomationsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
               <Route path="automations/qa" element={!isPlatformView && can("automation.read") ? <AutomationsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
-              <Route path="analytics" element={!isPlatformView && canAnalytics ? <AnalyticsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
+              <Route path="analytics" element={canAnalytics ? <AnalyticsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
               <Route path="integrations" element={!isPlatformView && canIntegrations ? <IntegrationsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
               <Route path="whatsapp-onboarding" element={!isPlatformView && can("inbox.read") ? <WhatsAppOnboardingPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
               <Route
