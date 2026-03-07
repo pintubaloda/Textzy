@@ -15,9 +15,46 @@ public class CampaignsController(TenantDbContext db, TenancyContext tenancy, Rba
     {
         if (!rbac.HasPermission(CampaignsRead)) return Forbid();
 
+        var metrics = db.Messages
+            .Where(m => m.TenantId == tenancy.TenantId && m.CampaignId != null)
+            .GroupBy(m => m.CampaignId!.Value)
+            .Select(g => new
+            {
+                CampaignId = g.Key,
+                Sent = g.Count(),
+                Delivered = g.Count(m =>
+                    m.DeliveredAtUtc != null ||
+                    m.Status == "Delivered" ||
+                    m.Status == "Read"),
+                Read = g.Count(m =>
+                    m.ReadAtUtc != null ||
+                    m.Status == "Read"),
+                Failed = g.Count(m => m.Status == "Failed")
+            })
+            .ToDictionary(x => x.CampaignId, x => new { x.Sent, x.Delivered, x.Read, x.Failed });
+
         var campaigns = db.Campaigns
             .Where(c => c.TenantId == tenancy.TenantId)
-            .Select(c => new { c.Id, c.Name, c.Channel, c.TemplateText, c.CreatedAtUtc })
+            .ToList()
+            .Select(c =>
+            {
+                metrics.TryGetValue(c.Id, out var metric);
+                return new
+                {
+                    c.Id,
+                    c.Name,
+                    c.Channel,
+                    c.TemplateText,
+                    c.CreatedAtUtc,
+                    Sent = metric?.Sent ?? 0,
+                    Delivered = metric?.Delivered ?? 0,
+                    Read = metric?.Read ?? 0,
+                    Failed = metric?.Failed ?? 0,
+                    Status = (metric?.Failed ?? 0) > 0 && (metric?.Delivered ?? 0) == 0 && (metric?.Read ?? 0) == 0
+                        ? "error"
+                        : "active"
+                };
+            })
             .ToList();
 
         return Ok(campaigns);

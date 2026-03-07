@@ -261,10 +261,11 @@ const DashboardOverview = () => {
     id: c.id || c.Id,
     name: c.name || c.Name || "Untitled Campaign",
     channel: String(c.channel ?? c.Channel ?? "").toLowerCase(),
-    status: "active",
-    sent: 0,
-    delivered: 0,
-    read: 0,
+    status: String(c.status || c.Status || "active").toLowerCase(),
+    sent: Number(c.sent ?? c.Sent ?? 0),
+    delivered: Number(c.delivered ?? c.Delivered ?? 0),
+    read: Number(c.read ?? c.Read ?? 0),
+    failed: Number(c.failed ?? c.Failed ?? 0),
     createdAtUtc: c.createdAtUtc || c.CreatedAtUtc || null,
   }));
 
