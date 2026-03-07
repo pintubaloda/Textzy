@@ -18,7 +18,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { getCompanySettings, getNotificationSettings, saveCompanySettings, saveNotificationSettings, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
+import { getCompanySettings, getNotificationSettings, getSession, saveCompanySettings, saveNotificationSettings, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
 import { loadFacebookSdk } from "@/lib/facebookSdk";
 
 const SettingsPage = () => {
@@ -53,6 +53,9 @@ const SettingsPage = () => {
     pan: "",
     billingEmail: "",
     billingPhone: "",
+    taxRatePercent: 18,
+    isTaxExempt: false,
+    isReverseCharge: false,
     isActive: true,
   });
   const [notifyPrefs, setNotifyPrefs] = useState({
@@ -65,6 +68,11 @@ const SettingsPage = () => {
     dndUntilUtc: null,
   });
   const [notifyUpdatedAtUtc, setNotifyUpdatedAtUtc] = useState(null);
+  const session = getSession() || {};
+  const displayName = String(session.fullName || session.name || session.email || "User").trim();
+  const [firstName, ...restNames] = displayName.split(" ");
+  const lastName = restNames.join(" ").trim();
+  const profileInitials = `${(firstName || "U").charAt(0)}${(lastName || "").charAt(0)}`.toUpperCase();
   const fmt = (v) => (v ? new Date(v).toLocaleString() : "—");
   const whatsappConnected = !!whatsappStatus?.isConnected
     || !!whatsappStatus?.readyToSend
@@ -121,7 +129,11 @@ const SettingsPage = () => {
         }
         return;
       }
-      toast.success("Settings saved successfully!");
+      if (activeTab === "profile" || activeTab === "security") {
+        toast.info("This section is informational right now. Use dedicated auth flows for account changes.");
+        return;
+      }
+      toast.info("This section does not use the global save action.");
       return;
     }
     setSaving(true);
@@ -138,6 +150,9 @@ const SettingsPage = () => {
         pan: saved?.pan || "",
         billingEmail: saved?.billingEmail || "",
         billingPhone: saved?.billingPhone || "",
+        taxRatePercent: Number(saved?.taxRatePercent ?? 18),
+        isTaxExempt: !!saved?.isTaxExempt,
+        isReverseCharge: !!saved?.isReverseCharge,
         isActive: saved?.isActive ?? true,
       });
       toast.success("Company settings saved.");
@@ -187,6 +202,9 @@ const SettingsPage = () => {
             pan: data?.pan || "",
             billingEmail: data?.billingEmail || "",
             billingPhone: data?.billingPhone || "",
+            taxRatePercent: Number(data?.taxRatePercent ?? 18),
+            isTaxExempt: !!data?.isTaxExempt,
+            isReverseCharge: !!data?.isReverseCharge,
             isActive: data?.isActive ?? true,
           });
         })
@@ -352,50 +370,41 @@ const SettingsPage = () => {
               <div className="flex items-center gap-6">
                 <Avatar className="w-24 h-24">
                   <AvatarImage src="" />
-                  <AvatarFallback className="bg-orange-100 text-orange-600 text-2xl font-medium">RK</AvatarFallback>
+                  <AvatarFallback className="bg-orange-100 text-orange-600 text-2xl font-medium">{profileInitials || "U"}</AvatarFallback>
                 </Avatar>
                 <div>
-                  <Button variant="outline" className="gap-2" data-testid="upload-avatar-btn">
+                  <div className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
                     <Upload className="w-4 h-4" />
-                    Upload Photo
-                  </Button>
-                  <p className="text-sm text-slate-500 mt-2">JPG, PNG or GIF. Max size 2MB.</p>
+                    Profile editing is account-managed
+                  </div>
+                  <p className="text-sm text-slate-500 mt-2">This screen currently shows authenticated user identity from your active session.</p>
                 </div>
               </div>
 
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label>First Name</Label>
-                  <Input defaultValue="Rahul" data-testid="first-name-input" />
+                  <Input value={firstName} readOnly data-testid="first-name-input" />
                 </div>
                 <div className="space-y-2">
                   <Label>Last Name</Label>
-                  <Input defaultValue="Kumar" data-testid="last-name-input" />
+                  <Input value={lastName} readOnly data-testid="last-name-input" />
                 </div>
                 <div className="space-y-2">
                   <Label>Email Address</Label>
-                  <Input type="email" defaultValue="rahul@techstart.com" data-testid="email-input" />
+                  <Input type="email" value={session.email || ""} readOnly data-testid="email-input" />
                 </div>
                 <div className="space-y-2">
                   <Label>Phone Number</Label>
-                  <Input defaultValue="+91 98765 43210" data-testid="phone-input" />
+                  <Input value={session.phone || ""} readOnly placeholder="Not available" data-testid="phone-input" />
                 </div>
                 <div className="space-y-2">
                   <Label>Role</Label>
-                  <Input defaultValue="Admin" disabled />
+                  <Input value={session.role || ""} disabled />
                 </div>
                 <div className="space-y-2">
-                  <Label>Timezone</Label>
-                  <Select defaultValue="ist">
-                    <SelectTrigger data-testid="timezone-select">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ist">Asia/Kolkata (IST)</SelectItem>
-                      <SelectItem value="utc">UTC</SelectItem>
-                      <SelectItem value="pst">America/Los_Angeles (PST)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label>Project</Label>
+                  <Input value={session.projectName || session.tenantSlug || ""} readOnly data-testid="timezone-select" />
                 </div>
               </div>
             </CardContent>
@@ -414,6 +423,10 @@ const SettingsPage = () => {
                 <div className="space-y-2">
                   <Label>Company Name</Label>
                   <Input value={company.companyName} onChange={(e) => setCompany((p) => ({ ...p, companyName: e.target.value }))} data-testid="company-name-input" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Legal Name</Label>
+                  <Input value={company.legalName} onChange={(e) => setCompany((p) => ({ ...p, legalName: e.target.value }))} data-testid="legal-name-input" />
                 </div>
                 <div className="space-y-2">
                   <Label>Industry</Label>
@@ -464,6 +477,44 @@ const SettingsPage = () => {
                 <div className="space-y-2">
                   <Label>PAN</Label>
                   <Input value={company.pan} onChange={(e) => setCompany((p) => ({ ...p, pan: e.target.value }))} data-testid="pan-input" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Billing Email</Label>
+                  <Input value={company.billingEmail} onChange={(e) => setCompany((p) => ({ ...p, billingEmail: e.target.value }))} data-testid="billing-email-input" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Billing Phone</Label>
+                  <Input value={company.billingPhone} onChange={(e) => setCompany((p) => ({ ...p, billingPhone: e.target.value }))} data-testid="billing-phone-input" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Tax Rate %</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={company.taxRatePercent ?? 18}
+                    onChange={(e) => setCompany((p) => ({ ...p, taxRatePercent: Number(e.target.value || 0) }))}
+                    data-testid="tax-rate-input"
+                  />
+                </div>
+                <div className="space-y-2 flex items-end">
+                  <div className="w-full grid grid-cols-1 gap-3 rounded-lg border border-slate-200 p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-slate-900">Tax Exempt</p>
+                        <p className="text-xs text-slate-500">No tax applied on invoices</p>
+                      </div>
+                      <Switch checked={!!company.isTaxExempt} onCheckedChange={(v) => setCompany((p) => ({ ...p, isTaxExempt: !!v }))} />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-slate-900">Reverse Charge</p>
+                        <p className="text-xs text-slate-500">Invoice shows reverse-charge handling</p>
+                      </div>
+                      <Switch checked={!!company.isReverseCharge} onCheckedChange={(v) => setCompany((p) => ({ ...p, isReverseCharge: !!v }))} />
+                    </div>
+                  </div>
                 </div>
               </div>
             </CardContent>
@@ -547,40 +598,36 @@ const SettingsPage = () => {
           <div className="space-y-6">
             <Card className="border-slate-200">
               <CardHeader>
-                <CardTitle>Change Password</CardTitle>
-                <CardDescription>Update your account password</CardDescription>
+                <CardTitle>Account Security</CardTitle>
+                <CardDescription>Password and session management are not fully wired in this tenant dashboard yet</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Current Password</Label>
-                  <Input type="password" data-testid="current-password-input" />
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  Use dedicated authentication flows for password reset, email verification, and device/session security. This page no longer shows fake editable security forms.
                 </div>
-                <div className="space-y-2">
-                  <Label>New Password</Label>
-                  <Input type="password" data-testid="new-password-input" />
+                <div className="grid md:grid-cols-2 gap-4 text-sm">
+                  <div className="rounded-lg border border-slate-200 p-4">
+                    <p className="font-medium text-slate-900">Authenticated user</p>
+                    <p className="text-slate-600 mt-1">{displayName}</p>
+                    <p className="text-slate-500">{session.email || "No email available"}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 p-4">
+                    <p className="font-medium text-slate-900">Current project</p>
+                    <p className="text-slate-600 mt-1">{session.projectName || session.tenantSlug || "Not selected"}</p>
+                    <p className="text-slate-500">Role: {session.role || "unknown"}</p>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Confirm New Password</Label>
-                  <Input type="password" data-testid="confirm-password-input" />
-                </div>
-                <Button className="bg-orange-500 hover:bg-orange-600 text-white" data-testid="update-password-btn">
-                  Update Password
-                </Button>
               </CardContent>
             </Card>
 
             <Card className="border-slate-200">
               <CardHeader>
                 <CardTitle>Two-Factor Authentication</CardTitle>
-                <CardDescription>Add an extra layer of security</CardDescription>
+                <CardDescription>2FA controls will appear here once tenant-level auth policy APIs are exposed</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-slate-900">Enable 2FA</p>
-                    <p className="text-sm text-slate-500">Use an authenticator app for additional security</p>
-                  </div>
-                  <Switch data-testid="enable-2fa-switch" />
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  2FA policy is not configurable from this page yet. When backend support is added, this section will manage authenticator enrollment and recovery controls.
                 </div>
               </CardContent>
             </Card>
@@ -588,7 +635,7 @@ const SettingsPage = () => {
             <Card className="border-slate-200">
               <CardHeader>
                 <CardTitle>Active Sessions</CardTitle>
-                <CardDescription>Manage your active login sessions</CardDescription>
+                <CardDescription>Current authenticated context</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
@@ -598,25 +645,14 @@ const SettingsPage = () => {
                         <Globe className="w-5 h-5 text-green-600" />
                       </div>
                       <div>
-                        <p className="font-medium text-slate-900">Chrome on macOS</p>
-                        <p className="text-sm text-slate-500">Mumbai, India • Current session</p>
+                        <p className="font-medium text-slate-900">Current web session</p>
+                        <p className="text-sm text-slate-500">{session.email || "Unknown user"} • Active now</p>
                       </div>
                     </div>
                     <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Active</Badge>
                   </div>
-                  <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center">
-                        <Phone className="w-5 h-5 text-slate-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-slate-900">Mobile App on iPhone</p>
-                        <p className="text-sm text-slate-500">Mumbai, India • 2 hours ago</p>
-                      </div>
-                    </div>
-                    <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700">
-                      Revoke
-                    </Button>
+                  <div className="rounded-lg border border-slate-200 p-4 text-sm text-slate-600">
+                    Historical session listing and revoke actions are not wired yet. Dummy device rows have been removed to avoid showing fake security data.
                   </div>
                 </div>
               </CardContent>
@@ -780,7 +816,7 @@ const SettingsPage = () => {
                     <div className="grid md:grid-cols-2 gap-3">
                       <div className="rounded-lg border border-slate-200 p-3">
                         <p className="text-xs text-slate-500">Business Name</p>
-                        <p className="font-semibold text-slate-900">{whatsappStatus.businessName || "Project Business Name"}</p>
+                        <p className="font-semibold text-slate-900">{whatsappStatus.businessName || company.companyName || session.projectName || "Not available"}</p>
                       </div>
                       <div className="rounded-lg border border-slate-200 p-3">
                         <p className="text-xs text-slate-500">Display Number</p>
@@ -804,7 +840,7 @@ const SettingsPage = () => {
                       </div>
                       <div className="rounded-lg border border-slate-200 p-3">
                         <p className="text-xs text-slate-500">Token Source</p>
-                        <p className="font-semibold text-slate-900">{whatsappStatus.tokenSource || "exchanged_token"}</p>
+                        <p className="font-semibold text-slate-900">{whatsappStatus.tokenSource || "Not available"}</p>
                       </div>
                       <div className="rounded-lg border border-slate-200 p-3">
                         <p className="text-xs text-slate-500">Permanent Token Issued</p>

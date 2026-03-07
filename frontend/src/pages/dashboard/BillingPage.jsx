@@ -100,12 +100,14 @@ const BillingPage = () => {
     String(session?.projectName || "").trim() ||
     String(session?.tenantSlug || "").trim() ||
     "Your company";
+  const legalName = String(company?.legalName || "").trim();
   const billingAddressText = String(company?.address || "").trim();
   const billingEmail =
     String(company?.billingEmail || "").trim() ||
     String(session?.email || "").trim();
   const billingPhone = String(company?.billingPhone || "").trim();
   const gstin = String(company?.gstin || "").trim();
+  const pan = String(company?.pan || "").trim();
   const pct = (used, limit) => !limit ? 0 : Math.min(100, Math.round((used / limit) * 100));
   const usage = useMemo(() => {
     const limits = currentPlan?.limits || {};
@@ -534,10 +536,12 @@ const BillingPage = () => {
           <CardContent className="space-y-4">
             <div className="text-sm text-slate-600 space-y-1">
               <p className="font-medium text-slate-900">{companyName}</p>
+              <p>{legalName || "Legal name not configured"}</p>
               <p>{billingAddressText || "Address not configured"}</p>
               <p>{billingEmail || "Billing email not configured"}</p>
               <p>{billingPhone || "Billing phone not configured"}</p>
               <p className="pt-2">GSTIN: {gstin || "-"}</p>
+              <p>PAN: {pan || "-"}</p>
             </div>
             <Button
               variant="outline"

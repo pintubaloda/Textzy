@@ -251,9 +251,13 @@ public class BillingController(
         var tenant = await db.Tenants.FirstOrDefaultAsync(x => x.Id == tenancy.TenantId, ct);
         var profile = await db.TenantCompanyProfiles.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId, ct);
         var companyName = string.IsNullOrWhiteSpace(profile?.CompanyName) ? (tenant?.Name ?? "Textzy Workspace") : profile!.CompanyName;
+        var legalName = string.IsNullOrWhiteSpace(profile?.LegalName) ? companyName : profile!.LegalName;
         var billingEmail = profile?.BillingEmail ?? string.Empty;
+        var billingAddress = profile?.Address ?? string.Empty;
+        var gstin = profile?.Gstin ?? string.Empty;
+        var pan = profile?.Pan ?? string.Empty;
 
-        var html = BuildInvoiceHtml(inv, companyName, billingEmail);
+        var html = BuildInvoiceHtml(inv, companyName, legalName, billingEmail, billingAddress, gstin, pan);
         var bytes = Encoding.UTF8.GetBytes(html);
         var filename = $"{(string.IsNullOrWhiteSpace(inv.InvoiceNo) ? inv.Id.ToString("N") : inv.InvoiceNo)}.html";
         return File(bytes, "text/html; charset=utf-8", filename);
@@ -1010,11 +1014,15 @@ public class BillingController(
         return $"\"{v}\"";
     }
 
-    private static string BuildInvoiceHtml(BillingInvoice inv, string companyName, string billingEmail)
+    private static string BuildInvoiceHtml(BillingInvoice inv, string companyName, string legalName, string billingEmail, string billingAddress, string gstin, string pan)
     {
         var safeInvoiceNo = WebUtility.HtmlEncode(inv.InvoiceNo);
         var safeCompany = WebUtility.HtmlEncode(companyName);
+        var safeLegalName = WebUtility.HtmlEncode(legalName);
         var safeEmail = WebUtility.HtmlEncode(billingEmail);
+        var safeAddress = WebUtility.HtmlEncode(billingAddress);
+        var safeGstin = WebUtility.HtmlEncode(gstin);
+        var safePan = WebUtility.HtmlEncode(pan);
         return $$"""
             <!doctype html>
             <html lang="en">
@@ -1045,7 +1053,10 @@ public class BillingController(
                 </div>
               </div>
               <div><b>Bill To:</b> {{safeCompany}}</div>
+              <div class="muted">{{safeLegalName}}</div>
               <div class="muted">{{safeEmail}}</div>
+              <div class="muted">{{safeAddress}}</div>
+              <div class="muted">GSTIN: {{(string.IsNullOrWhiteSpace(gstin) ? "-" : safeGstin)}} | PAN: {{(string.IsNullOrWhiteSpace(pan) ? "-" : safePan)}}</div>
               <div class="muted">Period: {{inv.PeriodStartUtc:yyyy-MM-dd}} to {{inv.PeriodEndUtc:yyyy-MM-dd}}</div>
               <table>
                 <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>

@@ -6,20 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Plus,
   Plug,
-  Globe,
   Key,
   Webhook,
   ShoppingCart,
@@ -31,8 +20,7 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
-  CheckCircle,
-  XCircle,
+  Clock3,
   ExternalLink,
   Search,
 } from "lucide-react";
@@ -40,8 +28,6 @@ import { toast } from "sonner";
 import { getPlatformSettings, getSession, savePlatformSettings } from "@/lib/api";
 
 const IntegrationsPage = () => {
-  const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
-  const [showWebhookDialog, setShowWebhookDialog] = useState(false);
   const [showApiUsername, setShowApiUsername] = useState(false);
   const [showApiPassword, setShowApiPassword] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
@@ -85,84 +71,57 @@ const IntegrationsPage = () => {
       name: "Shopify",
       description: "Sync orders and send automated notifications",
       icon: ShoppingCart,
-      status: "connected",
+      status: "planned",
       category: "e-commerce",
     },
     {
       name: "WooCommerce",
       description: "WordPress e-commerce integration",
       icon: ShoppingCart,
-      status: "available",
+      status: "planned",
       category: "e-commerce",
     },
     {
       name: "Razorpay",
       description: "Payment notifications and receipts",
       icon: CreditCard,
-      status: "connected",
+      status: "planned",
       category: "payments",
     },
     {
       name: "Stripe",
       description: "Payment gateway integration",
       icon: CreditCard,
-      status: "available",
+      status: "planned",
       category: "payments",
     },
     {
       name: "Mailchimp",
       description: "Sync contacts and campaigns",
       icon: Mail,
-      status: "available",
+      status: "planned",
       category: "marketing",
     },
     {
       name: "HubSpot",
       description: "CRM and marketing automation",
       icon: Database,
-      status: "available",
+      status: "planned",
       category: "crm",
     },
     {
       name: "Salesforce",
       description: "Enterprise CRM integration",
       icon: Database,
-      status: "available",
+      status: "planned",
       category: "crm",
     },
     {
       name: "Zapier",
       description: "Connect with 5000+ apps",
       icon: Plug,
-      status: "connected",
+      status: "planned",
       category: "automation",
-    },
-  ];
-
-  const webhooks = [
-    {
-      id: 1,
-      name: "Order Created",
-      url: "https://api.yourstore.com/webhooks/order",
-      events: ["message.sent", "message.delivered"],
-      status: "active",
-      lastTriggered: "5 min ago",
-    },
-    {
-      id: 2,
-      name: "Lead Capture",
-      url: "https://api.yourcrm.com/webhooks/leads",
-      events: ["contact.created", "contact.updated"],
-      status: "active",
-      lastTriggered: "1 hour ago",
-    },
-    {
-      id: 3,
-      name: "Campaign Analytics",
-      url: "https://analytics.example.com/track",
-      events: ["campaign.completed"],
-      status: "inactive",
-      lastTriggered: "2 days ago",
     },
   ];
 
@@ -420,68 +379,28 @@ const IntegrationsPage = () => {
                 </div>
                 <div>
                   <CardTitle className="text-lg">Webhooks</CardTitle>
-                  <CardDescription>Receive real-time notifications</CardDescription>
+                  <CardDescription>Tenant-managed webhook UI is not live yet</CardDescription>
                 </div>
               </div>
-              <Dialog open={showWebhookDialog} onOpenChange={setShowWebhookDialog}>
-                <DialogTrigger asChild>
-                  <Button size="sm" className="bg-orange-500 hover:bg-orange-600 text-white gap-1" data-testid="add-webhook-btn">
-                    <Plus className="w-4 h-4" />
-                    Add
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Create Webhook</DialogTitle>
-                    <DialogDescription>
-                      Set up a webhook endpoint to receive events
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label>Webhook Name</Label>
-                      <Input placeholder="e.g., Order Notifications" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Endpoint URL</Label>
-                      <Input placeholder="https://your-server.com/webhooks" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Events</Label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {["message.sent", "message.delivered", "message.read", "contact.created", "campaign.completed"].map((event) => (
-                          <div key={event} className="flex items-center space-x-2">
-                            <input type="checkbox" id={event} className="rounded border-slate-300" />
-                            <label htmlFor={event} className="text-sm">{event}</label>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setShowWebhookDialog(false)}>Cancel</Button>
-                    <Button className="bg-orange-500 hover:bg-orange-600">Create Webhook</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+              <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">Planned</Badge>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {webhooks.slice(0, 2).map((webhook) => (
-                <div key={webhook.id} className="p-3 bg-slate-50 rounded-lg">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-medium text-slate-900 text-sm">{webhook.name}</span>
-                    <Badge className={webhook.status === "active" ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-slate-100 text-slate-700 hover:bg-slate-100"}>
-                      {webhook.status}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-slate-500 truncate">{webhook.url}</p>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-slate-200 flex items-center justify-center">
+                  <Clock3 className="w-5 h-5 text-slate-600" />
                 </div>
-              ))}
-              <Button variant="ghost" size="sm" className="w-full text-orange-500">
-                View All Webhooks
-              </Button>
+                <div>
+                  <p className="font-medium text-slate-900">Webhook management is not wired for tenant dashboard yet.</p>
+                  <p className="text-sm text-slate-600 mt-1">
+                    Incoming provider callbacks are handled in backend. Tenant-facing create/edit webhook UI will be added only after those endpoints are fully exposed.
+                  </p>
+                </div>
+              </div>
+              <div className="text-xs text-slate-500">
+                Current recommendation: use API documentation for callback format and let platform owner manage provider-level webhook routing.
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -516,9 +435,7 @@ const IntegrationsPage = () => {
                 {integrations.map((integration, index) => (
                   <Card
                     key={index}
-                    className={`border-slate-200 cursor-pointer transition-all hover:border-orange-200 ${
-                      integration.status === "connected" ? "border-green-200 bg-green-50/30" : ""
-                    }`}
+                    className="border-slate-200 transition-all hover:border-orange-200"
                     data-testid={`integration-${integration.name.toLowerCase()}`}
                   >
                     <CardContent className="pt-6">
@@ -526,23 +443,19 @@ const IntegrationsPage = () => {
                         <div className="w-12 h-12 bg-slate-100 rounded-lg flex items-center justify-center">
                           <integration.icon className="w-6 h-6 text-slate-600" />
                         </div>
-                        {integration.status === "connected" ? (
-                          <Badge className="bg-green-100 text-green-700 hover:bg-green-100 gap-1">
-                            <CheckCircle className="w-3 h-3" />
-                            Connected
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline">Available</Badge>
-                        )}
+                        <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">
+                          Planned
+                        </Badge>
                       </div>
                       <h4 className="font-medium text-slate-900 mb-1">{integration.name}</h4>
                       <p className="text-sm text-slate-500 mb-4">{integration.description}</p>
                       <Button
-                        variant={integration.status === "connected" ? "outline" : "default"}
+                        variant="outline"
                         size="sm"
-                        className={`w-full ${integration.status !== "connected" ? "bg-orange-500 hover:bg-orange-600" : ""}`}
+                        className="w-full"
+                        disabled
                       >
-                        {integration.status === "connected" ? "Manage" : "Connect"}
+                        Coming Soon
                       </Button>
                     </CardContent>
                   </Card>
