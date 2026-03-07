@@ -56,6 +56,14 @@ const BillingPage = () => {
   const [payingCode, setPayingCode] = useState("");
   const session = useMemo(() => getSession() || {}, []);
   const isSuperAdmin = String(session?.role || "").toLowerCase() === "super_admin";
+  const ownerMode = useMemo(() => {
+    if (!isSuperAdmin) return "self";
+    try {
+      return localStorage.getItem("textzy_owner_mode") || "self";
+    } catch {
+      return "self";
+    }
+  }, [isSuperAdmin]);
 
   useEffect(() => {
     (async () => {
@@ -208,6 +216,22 @@ const BillingPage = () => {
     a.click();
     a.remove();
     window.URL.revokeObjectURL(url);
+  };
+
+  const openPaymentSetup = () => {
+    if (!isSuperAdmin) return;
+    try {
+      localStorage.setItem("textzy_owner_mode", "platform");
+    } catch {}
+    navigate("/dashboard/platform-settings?tab=payment-gateway");
+  };
+
+  const openCompanySettings = () => {
+    if (isSuperAdmin && ownerMode === "platform") {
+      navigate("/dashboard/platform-branding");
+      return;
+    }
+    navigate("/dashboard/settings?tab=company");
   };
 
   const handleDownloadInvoice = async (invoice) => {
@@ -493,7 +517,7 @@ const BillingPage = () => {
                 variant="outline"
                 className="w-full"
                 data-testid="update-payment-btn"
-                onClick={() => navigate("/dashboard/platform-settings?tab=payment-gateway")}
+                onClick={openPaymentSetup}
               >
                 Open Payment Setup
               </Button>
@@ -519,7 +543,7 @@ const BillingPage = () => {
               variant="outline"
               className="w-full"
               data-testid="update-address-btn"
-              onClick={() => navigate("/dashboard/settings?tab=company")}
+              onClick={openCompanySettings}
             >
               Open Company Settings
             </Button>
