@@ -42,7 +42,7 @@ const NODE_SECTIONS = [
   {
     id: "message", label: "Messages", color: "#10b981", bg: "#ecfdf5", border: "#6ee7b7",
     icon: MessageCircle,
-    items: ["text", "media", "template", "bot_reply", "cta_url"],
+    items: ["text", "media", "template", "bot_reply", "faq_reply", "cta_url"],
   },
   {
     id: "input", label: "User Input", color: "#0ea5e9", bg: "#f0f9ff", border: "#7dd3fc",
@@ -52,7 +52,7 @@ const NODE_SECTIONS = [
   {
     id: "logic", label: "Logic", color: "#F97316", bg: "#FFF7ED", border: "#FDBA74",
     icon: GitBranch,
-    items: ["condition", "delay", "jump"],
+    items: ["condition", "faq_condition", "delay", "jump"],
   },
   {
     id: "system", label: "System", color: "#8b5cf6", bg: "#faf5ff", border: "#c4b5fd",
@@ -66,6 +66,7 @@ const NODE_META = {
   media:                { label: "Media",               icon: ImageIcon,     hint: "Send image/video/doc",  color: "#10b981", bg: "#ecfdf5", border: "#6ee7b7" },
   template:             { label: "Template",            icon: FileText,      hint: "Use approved template", color: "#10b981", bg: "#ecfdf5", border: "#6ee7b7" },
   bot_reply:            { label: "Bot Reply",           icon: Bot,           hint: "Smart reply with options", color: "#10b981", bg: "#ecfdf5", border: "#6ee7b7" },
+  faq_reply:            { label: "FAQ Reply",           icon: HelpCircle,    hint: "Send matched FAQ answer", color: "#10b981", bg: "#ecfdf5", border: "#6ee7b7" },
   cta_url:              { label: "CTA Button",          icon: LinkIcon,      hint: "Text + URL buttons",    color: "#10b981", bg: "#ecfdf5", border: "#6ee7b7" },
   ask_question:         { label: "Ask Question",        icon: HelpCircle,    hint: "Capture user intent",   color: "#0ea5e9", bg: "#f0f9ff", border: "#7dd3fc" },
   buttons:              { label: "Buttons",             icon: Type,          hint: "Interactive choices",    color: "#0ea5e9", bg: "#f0f9ff", border: "#7dd3fc" },
@@ -74,6 +75,7 @@ const NODE_META = {
   location:             { label: "Location",            icon: MapPin,        hint: "Request GPS location",   color: "#0ea5e9", bg: "#f0f9ff", border: "#7dd3fc" },
   form:                 { label: "Form",                icon: FileText,      hint: "Multi-field capture",    color: "#0ea5e9", bg: "#f0f9ff", border: "#7dd3fc" },
   condition:            { label: "Condition",           icon: GitBranch,     hint: "True / False branching", color: "#F97316", bg: "#FFF7ED", border: "#FDBA74" },
+  faq_condition:        { label: "FAQ Condition",       icon: HelpCircle,    hint: "Branch on FAQ match",    color: "#F97316", bg: "#FFF7ED", border: "#FDBA74" },
   delay:                { label: "Delay",               icon: Timer,         hint: "Wait then continue",     color: "#F97316", bg: "#FFF7ED", border: "#FDBA74" },
   jump:                 { label: "Jump To",             icon: CornerUpRight, hint: "Go to specific node",    color: "#F97316", bg: "#FFF7ED", border: "#FDBA74" },
   handoff:              { label: "Assign Agent",        icon: UserCheck,     hint: "Transfer to human",      color: "#8b5cf6", bg: "#faf5ff", border: "#c4b5fd" },
@@ -112,6 +114,8 @@ function createNode(type, x = 300, y = 200) {
   if (type === "cta_url")              base.config = { body: "Choose an option", ctaButtons: [{ text: "Visit Website", url: "https://" }] };
   if (type === "bot_reply")            base.config = { replyMode: "simple", simpleText: "How can I help you?", mediaText: "", mediaUrl: "", advancedType: "quick_reply", buttons: ["Sales", "Support", "Accounts"], ctaButtons: [{ text: "Website", url: "https://" }], listHeader: "Select", listItems: [{ title: "FAQ", subtitle: "Help center" }] };
   if (type === "jump")                 base.config = {};
+  if (type === "faq_condition")        return { ...base, type: "condition", name: "FAQ Found?", config: { field: "faq_answer", operator: "not_equals", value: "" } };
+  if (type === "faq_reply")            return { ...base, type: "text", name: "FAQ Answer", config: { body: "{{faq_answer}}" } };
   return base;
 }
 
@@ -162,6 +166,17 @@ const FLOW_COLORS = {
   draft:     "bg-amber-100 text-amber-700 border-amber-200",
   archived:  "bg-slate-100 text-slate-500 border-slate-200",
 };
+
+function getFlowSelectionKey() {
+  try {
+    const raw = localStorage.getItem("textzy.session");
+    const session = raw ? JSON.parse(raw) : {};
+    const tenantSlug = String(session?.tenantSlug || "default").trim().toLowerCase() || "default";
+    return `textzy.automation.selectedFlow:${tenantSlug}`;
+  } catch {
+    return "textzy.automation.selectedFlow:default";
+  }
+}
 
 const SUPPORTED_PUBLISH_NODE_TYPES = new Set([
   "start",
@@ -1399,7 +1414,21 @@ export default function AutomationsPage() {
       const normalizedFlows = (flowsRaw || []).map(normalizeFlow);
       setFlows(normalizedFlows);
       setLimits(limitsRaw);
-      if (normalizedFlows.length) setSelectedFlowId((prev) => prev || String(normalizedFlows[0].id));
+      if (normalizedFlows.length) {
+        setSelectedFlowId((prev) => {
+          const current = String(prev || "");
+          const saved = (() => {
+            try {
+              return String(localStorage.getItem(getFlowSelectionKey()) || "");
+            } catch {
+              return "";
+            }
+          })();
+          const desired = current || saved;
+          const exists = normalizedFlows.some((x) => String(x.id) === desired);
+          return exists ? desired : String(normalizedFlows[0].id);
+        });
+      }
 
       if (flowsRes.status === "rejected") {
         toast.error("Failed to load automation bots");
@@ -1424,6 +1453,15 @@ export default function AutomationsPage() {
       toast.error("Failed to load automations");
     }
   }, [normalizeFlow]);
+
+  useEffect(() => {
+    if (!selectedFlowId) return;
+    try {
+      localStorage.setItem(getFlowSelectionKey(), String(selectedFlowId));
+    } catch {
+      // ignore storage failures
+    }
+  }, [selectedFlowId]);
 
   const loadFlowDetails = useCallback(async (flowId) => {
     if (!flowId) return;

@@ -681,7 +681,14 @@ public class AutomationController(
     public async Task<IActionResult> GetFlow(Guid flowId, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
-        EnsureAutomationSchema();
+        var schemaReady = TryEnsureAutomationSchema(out var schemaError);
+        if (!schemaReady)
+        {
+            logger.LogWarning(
+                "Automation schema ensure failed on GetFlow for tenant {TenantId}; continuing with best-effort read. Error={Error}",
+                tenancy.TenantId,
+                schemaError?.ToString() ?? "unknown");
+        }
         var flow = await db.AutomationFlows.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.Id == flowId, ct);
         if (flow is null) return NotFound();
 
@@ -763,7 +770,14 @@ public class AutomationController(
     public async Task<IActionResult> ListVersions(Guid flowId, CancellationToken ct)
     {
         if (!rbac.HasPermission(AutomationRead)) return Forbid();
-        EnsureAutomationSchema();
+        var schemaReady = TryEnsureAutomationSchema(out var schemaError);
+        if (!schemaReady)
+        {
+            logger.LogWarning(
+                "Automation schema ensure failed on ListVersions for tenant {TenantId}; continuing with best-effort read. Error={Error}",
+                tenancy.TenantId,
+                schemaError?.ToString() ?? "unknown");
+        }
         var versions = await db.AutomationFlowVersions
             .Where(x => x.TenantId == tenancy.TenantId && x.FlowId == flowId)
             .OrderByDescending(x => x.VersionNumber)
