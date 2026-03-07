@@ -298,6 +298,7 @@ const InboxPage = () => {
   const [showEmojiTray, setShowEmojiTray] = useState(false);
   const [showTemplateAttach, setShowTemplateAttach] = useState(false);
   const [showFaqAttach, setShowFaqAttach] = useState(false);
+  const [showDetailsDrawer, setShowDetailsDrawer] = useState(false);
   const [emojiSearch, setEmojiSearch] = useState("");
   const [sendBusy, setSendBusy] = useState(false);
   const [assignBusy, setAssignBusy] = useState(false);
@@ -1583,9 +1584,74 @@ const InboxPage = () => {
     }
   };
 
+  const detailsPanelContent = (
+    <div className="p-6 min-h-full">
+      <div className="text-center mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+        <Avatar className="w-24 h-24 mx-auto mb-4"><AvatarFallback className="bg-gradient-to-br from-orange-400 to-orange-600 text-white text-2xl font-medium">{selectedChat.avatar}</AvatarFallback></Avatar>
+        <h3 className="font-semibold text-slate-900 text-base truncate">{selectedChat.name}</h3>
+        <p className="text-slate-500 text-sm truncate">{selectedChat.phone}</p>
+        <p className="text-xs text-slate-500 mt-1">Assigned: <span className="font-medium text-slate-700">{selectedChat.assignedUserName || "Unassigned"}</span></p>
+      </div>
+
+      <div className="space-y-4">
+        <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
+          <p className="text-sm font-medium text-slate-800 mb-2">Contact Info</p>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between gap-2"><span className="text-slate-500">Name</span><span className="text-slate-900 text-right break-words">{selectedContact?.name || selectedChat.name || "-"}</span></div>
+            <div className="flex justify-between gap-2"><span className="text-slate-500">Phone</span><span className="text-slate-900 text-right break-all">{selectedContact?.phone || selectedChat.phone || "-"}</span></div>
+            <div className="flex justify-between gap-2"><span className="text-slate-500">Email</span><span className="text-slate-900 text-right break-all">{selectedContact?.email || "-"}</span></div>
+            <div className="flex justify-between gap-2"><span className="text-slate-500">Added</span><span className="text-slate-900 text-right">{selectedContact?.createdAtUtc ? new Date(selectedContact.createdAtUtc).toLocaleDateString() : "-"}</span></div>
+          </div>
+        </div>
+
+        <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
+          <p className="text-sm font-medium text-slate-800 mb-2">Labels</p>
+          <div className="flex flex-wrap gap-2">{(selectedChat.labels || []).length === 0 ? <span className="text-sm text-slate-500">No labels</span> : (selectedChat.labels || []).map((label) => <Badge key={label} variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">{label}</Badge>)}</div>
+          <div className="mt-3 flex gap-2">
+            <Input placeholder="Add label" className="border-slate-200 bg-white text-slate-900 placeholder:text-slate-400" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddLabel(); } }} />
+            <Button onClick={handleAddLabel} size="sm" className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl px-5">Add</Button>
+          </div>
+        </div>
+
+        <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
+          <p className="text-sm font-medium text-slate-800 mb-2">WABA Profile</p>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Business</span><span className="text-slate-900 font-medium">{wabaDetails?.businessName || "-"}</span></div>
+            <div className="flex items-center justify-between text-sm"><span className="text-slate-500">WABA ID</span><span className="text-slate-900 font-medium">{wabaDetails?.wabaId || "-"}</span></div>
+            <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Phone Number ID</span><span className="text-slate-900 font-medium">{wabaDetails?.phoneNumberId || "-"}</span></div>
+            <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Display Number</span><span className="text-slate-900 font-medium">{wabaDetails?.displayPhoneNumber || wabaDetails?.phone || "-"}</span></div>
+            <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Status</span><Badge className={(wabaDetails?.readyToSend || wabaDetails?.isConnected || String(wabaDetails?.state || "").toLowerCase() === "ready") ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>{(wabaDetails?.readyToSend || wabaDetails?.isConnected || String(wabaDetails?.state || "").toLowerCase() === "ready") ? "Ready" : (wabaDetails?.state || "Pending")}</Badge></div>
+          </div>
+        </div>
+
+        <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
+          <p className="text-sm font-medium text-slate-800 mb-2">SLA</p>
+          <div className="text-sm text-slate-600">Breached: <span className="font-semibold text-slate-900">{sla.breachedCount || 0}</span></div>
+        </div>
+
+        <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
+          <p className="text-sm font-medium text-slate-800 mb-2">Notes</p>
+          <div className="space-y-2 max-h-32 overflow-auto">
+            {(notes || []).length === 0 ? <p className="text-xs text-slate-500">No notes yet</p> : null}
+            {(notes || []).slice(0, 8).map((n) => (
+              <div key={n.id} className="text-xs bg-white border border-slate-200 rounded p-2">
+                <div className="text-slate-700">{n.body}</div>
+                <div className="text-[10px] text-slate-400 mt-1">{n.createdByName || "Agent"}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex gap-2">
+            <Input placeholder="Add note" value={newNote} onChange={(e) => setNewNote(e.target.value)} />
+            <Button size="sm" onClick={handleAddNote} className="bg-orange-500 hover:bg-orange-600 text-white">Save</Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="h-[calc(100vh-7rem)] min-w-0 flex rounded-3xl overflow-hidden border border-slate-200 bg-gradient-to-b from-white to-slate-50 shadow-[0_12px_30px_rgba(15,23,42,0.08)]" data-testid="inbox-page">
-      <div className="w-[300px] xl:w-[320px] 2xl:w-[340px] flex-shrink-0 border-r border-slate-200 bg-white flex flex-col">
+    <div className="relative h-[calc(100vh-7rem)] min-w-0 flex rounded-3xl overflow-hidden border border-slate-200 bg-gradient-to-b from-white to-slate-50 shadow-[0_12px_30px_rgba(15,23,42,0.08)]" data-testid="inbox-page">
+      <div className="w-[280px] xl:w-[300px] 2xl:w-[320px] flex-shrink-0 border-r border-slate-200 bg-white flex flex-col">
         <div className="p-5 border-b border-slate-200">
           <div className="flex items-center gap-2 mb-4">
             <h2 className="text-4xl leading-none font-heading font-semibold text-slate-900">Inbox</h2>
@@ -1747,7 +1813,7 @@ const InboxPage = () => {
             </DropdownMenu>
             <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700 hidden xl:inline-flex" onClick={handleCall}><Phone className="w-4 h-4" /></Button>
             <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700 hidden xl:inline-flex" onClick={handleVideoCall}><Video className="w-4 h-4" /></Button>
-            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700 hidden 2xl:inline-flex"><Info className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700 hidden xl:inline-flex 2xl:hidden" onClick={() => setShowDetailsDrawer(true)}><Info className="w-4 h-4" /></Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700"><MoreVertical className="w-4 h-4" /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -1962,70 +2028,24 @@ const InboxPage = () => {
         </div>
       </div>
 
-      <div className="w-[280px] 2xl:w-[320px] min-w-0 flex-shrink-0 border-l border-slate-200 bg-white hidden xl:block overflow-y-auto">
-        <div className="p-6 min-h-full">
-          <div className="text-center mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-            <Avatar className="w-24 h-24 mx-auto mb-4"><AvatarFallback className="bg-gradient-to-br from-orange-400 to-orange-600 text-white text-2xl font-medium">{selectedChat.avatar}</AvatarFallback></Avatar>
-            <h3 className="font-semibold text-slate-900 text-base truncate">{selectedChat.name}</h3>
-            <p className="text-slate-500 text-sm truncate">{selectedChat.phone}</p>
-            <p className="text-xs text-slate-500 mt-1">Assigned: <span className="font-medium text-slate-700">{selectedChat.assignedUserName || "Unassigned"}</span></p>
-          </div>
+      <div className="w-[280px] 2xl:w-[320px] min-w-0 flex-shrink-0 border-l border-slate-200 bg-white hidden 2xl:block overflow-y-auto">
+        {detailsPanelContent}
+      </div>
 
-          <div className="space-y-4">
-            <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
-              <p className="text-sm font-medium text-slate-800 mb-2">Contact Info</p>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between gap-2"><span className="text-slate-500">Name</span><span className="text-slate-900 text-right break-words">{selectedContact?.name || selectedChat.name || "-"}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-slate-500">Phone</span><span className="text-slate-900 text-right break-all">{selectedContact?.phone || selectedChat.phone || "-"}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-slate-500">Email</span><span className="text-slate-900 text-right break-all">{selectedContact?.email || "-"}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-slate-500">Added</span><span className="text-slate-900 text-right">{selectedContact?.createdAtUtc ? new Date(selectedContact.createdAtUtc).toLocaleDateString() : "-"}</span></div>
-              </div>
+      {showDetailsDrawer ? (
+        <div className="2xl:hidden absolute inset-0 z-30 flex justify-end">
+          <button className="flex-1 bg-slate-900/35" onClick={() => setShowDetailsDrawer(false)} aria-label="Close details panel" />
+          <div className="w-[320px] max-w-[92vw] border-l border-slate-200 bg-white overflow-y-auto shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+              <div className="text-sm font-semibold text-slate-900">Conversation Details</div>
+              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowDetailsDrawer(false)}>
+                <X className="w-4 h-4" />
+              </Button>
             </div>
-
-            <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
-              <p className="text-sm font-medium text-slate-800 mb-2">Labels</p>
-              <div className="flex flex-wrap gap-2">{(selectedChat.labels || []).length === 0 ? <span className="text-sm text-slate-500">No labels</span> : (selectedChat.labels || []).map((label) => <Badge key={label} variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">{label}</Badge>)}</div>
-              <div className="mt-3 flex gap-2">
-                <Input placeholder="Add label" className="border-slate-200 bg-white text-slate-900 placeholder:text-slate-400" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddLabel(); } }} />
-                <Button onClick={handleAddLabel} size="sm" className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl px-5">Add</Button>
-              </div>
-            </div>
-
-            <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
-              <p className="text-sm font-medium text-slate-800 mb-2">WABA Profile</p>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Business</span><span className="text-slate-900 font-medium">{wabaDetails?.businessName || "-"}</span></div>
-                <div className="flex items-center justify-between text-sm"><span className="text-slate-500">WABA ID</span><span className="text-slate-900 font-medium">{wabaDetails?.wabaId || "-"}</span></div>
-                <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Phone Number ID</span><span className="text-slate-900 font-medium">{wabaDetails?.phoneNumberId || "-"}</span></div>
-                <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Display Number</span><span className="text-slate-900 font-medium">{wabaDetails?.displayPhoneNumber || wabaDetails?.phone || "-"}</span></div>
-                <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Status</span><Badge className={(wabaDetails?.readyToSend || wabaDetails?.isConnected || String(wabaDetails?.state || "").toLowerCase() === "ready") ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>{(wabaDetails?.readyToSend || wabaDetails?.isConnected || String(wabaDetails?.state || "").toLowerCase() === "ready") ? "Ready" : (wabaDetails?.state || "Pending")}</Badge></div>
-              </div>
-            </div>
-
-            <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
-              <p className="text-sm font-medium text-slate-800 mb-2">SLA</p>
-              <div className="text-sm text-slate-600">Breached: <span className="font-semibold text-slate-900">{sla.breachedCount || 0}</span></div>
-            </div>
-
-            <div className="p-5 rounded-xl border border-slate-200 bg-slate-50">
-              <p className="text-sm font-medium text-slate-800 mb-2">Notes</p>
-              <div className="space-y-2 max-h-32 overflow-auto">
-                {(notes || []).length === 0 ? <p className="text-xs text-slate-500">No notes yet</p> : null}
-                {(notes || []).slice(0, 8).map((n) => (
-                  <div key={n.id} className="text-xs bg-white border border-slate-200 rounded p-2">
-                    <div className="text-slate-700">{n.body}</div>
-                    <div className="text-[10px] text-slate-400 mt-1">{n.createdByName || "Agent"}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-2 flex gap-2">
-                <Input placeholder="Add note" value={newNote} onChange={(e) => setNewNote(e.target.value)} />
-                <Button size="sm" onClick={handleAddNote} className="bg-orange-500 hover:bg-orange-600 text-white">Save</Button>
-              </div>
-            </div>
+            {detailsPanelContent}
           </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 };

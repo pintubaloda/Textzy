@@ -2078,6 +2078,8 @@ function WorkflowCanvas({
   loadAll, loadFlowDetails,
   showEditFlow, setShowEditFlow, editFlowForm, setEditFlowForm, updateSelectedFlow, deleteFlow
 }) {
+  const [showPaletteDrawer, setShowPaletteDrawer] = useState(false);
+  const [showInspectorDrawer, setShowInspectorDrawer] = useState(false);
   const [showImportMetaDialog, setShowImportMetaDialog] = useState(false);
   const [metaFlowBusy, setMetaFlowBusy] = useState(false);
   const [metaFlowImportBusy, setMetaFlowImportBusy] = useState(false);
@@ -2290,9 +2292,9 @@ function WorkflowCanvas({
   }
 
   return (
-    <div className="flex h-full min-w-0 overflow-hidden">
+    <div className="relative flex h-full min-w-0 overflow-hidden">
       {/* ── Left palette ── */}
-      <div className="w-52 xl:w-56 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col min-w-0">
+      <div className="hidden xl:flex w-44 2xl:w-56 flex-shrink-0 bg-white border-r border-slate-200 flex-col min-w-0">
         {/* Search */}
         <div className="p-3 border-b border-slate-100">
           <div className="relative">
@@ -2377,6 +2379,12 @@ function WorkflowCanvas({
           </div>
 
           <div className="flex items-center gap-1.5 flex-wrap justify-end min-w-0">
+            <Button variant="outline" size="sm" className="h-7 text-xs gap-1 xl:hidden" onClick={() => setShowPaletteDrawer(true)}>
+              <Layers size={12} />Nodes
+            </Button>
+            <Button variant="outline" size="sm" className="h-7 text-xs gap-1 2xl:hidden" onClick={() => setShowInspectorDrawer(true)}>
+              <Settings2 size={12} />Inspector
+            </Button>
             {/* Validation */}
             {validation.errors.length > 0 && (
               <Tooltip>
@@ -2735,7 +2743,7 @@ function WorkflowCanvas({
 
           {/* ── Version history sidebar ── */}
           {showVersions && (
-            <div className="w-56 xl:w-60 flex-shrink-0 border-l border-slate-200 bg-white flex flex-col min-w-0">
+            <div className="hidden 2xl:flex w-56 xl:w-60 flex-shrink-0 border-l border-slate-200 bg-white flex-col min-w-0">
               <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
                 <div className="text-xs font-bold text-slate-600 uppercase tracking-wide flex items-center gap-1.5"><Clock size={12} />Version History</div>
                 <button className="text-slate-400 hover:text-slate-600" onClick={() => setShowVersions(false)}><X size={14} /></button>
@@ -2772,7 +2780,7 @@ function WorkflowCanvas({
 
           {/* ── Right panel ── */}
           {showPreview && (
-            <div className="w-[280px] 2xl:w-72 flex-shrink-0 border-l border-slate-200 bg-white flex flex-col min-w-0">
+            <div className="hidden 2xl:flex w-[280px] 2xl:w-72 flex-shrink-0 border-l border-slate-200 bg-white flex-col min-w-0">
               <div className="border-b border-slate-100 px-4 py-3 flex items-center justify-between">
                 <div className="text-xs font-bold text-slate-600 uppercase tracking-wide flex items-center gap-1.5">
                   <Settings2 size={12} />Configure
@@ -2819,6 +2827,160 @@ function WorkflowCanvas({
           )}
         </div>
       </div>
+
+      {showPaletteDrawer && (
+        <div className="xl:hidden absolute inset-0 z-30 flex">
+          <div className="w-[320px] max-w-[88vw] border-r border-slate-200 bg-white shadow-2xl flex flex-col min-w-0">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <div className="text-xs font-bold text-slate-600 uppercase tracking-wide flex items-center gap-1.5"><Layers size={12} />Nodes</div>
+              <button className="text-slate-400 hover:text-slate-600" onClick={() => setShowPaletteDrawer(false)}><X size={14} /></button>
+            </div>
+            <div className="p-3 border-b border-slate-100">
+              <div className="relative">
+                <Search size={13} className="absolute left-2.5 top-2.5 text-slate-400" />
+                <Input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-8 h-8 text-xs" placeholder="Search nodes..." />
+              </div>
+            </div>
+            <div className="border-b border-slate-100 p-3 space-y-2">
+              <Label className="text-[10px] font-bold uppercase tracking-wide text-slate-400 flex items-center gap-1"><Zap size={10} />Trigger Keywords</Label>
+              <Input value={triggerKeywords} onChange={(e) => setTriggerKeywords(e.target.value)} className="h-7 text-xs" placeholder="hi,hello,support" />
+              <Button size="sm" className="w-full h-7 text-xs text-white" style={{ background: T.orange }} onClick={saveTriggerKeywords}>Save Trigger</Button>
+            </div>
+            <ScrollArea className="flex-1">
+              <div className="p-3 space-y-3">
+                {filteredSections.map((section) => {
+                  const SIcon = section.icon;
+                  const isOpen = activeSection === section.id || searchQuery;
+                  return (
+                    <div key={`drawer-${section.id}`}>
+                      <button
+                        className="w-full flex items-center justify-between py-1.5 px-2 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-slate-50 transition-colors"
+                        style={{ color: section.color }}
+                        onClick={() => setActiveSection(isOpen && !searchQuery ? null : section.id)}
+                      >
+                        <div className="flex items-center gap-1.5"><SIcon size={11} />{section.label}</div>
+                        {!searchQuery && (isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
+                      </button>
+                      {isOpen && (
+                        <div className="mt-1.5 space-y-1">
+                          {section.items.map((type) => {
+                            const meta = NODE_META[type];
+                            const MIcon = meta?.icon || MessageCircle;
+                            return (
+                              <button
+                                key={`drawer-item-${type}`}
+                                className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left hover:shadow-sm transition-all"
+                                style={{ background: meta?.bg, border: `1px solid ${meta?.border}` }}
+                                onClick={() => {
+                                  addNode(type);
+                                  setShowPaletteDrawer(false);
+                                }}
+                              >
+                                <div className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0" style={{ background: meta?.color }}>
+                                  <MIcon size={11} color="white" />
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="text-[11px] font-semibold text-slate-800 leading-tight">{meta?.label}</div>
+                                  <div className="text-[10px] text-slate-400 leading-tight truncate">{meta?.hint}</div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+          </div>
+          <button className="flex-1 bg-slate-900/35" onClick={() => setShowPaletteDrawer(false)} aria-label="Close nodes drawer" />
+        </div>
+      )}
+
+      {showVersions && (
+        <div className="2xl:hidden absolute inset-0 z-30 flex justify-end">
+          <button className="flex-1 bg-slate-900/35" onClick={() => setShowVersions(false)} aria-label="Close version history" />
+          <div className="w-[320px] max-w-[88vw] border-l border-slate-200 bg-white shadow-2xl flex flex-col min-w-0">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <div className="text-xs font-bold text-slate-600 uppercase tracking-wide flex items-center gap-1.5"><Clock size={12} />Version History</div>
+              <button className="text-slate-400 hover:text-slate-600" onClick={() => setShowVersions(false)}><X size={14} /></button>
+            </div>
+            <ScrollArea className="flex-1">
+              <div className="p-3 space-y-2">
+                {!versions.length && <div className="text-xs text-slate-400 text-center py-4">No versions saved yet</div>}
+                {versions.map((v, i) => (
+                  <div key={`drawer-version-${v.id}`} className={`rounded-xl border p-3 ${i === 0 ? "border-orange-200 bg-orange-50" : "border-slate-200"}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-bold uppercase" style={{ color: i === 0 ? T.orange : "#94a3b8" }}>
+                        {i === 0 ? "Latest" : `v${versions.length - i}`}
+                      </span>
+                      <span className="text-[10px] text-slate-400">{v.createdAtUtc ? new Date(v.createdAtUtc).toLocaleDateString() : "—"}</span>
+                    </div>
+                    <div className="text-xs text-slate-600">{v.changeNote || "No note"}</div>
+                    <div className="text-[10px] text-slate-400 mt-1">{v.createdAtUtc ? new Date(v.createdAtUtc).toLocaleTimeString() : ""}</div>
+                    {i > 0 && (
+                      <button className="mt-2 text-[10px] text-orange-600 hover:underline font-medium" onClick={() => {
+                        try {
+                          const def = JSON.parse(v.definitionJson);
+                          if (def.nodes) { resetNodes(def.nodes); toast.success("Rolled back to this version"); setShowVersions(false); }
+                        } catch { toast.error("Failed to parse version"); }
+                      }}>
+                        ↩ Restore this version
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          </div>
+        </div>
+      )}
+
+      {showPreview && showInspectorDrawer && (
+        <div className="2xl:hidden absolute inset-0 z-30 flex justify-end">
+          <button className="flex-1 bg-slate-900/35" onClick={() => setShowInspectorDrawer(false)} aria-label="Close inspector drawer" />
+          <div className="w-[340px] max-w-[92vw] border-l border-slate-200 bg-white shadow-2xl flex flex-col min-w-0">
+            <div className="border-b border-slate-100 px-4 py-3 flex items-center justify-between">
+              <div className="text-xs font-bold text-slate-600 uppercase tracking-wide flex items-center gap-1.5">
+                <Settings2 size={12} />Configure
+              </div>
+              <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowInspectorDrawer(false)}>
+                <X size={14} />
+              </Button>
+            </div>
+            <div className="flex-1 overflow-hidden flex flex-col">
+              <div className="flex-1 overflow-hidden" style={{ maxHeight: showPreview && selectedNode ? "55%" : "100%" }}>
+                <NodePanel
+                  node={selectedNode}
+                  nodes={nodes}
+                  onUpdate={updateNode}
+                  onDelete={removeNode}
+                  onDuplicate={duplicateNode}
+                  onDisconnect={disconnectNode}
+                />
+              </div>
+              {selectedNode && (
+                <div className="border-t border-slate-100 flex-shrink-0" style={{ maxHeight: "45%" }}>
+                  <div className="px-4 py-2 flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 flex items-center gap-1">
+                      <MessageCircle size={10} style={{ color: T.whatsapp }} />WhatsApp Preview
+                    </span>
+                    {outside24h && ["text","bot_reply"].includes(selectedNode.type) && (
+                      <span className="text-[10px] flex items-center gap-1" style={{ color: T.warning }}>
+                        <AlertTriangle size={10} />Use template
+                      </span>
+                    )}
+                  </div>
+                  <div className="px-3 pb-3 overflow-auto" style={{ maxHeight: "calc(45vh - 48px)" }}>
+                    <WhatsAppPreview node={selectedNode} />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
