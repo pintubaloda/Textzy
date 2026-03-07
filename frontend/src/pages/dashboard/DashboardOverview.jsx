@@ -6,8 +6,6 @@ import {
   MessageSquare,
   Send,
   Users,
-  TrendingUp,
-  TrendingDown,
   ArrowRight,
   MessageCircle,
   Plus,
@@ -20,6 +18,7 @@ import {
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { apiGet, authProjects, getSession, getTenantWebhookAnalytics, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaMapExisting, wabaStartOnboarding } from "@/lib/api";
 import { loadFacebookSdk } from "@/lib/facebookSdk";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -35,9 +34,11 @@ import {
 } from "@/components/ui/dialog";
 
 const DashboardOverview = () => {
+  const navigate = useNavigate();
   const [messages, setMessages] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
+  const [recentInboxRows, setRecentInboxRows] = useState([]);
   const [wabaStatus, setWabaStatus] = useState({ state: "requested", isConnected: false, businessName: "", phone: "" });
   const [connectingWaba, setConnectingWaba] = useState(false);
   const [reusingWaba, setReusingWaba] = useState(false);
@@ -109,11 +110,17 @@ const DashboardOverview = () => {
   }, []);
 
   useEffect(() => {
-    Promise.all([apiGet("/api/messages"), apiGet("/api/contacts"), apiGet("/api/campaigns")])
-      .then(([m, c, cp]) => {
+    Promise.all([
+      apiGet("/api/messages"),
+      apiGet("/api/contacts"),
+      apiGet("/api/campaigns"),
+      apiGet("/api/inbox/conversations?take=5").catch(() => []),
+    ])
+      .then(([m, c, cp, conv]) => {
         setMessages(m || []);
         setContacts(c || []);
         setCampaigns(cp || []);
+        setRecentInboxRows(Array.isArray(conv) ? conv : []);
       })
       .catch(() => {});
     loadWabaStatus(true);
@@ -227,68 +234,61 @@ const DashboardOverview = () => {
     {
       title: "Total Messages",
       value: computedStats.total.toLocaleString(),
-      change: "+12.5%",
-      trend: "up",
       icon: MessageSquare,
       color: "orange",
     },
     {
       title: "WhatsApp Sent",
       value: computedStats.wa.toLocaleString(),
-      change: "+8.2%",
-      trend: "up",
       icon: MessageCircle,
       color: "green",
     },
     {
       title: "SMS Sent",
       value: computedStats.sms.toLocaleString(),
-      change: "-2.1%",
-      trend: "down",
       icon: Send,
       color: "blue",
     },
     {
       title: "Active Contacts",
       value: computedStats.contacts.toLocaleString(),
-      change: "+5.3%",
-      trend: "up",
       icon: Users,
       color: "purple",
     },
   ];
 
   const recentCampaigns = (campaigns || []).slice(0, 3).map((c) => ({
-    name: c.name,
+    id: c.id || c.Id,
+    name: c.name || c.Name || "Untitled Campaign",
+    channel: String(c.channel ?? c.Channel ?? "").toLowerCase(),
     status: "active",
-    sent: computedStats.sent,
-    delivered: computedStats.sent,
-    read: Math.max(0, Math.floor(computedStats.sent * 0.7)),
+    sent: 0,
+    delivered: 0,
+    read: 0,
+    createdAtUtc: c.createdAtUtc || c.CreatedAtUtc || null,
   }));
 
-  const recentConversations = [
-    {
-      name: "Priya Sharma",
-      phone: "+91 98765 43210",
-      message: "Thanks for the quick response!",
-      time: "5 min ago",
-      unread: true,
-    },
-    {
-      name: "Amit Patel",
-      phone: "+91 87654 32109",
-      message: "When will my order be delivered?",
-      time: "15 min ago",
-      unread: true,
-    },
-    {
-      name: "Sneha Gupta",
-      phone: "+91 76543 21098",
-      message: "I'd like to know more about...",
-      time: "1 hour ago",
-      unread: false,
-    },
-  ];
+  const formatAgo = (value) => {
+    if (!value) return "-";
+    const time = new Date(value).getTime();
+    if (!Number.isFinite(time)) return "-";
+    const diffMs = Date.now() - time;
+    const diffMin = Math.max(1, Math.floor(diffMs / 60000));
+    if (diffMin < 60) return `${diffMin} min ago`;
+    const diffH = Math.floor(diffMin / 60);
+    if (diffH < 24) return `${diffH} hour${diffH > 1 ? "s" : ""} ago`;
+    const diffD = Math.floor(diffH / 24);
+    return `${diffD} day${diffD > 1 ? "s" : ""} ago`;
+  };
+
+  const recentConversations = (recentInboxRows || []).slice(0, 5).map((row) => ({
+    id: row.id || row.Id,
+    name: row.customerName || row.CustomerName || row.name || "Customer",
+    phone: row.customerPhone || row.CustomerPhone || row.phone || "-",
+    message: row.lastMessagePreview || row.LastMessagePreview || row.lastMessage || "Open conversation",
+    time: formatAgo(row.lastInboundAtUtc || row.LastInboundAtUtc || row.lastMessageAtUtc || row.LastMessageAtUtc || row.updatedAtUtc || row.UpdatedAtUtc),
+    unread: Number(row.unreadCount || row.UnreadCount || row.unread || 0) > 0,
+  }));
 
   const webhookStatusData = useMemo(() => {
     const map = webhookAnalytics?.statusSummary || {};
@@ -360,9 +360,8 @@ const DashboardOverview = () => {
                 <div>
                   <p className="text-lg text-slate-600 mb-1">{stat.title}</p>
                   <p className="text-5xl leading-none font-bold text-slate-900 mt-1">{stat.value}</p>
-                  <div className={`flex items-center gap-1 mt-3 text-base ${stat.trend === "up" ? "text-green-600" : "text-red-500"}`}>
-                    {stat.trend === "up" ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                    {stat.change} vs last week
+                  <div className="flex items-center gap-1 mt-3 text-sm text-slate-500">
+                    Live tenant data
                   </div>
                 </div>
                 <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${
@@ -488,10 +487,10 @@ const DashboardOverview = () => {
           </div>
 
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
-            <button className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><PhoneCall className="w-6 h-6 mb-2 text-orange-500" />Add WhatsApp Contacts</button>
-            <button className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><Users className="w-6 h-6 mb-2 text-orange-500" />Add Team Members</button>
-            <button className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><Plug className="w-6 h-6 mb-2 text-orange-500" />Explore Integrations</button>
-            <button className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><Bot className="w-6 h-6 mb-2 text-orange-500" />Chatbot Setup</button>
+            <button onClick={() => navigate("/dashboard/contacts")} className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><PhoneCall className="w-6 h-6 mb-2 text-orange-500" />Add WhatsApp Contacts</button>
+            <button onClick={() => navigate("/dashboard/team")} className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><Users className="w-6 h-6 mb-2 text-orange-500" />Add Team Members</button>
+            <button onClick={() => navigate("/dashboard/integrations")} className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><Plug className="w-6 h-6 mb-2 text-orange-500" />Explore Integrations</button>
+            <button onClick={() => navigate("/dashboard/automations")} className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-lg hover:shadow-sm transition"><Bot className="w-6 h-6 mb-2 text-orange-500" />Chatbot Setup</button>
           </div>
         </div>
       </section>
@@ -506,16 +505,21 @@ const DashboardOverview = () => {
                 <CardTitle>Recent Campaigns</CardTitle>
                 <CardDescription>Your latest campaign performance</CardDescription>
               </div>
-              <Button variant="ghost" size="sm" className="text-orange-500 hover:text-orange-600" data-testid="view-all-campaigns-btn">
+              <Button variant="ghost" size="sm" className="text-orange-500 hover:text-orange-600" data-testid="view-all-campaigns-btn" onClick={() => navigate("/dashboard/campaigns")}>
                 View All <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
+              {recentCampaigns.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+                  No campaigns created yet.
+                </div>
+              ) : null}
               {recentCampaigns.map((campaign, index) => (
                 <div
-                  key={index}
+                  key={campaign.id || index}
                   className="flex items-center justify-between p-4 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
                   data-testid={`campaign-item-${index}`}
                 >
@@ -523,11 +527,13 @@ const DashboardOverview = () => {
                     <div className="flex items-center gap-3 mb-2">
                       <p className="font-medium text-slate-900">{campaign.name}</p>
                       {getStatusBadge(campaign.status)}
+                      <Badge variant="outline" className="text-xs">{campaign.channel || "campaign"}</Badge>
                     </div>
                     <div className="flex items-center gap-4 text-sm text-slate-500">
                       <span>Sent: {campaign.sent.toLocaleString()}</span>
                       <span>Delivered: {campaign.delivered.toLocaleString()}</span>
                       <span>Read: {campaign.read.toLocaleString()}</span>
+                      <span>Created: {campaign.createdAtUtc ? new Date(campaign.createdAtUtc).toLocaleDateString() : "-"}</span>
                     </div>
                   </div>
                   <Button variant="ghost" size="icon">
@@ -547,17 +553,23 @@ const DashboardOverview = () => {
                 <CardTitle>Recent Conversations</CardTitle>
                 <CardDescription>Latest messages from customers</CardDescription>
               </div>
-              <Button variant="ghost" size="sm" className="text-orange-500 hover:text-orange-600" data-testid="view-all-conversations-btn">
+              <Button variant="ghost" size="sm" className="text-orange-500 hover:text-orange-600" data-testid="view-all-conversations-btn" onClick={() => navigate("/dashboard/inbox")}>
                 View All <ArrowRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
+              {recentConversations.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+                  No conversations yet.
+                </div>
+              ) : null}
               {recentConversations.map((conversation, index) => (
                 <div
-                  key={index}
+                  key={conversation.id || index}
                   className="flex items-start gap-4 p-4 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                  onClick={() => navigate("/dashboard/inbox")}
                   data-testid={`conversation-item-${index}`}
                 >
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center text-white font-medium flex-shrink-0">

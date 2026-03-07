@@ -1,4 +1,5 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -54,7 +55,8 @@ const defaultTemplateForm = {
 };
 
 const SmsSetupPage = () => {
-  const [panel, setPanel] = useState("senders");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [panel, setPanel] = useState(searchParams.get("panel") || "senders");
 
   const [senders, setSenders] = useState([]);
   const [senderStats, setSenderStats] = useState({ total: 0, verified: 0, compliant: 0, byRoute: {} });
@@ -123,6 +125,11 @@ const SmsSetupPage = () => {
   useEffect(() => {
     loadAll();
   }, []);
+
+  useEffect(() => {
+    const next = searchParams.get("panel") || "senders";
+    setPanel(next);
+  }, [searchParams]);
 
   const routeMix = senderStats?.byRoute || {};
 
@@ -334,7 +341,7 @@ const SmsSetupPage = () => {
 
       <div className="flex flex-wrap gap-2">
         {[{k:"senders",l:"DLT Senders"},{k:"templates",l:"Template Registry"},{k:"optouts",l:"Opt-Out Control"},{k:"events",l:"Delivery Events"},{k:"billing",l:"Billing Ledger"},{k:"gateway",l:"Message Report"}].map((x)=>(
-          <Button key={x.k} variant={panel===x.k?"default":"outline"} className={panel===x.k?"bg-orange-500 hover:bg-orange-600":""} onClick={()=>setPanel(x.k)}>{x.l}</Button>
+          <Button key={x.k} variant={panel===x.k?"default":"outline"} className={panel===x.k?"bg-orange-500 hover:bg-orange-600":""} onClick={()=>{ setPanel(x.k); setSearchParams({ panel: x.k }); }}>{x.l}</Button>
         ))}
       </div>
 
@@ -596,3 +603,4 @@ const SmsSetupPage = () => {
 };
 
 export default SmsSetupPage;
+

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -180,11 +180,12 @@ const TemplatePreviewCard = ({ template }) => {
 };
 
 const TemplatesPage = () => {
+  const navigate = useNavigate();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState(null);
-  const [searchParams, setSearchParams] = useSearchParams();
-  const tab = searchParams.get("tab") === "sms" ? "sms" : "whatsapp";
+  const [searchParams] = useSearchParams();
+  const tab = "whatsapp";
 
   const [templates, setTemplates] = useState([]);
   const [smsSenders, setSmsSenders] = useState([]);
@@ -203,8 +204,12 @@ const TemplatesPage = () => {
   }, []);
 
   useEffect(() => {
-    setDraft((p) => ({ ...p, channel: tab }));
-  }, [tab]);
+    if (searchParams.get("tab") === "sms") {
+      navigate("/dashboard/sms-setup?panel=templates", { replace: true });
+      return;
+    }
+    setDraft((p) => ({ ...p, channel: "whatsapp" }));
+  }, [navigate, searchParams]);
 
   const loadAll = async () => {
     try {
@@ -478,16 +483,12 @@ const TemplatesPage = () => {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-heading font-bold text-slate-900">Templates</h1>
-            <p className="text-slate-600">WhatsApp + SMS(DLT) compliant template management.</p>
+            <p className="text-slate-600">WhatsApp template management synced with Meta.</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <Button variant={tab === "whatsapp" ? "default" : "outline"} className={tab === "whatsapp" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setSearchParams({ tab: "whatsapp" })}>WhatsApp</Button>
-            <Button variant={tab === "sms" ? "default" : "outline"} className={tab === "sms" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setSearchParams({ tab: "sms" })}>SMS</Button>
-            {tab === "whatsapp" && (
-              <>
-                <Button variant="outline" onClick={syncWhatsAppTemplates}>Sync Meta</Button>
-              </>
-            )}
+            <Badge className="bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-100">WhatsApp</Badge>
+            <Button variant="outline" onClick={syncWhatsAppTemplates}>Sync Meta</Button>
+            <Button variant="outline" onClick={() => navigate("/dashboard/sms-setup?panel=templates")}>Open SMS Registry</Button>
             <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
               <DialogTrigger asChild>
                 <Button className="bg-orange-500 hover:bg-orange-600 text-white gap-2" data-testid="create-template-btn">
@@ -498,7 +499,7 @@ const TemplatesPage = () => {
                 <DialogContent className="max-w-6xl max-h-[92vh] p-0 overflow-hidden">
                 <DialogHeader className="px-6 pt-6 pb-2 border-b bg-white">
                   <DialogTitle>Create Template</DialogTitle>
-                  <DialogDescription>Build templates as per WhatsApp and India DLT requirements.</DialogDescription>
+                  <DialogDescription>Build and manage approved WhatsApp templates.</DialogDescription>
                 </DialogHeader>
 
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-0">
@@ -537,13 +538,7 @@ const TemplatesPage = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>Channel</Label>
-                        <Select value={draft.channel} onValueChange={(v) => setDraft((p) => ({ ...p, channel: v }))}>
-                          <SelectTrigger><SelectValue placeholder="Channel" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                            <SelectItem value="sms">SMS</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <Input value="WhatsApp" readOnly className="bg-slate-50" />
                       </div>
                       <div className="space-y-2">
                         <Label>Category</Label>
@@ -563,38 +558,6 @@ const TemplatesPage = () => {
                         <div className={`font-semibold ${guide.color}`}>{guide.title}</div>
                         <div className="text-slate-700">{guide.hint}</div>
                         <div className="text-slate-600">{guide.must}</div>
-                      </div>
-                    )}
-
-                    {isSms && (
-                      <div className="rounded-lg border border-orange-200 bg-orange-50 p-4 space-y-3">
-                        <p className="font-medium text-orange-800">DLT Registration (Required for SMS in India)</p>
-                        <p className="text-sm text-orange-700">
-                          Need to add Sender ID first? Go to <Link className="underline font-medium" to="/dashboard/sms-setup">SMS Setup</Link>.
-                        </p>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                          <div className="space-y-2">
-                            <Label>Sender ID</Label>
-                            <Select value={draft.smsSenderId || undefined} onValueChange={(v) => {
-                              const row = smsSenders.find((x) => x.senderId === v);
-                              setDraft((p) => ({ ...p, smsSenderId: v, dltEntityId: row?.entityId || p.dltEntityId }));
-                            }}>
-                              <SelectTrigger><SelectValue placeholder="Select sender" /></SelectTrigger>
-                              <SelectContent>
-                                {smsSenders.length === 0 ? <SelectItem value="none" disabled>No sender found</SelectItem> : null}
-                                {smsSenders.map((s) => <SelectItem key={s.id} value={s.senderId}>{s.senderId}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-2">
-                            <Label>DLT Entity ID</Label>
-                            <Input placeholder="e.g., 1101234567890" value={draft.dltEntityId} onChange={(e) => setDraft((p) => ({ ...p, dltEntityId: e.target.value }))} />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>DLT Template ID</Label>
-                            <Input placeholder="e.g., 1107161234567890123" value={draft.dltTemplateId} onChange={(e) => setDraft((p) => ({ ...p, dltTemplateId: e.target.value }))} />
-                          </div>
-                        </div>
                       </div>
                     )}
 
@@ -638,7 +601,7 @@ const TemplatesPage = () => {
                       <Label>Message Body</Label>
                       <Textarea className="min-h-[140px]" placeholder="Use {{1}}, {{2}} for variables." value={draft.body} onChange={(e) => setDraft((p) => ({ ...p, body: e.target.value }))} />
                       <p className="text-xs text-slate-500">
-                        {draft.channel === "whatsapp" ? "WhatsApp max 1024 chars." : "SMS as per DLT approved content."} Variables: {templateVars.length ? templateVars.map((v) => `{{${v}}}`).join(", ") : "none"}
+                        WhatsApp max 1024 chars. Variables: {templateVars.length ? templateVars.map((v) => `{{${v}}}`).join(", ") : "none"}
                       </p>
                     </div>
 
@@ -682,12 +645,6 @@ const TemplatesPage = () => {
 
         <Card className="border-slate-200">
           <CardHeader>
-            {tab === "sms" && (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 mb-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <p className="text-sm text-slate-700">SMS onboarding: 1) Add Entity + Sender ID 2) Add Template or Upload CSV.</p>
-                <Input type="file" accept=".csv" className="max-w-xs" onChange={(e) => uploadSmsTemplates(e.target.files?.[0])} disabled={uploading} />
-              </div>
-            )}
             <div className="flex items-center justify-between">
               <div className="text-sm text-slate-600">Templates List</div>
               <div className="flex items-center gap-2">

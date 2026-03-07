@@ -593,29 +593,17 @@ const DashboardLayout = () => {
                     <Link
                       to="/dashboard/templates?tab=whatsapp"
                       className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                        isTemplatesPage && currentTemplatesTab !== "sms"
+                        isTemplatesPage
                           ? "bg-orange-50 text-orange-600 font-medium"
                           : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                       }`}
                       onClick={() => setMobileMenuOpen(false)}
                     >
                       <FileText className="w-4 h-4 flex-shrink-0" />
-                      <span className="flex-1 text-sm">WhatsApp</span>
+                      <span className="flex-1 text-sm">Templates</span>
                     </Link>
                     <Link
-                      to="/dashboard/templates?tab=sms"
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
-                        isTemplatesPage && currentTemplatesTab === "sms"
-                          ? "bg-orange-50 text-orange-600 font-medium"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                      }`}
-                      onClick={() => setMobileMenuOpen(false)}
-                    >
-                      <Send className="w-4 h-4 flex-shrink-0" />
-                      <span className="flex-1 text-sm">SMS</span>
-                    </Link>
-                    <Link
-                      to="/dashboard/sms-setup"
+                      to="/dashboard/sms-setup?panel=templates"
                       className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
                         isSmsSetupPage
                           ? "bg-orange-50 text-orange-600 font-medium"
@@ -624,7 +612,7 @@ const DashboardLayout = () => {
                       onClick={() => setMobileMenuOpen(false)}
                     >
                       <Settings className="w-4 h-4 flex-shrink-0" />
-                      <span className="flex-1 text-sm">SMS Setup</span>
+                      <span className="flex-1 text-sm">SMS Registry</span>
                     </Link>
                   </div>
                 )}
