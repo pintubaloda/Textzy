@@ -1584,8 +1584,8 @@ const InboxPage = () => {
   };
 
   return (
-    <div className="h-[calc(100vh-7rem)] flex rounded-3xl overflow-hidden border border-slate-200 bg-gradient-to-b from-white to-slate-50 shadow-[0_12px_30px_rgba(15,23,42,0.08)]" data-testid="inbox-page">
-      <div className="w-[320px] xl:w-[340px] border-r border-slate-200 bg-white flex flex-col">
+    <div className="h-[calc(100vh-7rem)] min-w-0 flex rounded-3xl overflow-hidden border border-slate-200 bg-gradient-to-b from-white to-slate-50 shadow-[0_12px_30px_rgba(15,23,42,0.08)]" data-testid="inbox-page">
+      <div className="w-[300px] xl:w-[320px] 2xl:w-[340px] flex-shrink-0 border-r border-slate-200 bg-white flex flex-col">
         <div className="p-5 border-b border-slate-200">
           <div className="flex items-center gap-2 mb-4">
             <h2 className="text-4xl leading-none font-heading font-semibold text-slate-900">Inbox</h2>
@@ -1638,10 +1638,10 @@ const InboxPage = () => {
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col bg-slate-50/60">
-        <div className="min-h-16 px-4 py-2 border-b border-slate-200 flex items-center justify-between gap-3 bg-white">
-          <div className="flex items-center gap-3">
+        <div className="min-h-16 px-4 py-2 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-white">
+          <div className="flex items-center gap-3 min-w-0">
             <Avatar className="w-10 h-10"><AvatarFallback className="bg-gradient-to-br from-orange-400 to-orange-600 text-white font-medium">{selectedChat.avatar}</AvatarFallback></Avatar>
-            <div className="max-w-[220px]"><p className="font-semibold text-slate-900 text-lg leading-tight truncate">{selectedChat.name}</p><p className="text-xs text-slate-500 truncate">{selectedChat.phone}</p></div>
+            <div className="max-w-[220px] min-w-0"><p className="font-semibold text-slate-900 text-lg leading-tight truncate">{selectedChat.name}</p><p className="text-xs text-slate-500 truncate">{selectedChat.phone}</p></div>
           </div>
           {typingUsers.length > 0 ? <div className="text-xs text-emerald-600">{typingUsers.join(", ")} typing...</div> : null}
           {!canReplyInSession ? (
@@ -1674,7 +1674,7 @@ const InboxPage = () => {
               <Button size="sm" className="h-8 bg-orange-500 hover:bg-orange-600 text-white" onClick={handleSendTemplateFallback}>Send Template</Button>
             </div>
           ) : null}
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1.5 shrink min-w-0 flex-wrap justify-end">
             {shouldShowEnableSoundPrompt ? (
               <Button
                 variant="outline"
@@ -1745,9 +1745,9 @@ const InboxPage = () => {
               <DropdownMenuTrigger asChild><Button disabled={transferBusy} variant="outline" size="sm" className="rounded-xl h-9 px-3 border-slate-200 bg-white text-slate-800 hover:bg-slate-50">{transferBusy ? "Transferring..." : "Transfer"}</Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">{teamMembers.length === 0 ? <DropdownMenuItem disabled>No members</DropdownMenuItem> : teamMembers.map((member) => <DropdownMenuItem key={member.id} disabled={transferBusy} onClick={() => handleTransfer(member)}>{member.name} ({member.role})</DropdownMenuItem>)}</DropdownMenuContent>
             </DropdownMenu>
-            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700" onClick={handleCall}><Phone className="w-4 h-4" /></Button>
-            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700" onClick={handleVideoCall}><Video className="w-4 h-4" /></Button>
-            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700"><Info className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700 hidden xl:inline-flex" onClick={handleCall}><Phone className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700 hidden xl:inline-flex" onClick={handleVideoCall}><Video className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700 hidden 2xl:inline-flex"><Info className="w-4 h-4" /></Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-9 w-9 text-slate-700"><MoreVertical className="w-4 h-4" /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -1812,16 +1812,16 @@ const InboxPage = () => {
               </Button>
             </div>
           ) : null}
-          <div className="flex items-end gap-3">
-            <div className="flex items-center gap-1">
+          <div className="flex items-end gap-3 min-w-0">
+            <div className="flex items-center gap-1 flex-wrap shrink-0 max-w-full">
               <Button variant="ghost" size="icon" className="text-slate-500" onClick={handlePickAttachment}><Paperclip className="w-5 h-5" /></Button>
               <Button variant="ghost" size="icon" className="text-slate-500" onClick={handlePickImage}><Image className="w-5 h-5" /></Button>
               <Button variant="ghost" size="icon" className="text-slate-500" onClick={handlePickDocument}><FileText className="w-5 h-5" /></Button>
-              <Button variant="outline" size="sm" className="h-8 px-3 rounded-lg text-xs inline-flex items-center gap-1.5" onClick={toggleTemplatePanel}>
+              <Button variant="outline" size="sm" className="h-8 px-3 rounded-lg text-xs inline-flex items-center gap-1.5 hidden xl:inline-flex" onClick={toggleTemplatePanel}>
                 <FileText className="w-3.5 h-3.5" />
                 <span>Attach Template</span>
               </Button>
-              <Button variant="outline" size="sm" className="h-8 px-3 rounded-lg text-xs inline-flex items-center gap-1.5" onClick={toggleFaqPanel}>
+              <Button variant="outline" size="sm" className="h-8 px-3 rounded-lg text-xs inline-flex items-center gap-1.5 hidden xl:inline-flex" onClick={toggleFaqPanel}>
                 <MessageCircle className="w-3.5 h-3.5" />
                 <span>Attach Q&A</span>
               </Button>
@@ -1829,7 +1829,7 @@ const InboxPage = () => {
               <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleAttachmentSelected(e, "image")} />
               <input ref={docInputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.zip" className="hidden" onChange={(e) => handleAttachmentSelected(e, "document")} />
             </div>
-            <div className="flex-1 relative rounded-2xl border border-slate-200 bg-white">
+            <div className="flex-1 min-w-0 relative rounded-2xl border border-slate-200 bg-white">
               <Textarea
                 placeholder={canReplyInSession ? "Type a message..." : "24h session closed. Use template message flow."}
                 value={message}
@@ -1861,7 +1861,7 @@ const InboxPage = () => {
                 </div>
               ) : null}
               {showTemplateAttach ? (
-                <div className="absolute left-3 bottom-16 z-20 rounded-xl border border-slate-200 bg-white shadow-lg p-3 w-[420px]">
+                <div className="absolute left-3 bottom-16 z-20 rounded-xl border border-slate-200 bg-white shadow-lg p-3 w-[min(420px,calc(100vw-8rem))] max-w-[calc(100vw-8rem)]">
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-xs font-semibold text-slate-700">Attach Template</p>
                     <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowTemplateAttach(false)}>
@@ -1925,7 +1925,7 @@ const InboxPage = () => {
                 </div>
               ) : null}
               {showFaqAttach ? (
-                <div className="absolute left-3 bottom-16 z-20 rounded-xl border border-slate-200 bg-white shadow-lg p-3 w-[420px]">
+                <div className="absolute left-3 bottom-16 z-20 rounded-xl border border-slate-200 bg-white shadow-lg p-3 w-[min(420px,calc(100vw-8rem))] max-w-[calc(100vw-8rem)]">
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-xs font-semibold text-slate-700">Attach Q&A Answer</p>
                     <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowFaqAttach(false)}>
@@ -1962,7 +1962,7 @@ const InboxPage = () => {
         </div>
       </div>
 
-      <div className="w-[300px] 2xl:w-[330px] border-l border-slate-200 bg-white hidden xl:block">
+      <div className="w-[280px] 2xl:w-[320px] min-w-0 flex-shrink-0 border-l border-slate-200 bg-white hidden xl:block">
         <div className="p-6">
           <div className="text-center mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
             <Avatar className="w-24 h-24 mx-auto mb-4"><AvatarFallback className="bg-gradient-to-br from-orange-400 to-orange-600 text-white text-2xl font-medium">{selectedChat.avatar}</AvatarFallback></Avatar>

@@ -1390,6 +1390,14 @@ export default function AutomationsPage() {
   const selectedFlow = useMemo(() => flows.find((f) => String(f.id) === String(selectedFlowId)) || null, [flows, selectedFlowId]);
   const selectedNode = useMemo(() => nodes.find((n) => n.id === selectedNodeId) || null, [nodes, selectedNodeId]);
   const edges = useMemo(() => computeEdges(nodes), [nodes]);
+  const selectedFlowStatus = useMemo(() => {
+    const flowStatus = String(selectedFlow?.lifecycleStatus || "").trim().toLowerCase();
+    const latestVersionStatus = String(versions?.[0]?.status || "").trim().toLowerCase();
+    if (latestVersionStatus === "published") return "published";
+    if (flowStatus) return flowStatus;
+    if (latestVersionStatus) return latestVersionStatus;
+    return "draft";
+  }, [selectedFlow?.lifecycleStatus, versions]);
 
   const flowLimit = Number(billingLimits.flows || 0);
   const chatbotLimit = Number(billingLimits.chatbots || 0);
@@ -2280,9 +2288,9 @@ function WorkflowCanvas({
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-w-0 overflow-hidden">
       {/* ── Left palette ── */}
-      <div className="w-56 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col">
+      <div className="w-52 xl:w-56 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col min-w-0">
         {/* Search */}
         <div className="p-3 border-b border-slate-100">
           <div className="relative">
@@ -2352,21 +2360,21 @@ function WorkflowCanvas({
       {/* ── Canvas ── */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
-        <div className="h-12 flex-shrink-0 bg-white border-b border-slate-200 flex items-center justify-between px-4 gap-3">
-          <div className="flex items-center gap-2">
+        <div className="min-h-12 flex-shrink-0 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between px-4 py-2 gap-3">
+          <div className="flex items-center gap-2 min-w-0 flex-wrap">
             <Select value={selectedFlowId} onValueChange={setSelectedFlowId}>
               <SelectTrigger className="h-7 text-xs w-44"><SelectValue /></SelectTrigger>
               <SelectContent>{flows.map((f) => <SelectItem key={f.id} value={String(f.id)} className="text-xs">{f.name}</SelectItem>)}</SelectContent>
             </Select>
             {selectedFlow && (
-              <Badge className={`${FLOW_COLORS[selectedFlow.lifecycleStatus]} border text-xs`}>{selectedFlow.lifecycleStatus}</Badge>
+              <Badge className={`${FLOW_COLORS[selectedFlowStatus] || FLOW_COLORS.draft} border text-xs`}>{selectedFlowStatus}</Badge>
             )}
             {/* Dirty indicator */}
             {isDirty && <span className="text-[10px] text-amber-500 font-medium flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full bg-amber-400" />Unsaved</span>}
             {!isDirty && lastSaved && <span className="text-[10px] text-slate-400">Saved {lastSaved.toLocaleTimeString()}</span>}
           </div>
 
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap justify-end min-w-0">
             {/* Validation */}
             {validation.errors.length > 0 && (
               <Tooltip>
@@ -2398,7 +2406,7 @@ function WorkflowCanvas({
               </div>
             )}
 
-            <div className="w-px h-5 bg-slate-200" />
+            <div className="w-px h-5 bg-slate-200 hidden xl:block" />
 
             {/* Undo / Redo */}
             <Tooltip>
@@ -2420,7 +2428,7 @@ function WorkflowCanvas({
               <TooltipContent className="text-xs">Redo (Ctrl+Y)</TooltipContent>
             </Tooltip>
 
-            <div className="w-px h-5 bg-slate-200" />
+            <div className="w-px h-5 bg-slate-200 hidden xl:block" />
 
             {/* Zoom controls */}
             <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden">
@@ -2435,7 +2443,7 @@ function WorkflowCanvas({
               <TooltipContent className="text-xs">Fit to screen</TooltipContent>
             </Tooltip>
 
-            <div className="w-px h-5 bg-slate-200" />
+            <div className="w-px h-5 bg-slate-200 hidden xl:block" />
 
             {/* Version history toggle */}
             <Tooltip>
@@ -2458,7 +2466,7 @@ function WorkflowCanvas({
               24h+
             </label>
 
-            <div className="w-px h-5 bg-slate-200" />
+            <div className="w-px h-5 bg-slate-200 hidden xl:block" />
 
             <Button size="sm" className="h-7 text-xs gap-1 text-white" style={{ background: T.orange }} onClick={saveDraft}>
               <Save size={12} />Save Flow
@@ -2725,7 +2733,7 @@ function WorkflowCanvas({
 
           {/* ── Version history sidebar ── */}
           {showVersions && (
-            <div className="w-60 flex-shrink-0 border-l border-slate-200 bg-white flex flex-col">
+            <div className="w-56 xl:w-60 flex-shrink-0 border-l border-slate-200 bg-white flex flex-col min-w-0">
               <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
                 <div className="text-xs font-bold text-slate-600 uppercase tracking-wide flex items-center gap-1.5"><Clock size={12} />Version History</div>
                 <button className="text-slate-400 hover:text-slate-600" onClick={() => setShowVersions(false)}><X size={14} /></button>
@@ -2762,7 +2770,7 @@ function WorkflowCanvas({
 
           {/* ── Right panel ── */}
           {showPreview && (
-            <div className="w-72 flex-shrink-0 border-l border-slate-200 bg-white flex flex-col">
+            <div className="w-[280px] 2xl:w-72 flex-shrink-0 border-l border-slate-200 bg-white flex flex-col min-w-0">
               <div className="border-b border-slate-100 px-4 py-3 flex items-center justify-between">
                 <div className="text-xs font-bold text-slate-600 uppercase tracking-wide flex items-center gap-1.5">
                   <Settings2 size={12} />Configure
