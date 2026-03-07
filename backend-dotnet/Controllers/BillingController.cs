@@ -43,13 +43,31 @@ public class BillingController(
         if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
         if (!rbac.HasPermission(BillingRead)) return Forbid();
         var sub = await db.TenantSubscriptions.Where(x => x.TenantId == tenancy.TenantId).OrderByDescending(x => x.CreatedAtUtc).FirstOrDefaultAsync(ct);
-        if (sub is null) return NotFound("Subscription not found.");
+        var creditBalances = await GetCreditBalancesAsync(tenancy.TenantId, ct);
+        if (sub is null)
+        {
+            return Ok(new
+            {
+                subscription = (object?)null,
+                plan = (object?)null,
+                creditBalances
+            });
+        }
         var plan = await db.BillingPlans.FirstOrDefaultAsync(x => x.Id == sub.PlanId, ct);
-        if (plan is null) return NotFound("Plan not found.");
+        if (plan is null)
+        {
+            return Ok(new
+            {
+                subscription = new { sub.Id, sub.TenantId, sub.PlanId, sub.Status, sub.BillingCycle, sub.StartedAtUtc, sub.RenewAtUtc, sub.CancelledAtUtc },
+                plan = (object?)null,
+                creditBalances
+            });
+        }
         return Ok(new
         {
             subscription = new { sub.Id, sub.TenantId, sub.PlanId, sub.Status, sub.BillingCycle, sub.StartedAtUtc, sub.RenewAtUtc, sub.CancelledAtUtc },
-            plan = MapPlan(plan)
+            plan = MapPlan(plan),
+            creditBalances
         });
     }
 
@@ -60,7 +78,8 @@ public class BillingController(
         if (!rbac.HasPermission(BillingRead)) return Forbid();
         var monthKey = DateTime.UtcNow.ToString("yyyy-MM");
         var usage = await db.TenantUsages.FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId && x.MonthKey == monthKey, ct);
-        if (usage is null) return Ok(new { monthKey, values = new Dictionary<string, int>() });
+        var creditBalances = await GetCreditBalancesAsync(tenancy.TenantId, ct);
+        if (usage is null) return Ok(new { monthKey, values = new Dictionary<string, int>(), creditBalances });
         return Ok(new
         {
             usage.MonthKey,
@@ -73,7 +92,8 @@ public class BillingController(
                 ["chatbots"] = usage.ChatbotsUsed,
                 ["flows"] = usage.FlowsUsed,
                 ["apiCalls"] = usage.ApiCallsUsed
-            }
+            },
+            creditBalances
         });
     }
 
@@ -224,6 +244,10 @@ public class BillingController(
         {
             x.Id,
             x.InvoiceNo,
+            x.InvoiceKind,
+            x.BillingCycle,
+            x.TaxMode,
+            x.ReferenceNo,
             x.PeriodStartUtc,
             x.PeriodEndUtc,
             x.Subtotal,
@@ -469,7 +493,10 @@ public class BillingController(
         if (plan is null) return NotFound("Plan not found.");
 
         var cycle = string.IsNullOrWhiteSpace(request.BillingCycle) ? "monthly" : request.BillingCycle.Trim().ToLowerInvariant();
-        if (cycle != "monthly" && cycle != "yearly") return BadRequest("billingCycle must be monthly or yearly.");
+        if (string.Equals(plan.PricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
+            cycle = "usage_based";
+        if (cycle != "monthly" && cycle != "yearly" && cycle != "usage_based")
+            return BadRequest("billingCycle must be monthly, yearly or usage_based.");
 
         var cfg = await ReadPaymentSettingsAsync(ct);
         var provider = (cfg.TryGetValue("provider", out var p) ? p : "razorpay").Trim().ToLowerInvariant();
@@ -483,7 +510,9 @@ public class BillingController(
             return BadRequest($"Razorpay keyId does not match configured mode '{mode}'.");
 
         var amount = cycle == "yearly" ? plan.PriceYearly : plan.PriceMonthly;
-        var amountPaise = (int)Math.Round(amount * 100m, MidpointRounding.AwayFromZero);
+        var (taxRate, isTaxExempt, isReverseCharge) = await ResolveTaxProfileAsync(tenancy.TenantId, ct);
+        var invoicePreview = ComputeInvoiceAmounts(amount, taxRate, plan.TaxMode, isTaxExempt, isReverseCharge);
+        var amountPaise = (int)Math.Round(invoicePreview.Total * 100m, MidpointRounding.AwayFromZero);
         if (amountPaise <= 0) return BadRequest("Invalid plan amount.");
 
         var receipt = $"txtz_{tenancy.TenantId:N}_{DateTime.UtcNow:yyyyMMddHHmmss}";
@@ -529,7 +558,7 @@ public class BillingController(
             BillingCycle = cycle,
             Provider = "razorpay",
             OrderId = orderId,
-            Amount = amount,
+            Amount = invoicePreview.Total,
             Currency = payload.currency,
             Status = "created",
             NotesJson = JsonSerializer.Serialize(notes),
@@ -538,18 +567,26 @@ public class BillingController(
             UpdatedAtUtc = DateTime.UtcNow
         };
         db.BillingPaymentAttempts.Add(attempt);
+        await CreateOrUpdateProformaInvoiceAsync(
+            tenancy.TenantId,
+            plan,
+            cycle,
+            orderId,
+            invoicePreview,
+            ct);
         await db.SaveChangesAsync(ct);
         await TrySendBillingEventAsync(
             tenancy.TenantId,
             "Payment initiated",
-            "A Razorpay order was created for your plan upgrade.",
+            "A Razorpay order and proforma invoice were created for your purchase.",
             new Dictionary<string, string>
             {
                 ["Plan"] = plan.Name,
                 ["Billing Cycle"] = cycle,
-                ["Amount"] = FormatCurrency(amount, payload.currency),
+                ["Amount"] = FormatCurrency(invoicePreview.Total, payload.currency),
                 ["Order ID"] = orderId,
-                ["Mode"] = mode
+                ["Mode"] = mode,
+                ["Invoice Type"] = "Proforma Invoice"
             },
             ct);
 
@@ -699,8 +736,12 @@ public class BillingController(
         p.Id,
         p.Code,
         p.Name,
+        p.PricingModel,
         p.PriceMonthly,
         p.PriceYearly,
+        p.TaxMode,
+        p.UsageUnitName,
+        p.IncludedQuantity,
         p.Currency,
         p.IsActive,
         p.SortOrder,
@@ -767,11 +808,127 @@ public class BillingController(
         return (Math.Clamp(profile.TaxRatePercent, 0m, 100m), profile.IsTaxExempt, profile.IsReverseCharge);
     }
 
+    private async Task<object> GetCreditBalancesAsync(Guid tenantId, CancellationToken ct)
+    {
+        var rows = await db.TenantUsageCreditBalances
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenantId)
+            .ToListAsync(ct);
+        return rows.ToDictionary(x => x.MetricKey, x => x.UnitsRemaining, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task CreateOrUpdateProformaInvoiceAsync(
+        Guid tenantId,
+        BillingPlan plan,
+        string billingCycle,
+        string orderId,
+        InvoiceAmounts invoice,
+        CancellationToken ct)
+    {
+        var start = DateTime.UtcNow;
+        var periodStart = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var periodEnd = ResolvePeriodEndUtc(periodStart, billingCycle);
+        var invoiceNo = $"PI-{start:yyyyMMdd}-{orderId}";
+        var existing = await db.BillingInvoices.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.InvoiceNo == invoiceNo, ct);
+        if (existing is null)
+        {
+            existing = new BillingInvoice
+            {
+                Id = Guid.NewGuid(),
+                InvoiceNo = invoiceNo,
+                TenantId = tenantId,
+                InvoiceKind = "proforma_invoice",
+                BillingCycle = billingCycle,
+                TaxMode = plan.TaxMode,
+                ReferenceNo = orderId,
+                PeriodStartUtc = periodStart,
+                PeriodEndUtc = periodEnd,
+                Status = "issued",
+                PaidAtUtc = null,
+                PdfUrl = string.Empty,
+                IntegrityAlgo = "SHA256",
+                IssuedAtUtc = DateTime.UtcNow,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            db.BillingInvoices.Add(existing);
+        }
+
+        existing.Subtotal = invoice.Subtotal;
+        existing.TaxAmount = invoice.TaxAmount;
+        existing.Total = invoice.Total;
+        existing.TaxMode = plan.TaxMode;
+        existing.BillingCycle = billingCycle;
+        existing.ReferenceNo = orderId;
+        existing.IntegrityHash = ComputeInvoiceIntegrityHash(existing);
+    }
+
+    private readonly record struct InvoiceAmounts(decimal Subtotal, decimal TaxAmount, decimal Total);
+
+    private static InvoiceAmounts ComputeInvoiceAmounts(
+        decimal planAmount,
+        decimal taxRatePercent,
+        string? taxMode,
+        bool isTaxExempt,
+        bool isReverseCharge,
+        bool amountIsGross = false)
+    {
+        var normalizedTaxMode = string.Equals(taxMode, "inclusive", StringComparison.OrdinalIgnoreCase) ? "inclusive" : "exclusive";
+        var taxBlocked = isTaxExempt || isReverseCharge || taxRatePercent <= 0m;
+        if (taxBlocked)
+            return new InvoiceAmounts(Math.Round(planAmount, 2, MidpointRounding.AwayFromZero), 0m, Math.Round(planAmount, 2, MidpointRounding.AwayFromZero));
+
+        if (normalizedTaxMode == "inclusive")
+        {
+            var gross = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
+            if (amountIsGross)
+            {
+                var subtotal = Math.Round(gross / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
+                var tax = Math.Round(gross - subtotal, 2, MidpointRounding.AwayFromZero);
+                return new InvoiceAmounts(subtotal, tax, gross);
+            }
+
+            var total = gross;
+            var subtotalInc = Math.Round(total / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
+            var taxInc = Math.Round(total - subtotalInc, 2, MidpointRounding.AwayFromZero);
+            return new InvoiceAmounts(subtotalInc, taxInc, total);
+        }
+
+        var subtotalExclusive = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
+        if (amountIsGross)
+        {
+            var totalGross = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
+            var subtotalGross = Math.Round(totalGross / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
+            var taxGross = Math.Round(totalGross - subtotalGross, 2, MidpointRounding.AwayFromZero);
+            return new InvoiceAmounts(subtotalGross, taxGross, totalGross);
+        }
+
+        var taxExclusive = Math.Round(subtotalExclusive * (taxRatePercent / 100m), 2, MidpointRounding.AwayFromZero);
+        return new InvoiceAmounts(subtotalExclusive, taxExclusive, subtotalExclusive + taxExclusive);
+    }
+
+    private static int ResolvePackUnitsFromLimits(string json, string? usageUnitName)
+    {
+        try
+        {
+            var limits = JsonSerializer.Deserialize<Dictionary<string, int>>(json) ?? new Dictionary<string, int>();
+            var key = string.IsNullOrWhiteSpace(usageUnitName) ? "smsCredits" : usageUnitName.Trim();
+            return Math.Max(0, limits.TryGetValue(key, out var value) ? value : 0);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
     private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice)
     {
         var canonical = string.Join("|",
             invoice.InvoiceNo,
             invoice.TenantId.ToString("D"),
+            invoice.InvoiceKind,
+            invoice.BillingCycle,
+            invoice.TaxMode,
+            invoice.ReferenceNo,
             invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
             invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
             invoice.Subtotal.ToString("0.00"),
@@ -888,6 +1045,65 @@ public class BillingController(
         var plan = await db.BillingPlans.FirstOrDefaultAsync(x => x.Id == attempt.PlanId, ct);
         if (plan is null) return;
 
+        var start = DateTime.UtcNow;
+        var periodStart = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var billingCycle = NormalizeBillingCycle(attempt.BillingCycle) ?? "monthly";
+        var periodEnd = ResolvePeriodEndUtc(periodStart, billingCycle);
+        var invoiceNo = $"INV-{start:yyyyMMdd}-{attempt.OrderId}";
+        var existingInvoice = await db.BillingInvoices
+            .FirstOrDefaultAsync(x => x.TenantId == attempt.TenantId && x.InvoiceNo == invoiceNo, ct);
+        if (existingInvoice is null)
+        {
+            var (taxRate, isTaxExempt, isReverseCharge) = await ResolveTaxProfileAsync(attempt.TenantId, ct);
+            var invoiceBreakdown = ComputeInvoiceAmounts(attempt.Amount, taxRate, plan.TaxMode, isTaxExempt, isReverseCharge, amountIsGross: true);
+            var invoice = new BillingInvoice
+            {
+                Id = Guid.NewGuid(),
+                InvoiceNo = invoiceNo,
+                TenantId = attempt.TenantId,
+                InvoiceKind = "tax_invoice",
+                BillingCycle = billingCycle,
+                TaxMode = plan.TaxMode,
+                ReferenceNo = attempt.OrderId,
+                PeriodStartUtc = periodStart,
+                PeriodEndUtc = periodEnd,
+                Subtotal = invoiceBreakdown.Subtotal,
+                TaxAmount = invoiceBreakdown.TaxAmount,
+                Total = invoiceBreakdown.Total,
+                Status = "paid",
+                PaidAtUtc = attempt.PaidAtUtc ?? DateTime.UtcNow,
+                PdfUrl = string.Empty,
+                IntegrityAlgo = "SHA256",
+                IssuedAtUtc = DateTime.UtcNow,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            invoice.IntegrityHash = ComputeInvoiceIntegrityHash(invoice);
+            db.BillingInvoices.Add(invoice);
+            await TrySendBillingEventAsync(
+                attempt.TenantId,
+                "Invoice generated",
+                "A paid tax invoice has been generated for your purchase.",
+                new Dictionary<string, string>
+                {
+                    ["Invoice No"] = invoiceNo,
+                    ["Period"] = $"{periodStart:yyyy-MM-dd} to {periodEnd:yyyy-MM-dd}",
+                    ["Subtotal"] = FormatCurrency(invoiceBreakdown.Subtotal, attempt.Currency),
+                    ["Tax"] = FormatCurrency(invoiceBreakdown.TaxAmount, attempt.Currency),
+                    ["Tax Rate"] = $"{taxRate:0.##}%",
+                    ["Total"] = FormatCurrency(invoiceBreakdown.Total, attempt.Currency),
+                    ["Invoice Type"] = "Tax Invoice"
+                },
+                ct);
+        }
+
+        if (string.Equals(plan.PricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
+        {
+            var units = plan.IncludedQuantity > 0 ? plan.IncludedQuantity : ResolvePackUnitsFromLimits(plan.LimitsJson, plan.UsageUnitName);
+            var metricKey = string.IsNullOrWhiteSpace(plan.UsageUnitName) ? "smsCredits" : plan.UsageUnitName.Trim();
+            await billingGuard.AddCreditUnitsAsync(attempt.TenantId, metricKey, units, ct);
+            return;
+        }
+
         var sub = await db.TenantSubscriptions
             .Where(x => x.TenantId == attempt.TenantId)
             .OrderByDescending(x => x.CreatedAtUtc)
@@ -904,61 +1120,13 @@ public class BillingController(
             db.TenantSubscriptions.Add(sub);
         }
 
-        var start = DateTime.UtcNow;
         sub.PlanId = plan.Id;
-        sub.BillingCycle = NormalizeBillingCycle(attempt.BillingCycle) ?? "monthly";
+        sub.BillingCycle = billingCycle;
         sub.Status = "active";
         sub.CancelledAtUtc = null;
         sub.StartedAtUtc = start;
         sub.RenewAtUtc = ResolveRenewAtUtc(start, sub.BillingCycle);
         sub.UpdatedAtUtc = DateTime.UtcNow;
-
-        var periodStart = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-        var periodEnd = ResolvePeriodEndUtc(periodStart, sub.BillingCycle);
-        var invoiceNo = $"INV-{start:yyyyMMdd}-{attempt.OrderId}";
-        var existingInvoice = await db.BillingInvoices
-            .FirstOrDefaultAsync(x => x.TenantId == attempt.TenantId && x.InvoiceNo == invoiceNo, ct);
-        if (existingInvoice is null)
-        {
-            var subtotal = attempt.Amount;
-            var (taxRate, isTaxExempt, isReverseCharge) = await ResolveTaxProfileAsync(attempt.TenantId, ct);
-            var tax = (isTaxExempt || isReverseCharge)
-                ? 0m
-                : Math.Round(subtotal * (taxRate / 100m), 2, MidpointRounding.AwayFromZero);
-            var invoice = new BillingInvoice
-            {
-                Id = Guid.NewGuid(),
-                InvoiceNo = invoiceNo,
-                TenantId = attempt.TenantId,
-                PeriodStartUtc = periodStart,
-                PeriodEndUtc = periodEnd,
-                Subtotal = subtotal,
-                TaxAmount = tax,
-                Total = subtotal + tax,
-                Status = "paid",
-                PaidAtUtc = attempt.PaidAtUtc ?? DateTime.UtcNow,
-                PdfUrl = string.Empty,
-                IntegrityAlgo = "SHA256",
-                IssuedAtUtc = DateTime.UtcNow,
-                CreatedAtUtc = DateTime.UtcNow
-            };
-            invoice.IntegrityHash = ComputeInvoiceIntegrityHash(invoice);
-            db.BillingInvoices.Add(invoice);
-            await TrySendBillingEventAsync(
-                attempt.TenantId,
-                "Invoice generated",
-                "A paid invoice has been generated for your subscription.",
-                new Dictionary<string, string>
-                {
-                    ["Invoice No"] = invoiceNo,
-                    ["Period"] = $"{periodStart:yyyy-MM-dd} to {periodEnd:yyyy-MM-dd}",
-                    ["Subtotal"] = FormatCurrency(subtotal, attempt.Currency),
-                    ["Tax"] = FormatCurrency(tax, attempt.Currency),
-                    ["Tax Rate"] = $"{taxRate:0.##}%",
-                    ["Total"] = FormatCurrency(subtotal + tax, attempt.Currency)
-                },
-                ct);
-        }
     }
 
     private async Task TrySendBillingEventAsync(Guid tenantId, string title, string description, Dictionary<string, string> details, CancellationToken ct)
@@ -1023,6 +1191,10 @@ public class BillingController(
         var safeAddress = WebUtility.HtmlEncode(billingAddress);
         var safeGstin = WebUtility.HtmlEncode(gstin);
         var safePan = WebUtility.HtmlEncode(pan);
+        var safeReference = WebUtility.HtmlEncode(inv.ReferenceNo);
+        var invoiceLabel = string.Equals(inv.InvoiceKind, "proforma_invoice", StringComparison.OrdinalIgnoreCase) ? "Proforma Invoice" : "Tax Invoice";
+        var safeInvoiceLabel = WebUtility.HtmlEncode(invoiceLabel);
+        var safeTaxMode = WebUtility.HtmlEncode(string.Equals(inv.TaxMode, "inclusive", StringComparison.OrdinalIgnoreCase) ? "GST Included" : "GST Extra");
         return $$"""
             <!doctype html>
             <html lang="en">
@@ -1044,11 +1216,12 @@ public class BillingController(
               <div class="header">
                 <div>
                   <div class="brand">Textzy</div>
-                  <div class="muted">Powered by Moneyart Private Limited</div>
+                  <div class="muted">{{safeInvoiceLabel}} • {{safeTaxMode}}</div>
                 </div>
                 <div class="right">
-                  <div><b>Invoice:</b> {{safeInvoiceNo}}</div>
+                  <div><b>{{safeInvoiceLabel}}:</b> {{safeInvoiceNo}}</div>
                   <div class="muted">Created: {{inv.CreatedAtUtc:yyyy-MM-dd}}</div>
+                  <div class="muted">Status: {{inv.Status}}</div>
                   <div class="muted">Paid: {{(inv.PaidAtUtc ?? inv.CreatedAtUtc):yyyy-MM-dd}}</div>
                 </div>
               </div>
@@ -1058,6 +1231,7 @@ public class BillingController(
               <div class="muted">{{safeAddress}}</div>
               <div class="muted">GSTIN: {{(string.IsNullOrWhiteSpace(gstin) ? "-" : safeGstin)}} | PAN: {{(string.IsNullOrWhiteSpace(pan) ? "-" : safePan)}}</div>
               <div class="muted">Period: {{inv.PeriodStartUtc:yyyy-MM-dd}} to {{inv.PeriodEndUtc:yyyy-MM-dd}}</div>
+              <div class="muted">Reference: {{(string.IsNullOrWhiteSpace(inv.ReferenceNo) ? "-" : safeReference)}} | Cycle: {{inv.BillingCycle}}</div>
               <table>
                 <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
                 <tbody>

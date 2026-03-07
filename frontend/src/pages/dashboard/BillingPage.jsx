@@ -49,6 +49,7 @@ const BillingPage = () => {
   const [plans, setPlans] = useState([]);
   const [sub, setSub] = useState(null);
   const [usageValues, setUsageValues] = useState({});
+  const [creditBalances, setCreditBalances] = useState({});
   const [invoices, setInvoices] = useState([]);
   const [dunningStatus, setDunningStatus] = useState(null);
   const [paymentConfig, setPaymentConfig] = useState(null);
@@ -80,6 +81,7 @@ const BillingPage = () => {
         setPlans(Array.isArray(p) ? p : []);
         setSub(c || null);
         setUsageValues(u?.values || {});
+        setCreditBalances(c?.creditBalances || u?.creditBalances || {});
         setInvoices(Array.isArray(i) ? i : []);
         setDunningStatus(d || null);
         setCompany(companyCfg || null);
@@ -93,8 +95,13 @@ const BillingPage = () => {
   const currentPlan = sub?.plan || null;
   const taxRatePercent = Number(company?.taxRatePercent ?? 18);
   const planCost = Number(currentPlan?.priceMonthly || 0);
-  const taxAmount = company?.isTaxExempt ? 0 : Math.round(planCost * (taxRatePercent / 100));
-  const totalAmount = planCost + taxAmount;
+  const taxMode = String(currentPlan?.taxMode || "exclusive").toLowerCase();
+  const taxAmount = company?.isTaxExempt
+    ? 0
+    : taxMode === "inclusive"
+    ? Math.round((planCost - (planCost / (1 + (taxRatePercent / 100)))) * 100) / 100
+    : Math.round(planCost * (taxRatePercent / 100));
+  const totalAmount = taxMode === "inclusive" ? planCost : planCost + taxAmount;
   const companyName =
     String(company?.companyName || "").trim() ||
     String(session?.projectName || "").trim() ||
@@ -113,14 +120,14 @@ const BillingPage = () => {
     const limits = currentPlan?.limits || {};
     return {
       whatsapp: { used: usageValues.whatsappMessages || 0, limit: limits.whatsappMessages || 0, percentage: pct(usageValues.whatsappMessages || 0, limits.whatsappMessages || 0) },
-      sms: { used: usageValues.smsCredits || 0, limit: limits.smsCredits || 0, percentage: pct(usageValues.smsCredits || 0, limits.smsCredits || 0) },
+      sms: { used: usageValues.smsCredits || 0, limit: limits.smsCredits || 0, percentage: pct(usageValues.smsCredits || 0, limits.smsCredits || 0), balance: Number(creditBalances.smsCredits || 0) },
       contacts: { used: usageValues.contacts || 0, limit: limits.contacts || 0, percentage: pct(usageValues.contacts || 0, limits.contacts || 0) },
       team: { used: usageValues.teamMembers || 0, limit: limits.teamMembers || 0, percentage: pct(usageValues.teamMembers || 0, limits.teamMembers || 0) },
       flows: { used: usageValues.flows || 0, limit: limits.flows || 0, percentage: pct(usageValues.flows || 0, limits.flows || 0) },
       chatbots: { used: usageValues.chatbots || 0, limit: limits.chatbots || 0, percentage: pct(usageValues.chatbots || 0, limits.chatbots || 0) },
       apiCalls: { used: usageValues.apiCalls || 0, limit: limits.apiCalls || 0, percentage: pct(usageValues.apiCalls || 0, limits.apiCalls || 0) }
     };
-  }, [currentPlan, usageValues]);
+  }, [currentPlan, creditBalances, usageValues]);
 
   const dunningBadgeClass = useMemo(() => {
     const status = String(dunningStatus?.subscription?.status || "").toLowerCase();
@@ -157,8 +164,9 @@ const BillingPage = () => {
       getBillingInvoices()
     ]);
     setSub(c || null);
-    setUsageValues(u?.values || {});
-    setInvoices(Array.isArray(i) ? i : []);
+      setUsageValues(u?.values || {});
+      setCreditBalances(c?.creditBalances || u?.creditBalances || {});
+      setInvoices(Array.isArray(i) ? i : []);
   };
 
   const upgradeWithRazorpay = async (plan) => {
@@ -166,7 +174,8 @@ const BillingPage = () => {
     try {
       const cfg = paymentConfig;
       if (!cfg?.razorpay?.enabled || !cfg?.razorpay?.keyId) throw new Error("Razorpay is not configured.");
-      const order = await createRazorpayOrder(plan.code, "monthly");
+      const cycle = plan.pricingModel === "usage_pack" ? "usage_based" : "monthly";
+      const order = await createRazorpayOrder(plan.code, cycle);
       await ensureRazorpayScript();
 
       await new Promise((resolve, reject) => {
@@ -176,12 +185,12 @@ const BillingPage = () => {
           currency: order.currency || "INR",
           order_id: order.orderId,
           name: "Textzy",
-          description: `${plan.name} plan upgrade`,
+          description: plan.pricingModel === "usage_pack" ? `${plan.name} credit purchase` : `${plan.name} plan upgrade`,
           handler: async function (resp) {
             try {
               await verifyRazorpayPayment({
                 planCode: plan.code,
-                billingCycle: "monthly",
+                billingCycle: plan.pricingModel === "usage_pack" ? "usage_based" : "monthly",
                 razorpayOrderId: resp.razorpay_order_id,
                 razorpayPaymentId: resp.razorpay_payment_id,
                 razorpaySignature: resp.razorpay_signature
@@ -199,7 +208,7 @@ const BillingPage = () => {
         rzp.open();
       });
 
-      toast.success("Payment successful. Plan updated.");
+      toast.success(plan.pricingModel === "usage_pack" ? "Payment successful. Credits added." : "Payment successful. Plan updated.");
       await refreshBillingData();
       setShowUpgradeDialog(false);
     } catch (e) {

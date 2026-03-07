@@ -25,6 +25,7 @@ public class AutomationController(
     SecretCryptoService crypto,
     IHttpClientFactory httpClientFactory,
     SensitiveDataRedactor redactor,
+    WorkflowExecutionEngine workflowExecutionEngine,
     ILogger<AutomationController> logger) : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -38,6 +39,8 @@ public class AutomationController(
         "list",
         "ask_question",
         "capture_input",
+        "location",
+        "form",
         "bot_reply","botreply",
         "cta_url",
         "condition","split",
@@ -141,16 +144,25 @@ public class AutomationController(
             new { type = "text", category = "message", reusable = true },
             new { type = "media", category = "message", reusable = true },
             new { type = "template", category = "message", reusable = true },
+            new { type = "bot_reply", category = "message", reusable = true },
+            new { type = "cta_url", category = "message", reusable = true },
             new { type = "buttons", category = "message", reusable = true },
             new { type = "list", category = "message", reusable = true },
+            new { type = "ask_question", category = "input", reusable = true },
+            new { type = "capture_input", category = "input", reusable = true },
+            new { type = "location", category = "input", reusable = true },
+            new { type = "form", category = "input", reusable = true },
             new { type = "condition", category = "logic", reusable = true },
             new { type = "split", category = "logic", reusable = true },
             new { type = "delay", category = "logic", reusable = true },
+            new { type = "jump", category = "logic", reusable = true },
             new { type = "api_call", category = "integration", reusable = true },
             new { type = "db_query", category = "integration", reusable = true },
             new { type = "function", category = "compute", reusable = true },
             new { type = "webhook", category = "integration", reusable = true },
             new { type = "handoff", category = "operator", reusable = true },
+            new { type = "request_intervention", category = "operator", reusable = true },
+            new { type = "tag_user", category = "operator", reusable = true },
             new { type = "subflow", category = "flow", reusable = true },
             new { type = "end", category = "flow", reusable = false }
         });
@@ -1648,60 +1660,58 @@ public class AutomationController(
                 payload["faq_answer"] = await FindFaqAnswer(inboundText, ct);
             }
         }
-        var trace = new List<object>();
-        var logLines = new List<string>();
+
+        var inboundRecipient = TryGetPayloadValue(payload, "recipient", "to", "phone", "mobile", "customerPhone");
+        var inboundMessageText = TryGetPayloadValue(payload, "message", "text", "body");
+        var inboundMatchKey = TryGetPayloadValue(payload, "message_key", "matchKey");
+        var inboundMessageId = TryGetPayloadValue(payload, "inbound_message_id", "messageId");
+        var phoneNumberId = TryGetPayloadValue(payload, "phoneNumberId", "phone_number_id");
+
+        if (string.IsNullOrWhiteSpace(inboundMessageId))
+            inboundMessageId = $"{mode}-{Guid.NewGuid():N}";
 
         try
         {
-            var graph = ParseFlowDefinition(definitionJson);
-            var cursor = graph.startNodeId;
-            var visited = 0;
-
-            while (!string.IsNullOrWhiteSpace(cursor) && visited < 300)
+            await workflowExecutionEngine.ExecuteAsync(new WorkflowExecutionEngine.ExecuteRequest
             {
-                visited++;
-                if (!graph.nodes.TryGetValue(cursor, out var node))
-                {
-                    logLines.Add($"[{DateTime.UtcNow:O}] Missing node {cursor}. Run stopped.");
-                    break;
-                }
-
-                var started = DateTime.UtcNow;
-                var next = await ExecuteNode(flow, node, payload, mode, ct);
-                var elapsedMs = (int)(DateTime.UtcNow - started).TotalMilliseconds;
-                trace.Add(new
-                {
-                    nodeId = node.id,
-                    nodeType = node.type,
-                    nextNodeId = next,
-                    elapsedMs,
-                    status = "ok"
-                });
-                logLines.Add($"[{DateTime.UtcNow:O}] {node.type}:{node.id} -> {next}");
-
-                if (string.Equals(node.type, "end", StringComparison.OrdinalIgnoreCase)) break;
-                if (string.IsNullOrWhiteSpace(next)) break;
-                cursor = next;
-            }
-
-            run.Status = "completed";
-            run.Log = string.Join('\n', logLines);
-            run.TraceJson = JsonSerializer.Serialize(trace, JsonOptions);
-            run.CompletedAtUtc = DateTime.UtcNow;
+                TenantId = tenancy.TenantId,
+                FlowId = flow.Id,
+                PhoneNumberId = phoneNumberId,
+                InboundMessageId = inboundMessageId,
+                InboundRecipient = inboundRecipient,
+                InboundMessageText = inboundMessageText,
+                InboundMatchKey = inboundMatchKey,
+                DefinitionJson = definitionJson,
+                Run = run,
+                Payload = payload,
+                IsInteractiveResume = false,
+                ResumeSourceNodeId = string.Empty,
+                StartNodeId = string.Empty
+            }, ct);
         }
         catch (Exception ex)
         {
-            trace.Add(new { nodeId = "runtime", nodeType = "runtime", status = "failed", error = ex.Message });
             run.Status = "failed";
             run.FailureReason = ex.Message;
-            run.Log = string.Join('\n', logLines.Append($"[{DateTime.UtcNow:O}] ERROR: {ex.Message}"));
-            run.TraceJson = JsonSerializer.Serialize(trace, JsonOptions);
+            run.Log = string.IsNullOrWhiteSpace(run.Log)
+                ? $"[{DateTime.UtcNow:O}] ERROR: {ex.Message}"
+                : $"{run.Log}\n[{DateTime.UtcNow:O}] ERROR: {ex.Message}";
             run.CompletedAtUtc = DateTime.UtcNow;
         }
 
         UpsertUsageCounter(run);
         await db.SaveChangesAsync(ct);
         return run;
+    }
+
+    private static string TryGetPayloadValue(Dictionary<string, object?> payload, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (payload.TryGetValue(key, out var raw) && !string.IsNullOrWhiteSpace(raw?.ToString()))
+                return raw!.ToString()!;
+        }
+        return string.Empty;
     }
 
     private async Task<string> ExecuteNode(AutomationFlow flow, FlowNode node, Dictionary<string, object?> payload, string mode, CancellationToken ct)

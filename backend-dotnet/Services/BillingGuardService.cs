@@ -21,6 +21,13 @@ public class BillingGuardService(ControlDbContext db)
 
         var plan = await db.BillingPlans.FirstOrDefaultAsync(x => x.Id == sub.PlanId && x.IsActive, ct);
         if (plan is null) return (false, 0, nextUsed, "Subscription plan is inactive or missing.");
+        if (string.Equals(key, "smsCredits", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(plan.PricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
+        {
+            var balance = await GetCreditBalanceAsync(tenantId, key, ct);
+            if (balance <= 0)
+                return (false, 0, nextUsed, "No prepaid SMS credits available. Please buy a new SMS pack.");
+        }
 
         Dictionary<string, int> limits;
         try { limits = JsonSerializer.Deserialize<Dictionary<string, int>>(plan.LimitsJson) ?? new(); }
@@ -51,6 +58,34 @@ public class BillingGuardService(ControlDbContext db)
     {
         var usage = await GetOrCreateUsageAsync(tenantId, ct);
         var current = await GetCurrentUsageAsync(tenantId, key, ct);
+        if (string.Equals(key, "smsCredits", StringComparison.OrdinalIgnoreCase))
+        {
+            var prepaidBalance = await GetCreditBalanceAsync(tenantId, key, ct);
+            if (prepaidBalance > 0)
+            {
+                var planRemaining = await GetPlanRemainingAsync(tenantId, key, current, ct);
+                var totalAvailable = prepaidBalance + Math.Max(0, planRemaining);
+                if (delta > totalAvailable)
+                    return (false, totalAvailable, delta, $"Available SMS credits are insufficient: need {delta}, available {totalAvailable}");
+
+                var consumeFromBalance = Math.Min(prepaidBalance, delta);
+                var consumeFromPlan = Math.Max(0, delta - consumeFromBalance);
+                if (consumeFromBalance > 0)
+                    await ConsumeCreditBalanceAsync(tenantId, key, consumeFromBalance, ct);
+
+                if (consumeFromPlan > 0)
+                {
+                    var planCheck = await CheckLimitAsync(tenantId, key, current + consumeFromPlan, ct);
+                    if (!planCheck.Allowed) return planCheck;
+                }
+
+                SetUsageValue(usage, key, current + consumeFromPlan);
+                usage.UpdatedAtUtc = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+                return (true, totalAvailable, delta, string.Empty);
+            }
+        }
+
         var next = Math.Max(0, current + delta);
         var check = await CheckLimitAsync(tenantId, key, next, ct);
         if (!check.Allowed) return check;
@@ -91,6 +126,23 @@ public class BillingGuardService(ControlDbContext db)
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<int> GetCreditBalanceAsync(Guid tenantId, string key, CancellationToken ct = default)
+    {
+        var row = await db.TenantUsageCreditBalances
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.MetricKey == key, ct);
+        return Math.Max(0, row?.UnitsRemaining ?? 0);
+    }
+
+    public async Task AddCreditUnitsAsync(Guid tenantId, string key, int units, CancellationToken ct = default)
+    {
+        if (units <= 0) return;
+        var row = await GetOrCreateCreditBalanceEntityAsync(tenantId, key, ct);
+        row.UnitsRemaining += units;
+        row.UpdatedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+    }
+
     private async Task<Textzy.Api.Models.TenantUsage> GetOrCreateUsageAsync(Guid tenantId, CancellationToken ct)
     {
         var monthKey = CurrentMonthKey;
@@ -113,6 +165,58 @@ public class BillingGuardService(ControlDbContext db)
         db.TenantUsages.Add(usage);
         await db.SaveChangesAsync(ct);
         return usage;
+    }
+
+    private async Task<int> GetPlanRemainingAsync(Guid tenantId, string key, int currentUsage, CancellationToken ct)
+    {
+        var sub = await db.TenantSubscriptions
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (sub is null) return 0;
+        if (string.Equals(sub.Status, "cancelled", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(sub.Status, "suspended", StringComparison.OrdinalIgnoreCase))
+            return 0;
+
+        var plan = await db.BillingPlans.AsNoTracking().FirstOrDefaultAsync(x => x.Id == sub.PlanId && x.IsActive, ct);
+        if (plan is null) return 0;
+        if (string.Equals(key, "smsCredits", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(plan.PricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
+            return 0;
+
+        Dictionary<string, int> limits;
+        try { limits = JsonSerializer.Deserialize<Dictionary<string, int>>(plan.LimitsJson) ?? new(); }
+        catch { limits = new(); }
+
+        if (!limits.TryGetValue(key, out var limit) || limit <= 0) return int.MaxValue;
+        return Math.Max(0, limit - currentUsage);
+    }
+
+    private async Task<Textzy.Api.Models.TenantUsageCreditBalance> GetOrCreateCreditBalanceEntityAsync(Guid tenantId, string key, CancellationToken ct)
+    {
+        var row = await db.TenantUsageCreditBalances.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.MetricKey == key, ct);
+        if (row is not null) return row;
+        row = new Textzy.Api.Models.TenantUsageCreditBalance
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            MetricKey = key,
+            UnitsRemaining = 0,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+        db.TenantUsageCreditBalances.Add(row);
+        await db.SaveChangesAsync(ct);
+        return row;
+    }
+
+    private async Task ConsumeCreditBalanceAsync(Guid tenantId, string key, int units, CancellationToken ct)
+    {
+        if (units <= 0) return;
+        var row = await GetOrCreateCreditBalanceEntityAsync(tenantId, key, ct);
+        row.UnitsRemaining = Math.Max(0, row.UnitsRemaining - units);
+        row.UpdatedAtUtc = DateTime.UtcNow;
     }
 
     private static void SetUsageValue(Textzy.Api.Models.TenantUsage usage, string key, int value)

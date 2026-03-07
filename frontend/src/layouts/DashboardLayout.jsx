@@ -106,6 +106,7 @@ const DashboardLayout = () => {
   const currentSettingsTab = new URLSearchParams(location.search).get("tab") || "profile";
   const currentPlatformTab = new URLSearchParams(location.search).get("tab") || "waba-master";
   const [platformBranding, setPlatformBranding] = useState({ platformName: "Textzy", logoUrl: "" });
+  const displayedBranding = isPlatformView ? { platformName: "Textzy", logoUrl: "" } : platformBranding;
   const settingsMenus = [
     { key: "profile", label: "Profile" },
     { key: "company", label: "Company" },
@@ -354,14 +355,14 @@ const DashboardLayout = () => {
 
           {/* Logo */}
           <Link to="/dashboard" className="flex items-center gap-2" data-testid="dashboard-logo">
-            {platformBranding.logoUrl ? (
-              <img src={platformBranding.logoUrl} alt={platformBranding.platformName || "Textzy"} className="w-8 h-8 rounded-lg object-cover" />
+            {displayedBranding.logoUrl ? (
+              <img src={displayedBranding.logoUrl} alt={displayedBranding.platformName || "Textzy"} className="w-8 h-8 rounded-lg object-cover" />
             ) : (
               <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
                 <MessageSquare className="w-5 h-5 text-white" />
               </div>
             )}
-            <span className="font-heading font-bold text-xl text-slate-900 hidden sm:block">{platformBranding.platformName || "Textzy"}</span>
+            <span className="font-heading font-bold text-xl text-slate-900 hidden sm:block">{displayedBranding.platformName || "Textzy"}</span>
           </Link>
 
           {/* Sidebar Toggle */}

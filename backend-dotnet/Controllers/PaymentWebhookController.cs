@@ -16,6 +16,7 @@ public class PaymentWebhookController(
     ControlDbContext db,
     SecretCryptoService crypto,
     EmailService emailService,
+    BillingGuardService billingGuard,
     AuditLogService audit,
     SensitiveDataRedactor redactor,
     ILogger<PaymentWebhookController> logger) : ControllerBase
@@ -398,6 +399,66 @@ public class PaymentWebhookController(
         var plan = await db.BillingPlans.FirstOrDefaultAsync(x => x.Id == attempt.PlanId, ct);
         if (plan is null) return;
 
+        var start = DateTime.UtcNow;
+        var normalizedCycle = NormalizeBillingCycle(attempt.BillingCycle);
+
+        var invoiceNo = $"INV-{start:yyyyMMdd}-{attempt.OrderId}";
+        var exists = await db.BillingInvoices.AnyAsync(x => x.TenantId == attempt.TenantId && x.InvoiceNo == invoiceNo, ct);
+        if (!exists)
+        {
+            var (taxRate, isTaxExempt, isReverseCharge) = await ResolveTaxProfileAsync(attempt.TenantId, ct);
+            var invoiceBreakdown = ComputeInvoiceAmounts(attempt.Amount, taxRate, plan.TaxMode, isTaxExempt, isReverseCharge);
+            var periodStart = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            var periodEnd = normalizedCycle == "yearly"
+                ? periodStart.AddYears(1).AddSeconds(-1)
+                : (normalizedCycle == "lifetime" ? periodStart.AddYears(100).AddSeconds(-1) : periodStart.AddMonths(1).AddSeconds(-1));
+            var invoice = new BillingInvoice
+            {
+                Id = Guid.NewGuid(),
+                InvoiceNo = invoiceNo,
+                TenantId = attempt.TenantId,
+                InvoiceKind = "tax_invoice",
+                BillingCycle = normalizedCycle,
+                TaxMode = plan.TaxMode,
+                ReferenceNo = attempt.OrderId,
+                PeriodStartUtc = periodStart,
+                PeriodEndUtc = periodEnd,
+                Subtotal = invoiceBreakdown.Subtotal,
+                TaxAmount = invoiceBreakdown.TaxAmount,
+                Total = invoiceBreakdown.Total,
+                Status = "paid",
+                PaidAtUtc = attempt.PaidAtUtc ?? DateTime.UtcNow,
+                PdfUrl = string.Empty,
+                IntegrityAlgo = "SHA256",
+                IssuedAtUtc = DateTime.UtcNow,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            invoice.IntegrityHash = ComputeInvoiceIntegrityHash(invoice);
+            db.BillingInvoices.Add(invoice);
+            await TrySendBillingEventAsync(
+                attempt.TenantId,
+                "Invoice generated",
+                "A paid tax invoice has been generated for your purchase.",
+                new Dictionary<string, string>
+                {
+                    ["Invoice No"] = invoiceNo,
+                    ["Subtotal"] = $"{invoiceBreakdown.Subtotal:0.00} {attempt.Currency}",
+                    ["Tax"] = $"{invoiceBreakdown.TaxAmount:0.00} {attempt.Currency}",
+                    ["Tax Rate"] = $"{taxRate:0.##}%",
+                    ["Total"] = $"{invoiceBreakdown.Total:0.00} {attempt.Currency}",
+                    ["Invoice Type"] = "Tax Invoice"
+                },
+                ct);
+        }
+
+        if (string.Equals(plan.PricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
+        {
+            var units = plan.IncludedQuantity > 0 ? plan.IncludedQuantity : ResolvePackUnitsFromLimits(plan.LimitsJson, plan.UsageUnitName);
+            var metricKey = string.IsNullOrWhiteSpace(plan.UsageUnitName) ? "smsCredits" : plan.UsageUnitName.Trim();
+            await billingGuard.AddCreditUnitsAsync(attempt.TenantId, metricKey, units, ct);
+            return;
+        }
+
         var sub = await db.TenantSubscriptions
             .Where(x => x.TenantId == attempt.TenantId)
             .OrderByDescending(x => x.CreatedAtUtc)
@@ -414,9 +475,8 @@ public class PaymentWebhookController(
             db.TenantSubscriptions.Add(sub);
         }
 
-        var start = DateTime.UtcNow;
         sub.PlanId = plan.Id;
-        sub.BillingCycle = NormalizeBillingCycle(attempt.BillingCycle);
+        sub.BillingCycle = normalizedCycle;
         sub.Status = "active";
         sub.CancelledAtUtc = null;
         sub.StartedAtUtc = start;
@@ -424,53 +484,6 @@ public class PaymentWebhookController(
             ? start.AddYears(1)
             : (sub.BillingCycle is "lifetime" or "usage_based" ? DateTime.MaxValue : start.AddMonths(1));
         sub.UpdatedAtUtc = DateTime.UtcNow;
-
-        var invoiceNo = $"INV-{start:yyyyMMdd}-{attempt.OrderId}";
-        var exists = await db.BillingInvoices.AnyAsync(x => x.TenantId == attempt.TenantId && x.InvoiceNo == invoiceNo, ct);
-        if (!exists)
-        {
-            var subtotal = attempt.Amount;
-            var (taxRate, isTaxExempt, isReverseCharge) = await ResolveTaxProfileAsync(attempt.TenantId, ct);
-            var tax = (isTaxExempt || isReverseCharge)
-                ? 0m
-                : Math.Round(subtotal * (taxRate / 100m), 2, MidpointRounding.AwayFromZero);
-            var periodStart = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-            var periodEnd = sub.BillingCycle == "yearly"
-                ? periodStart.AddYears(1).AddSeconds(-1)
-                : (sub.BillingCycle == "lifetime" ? periodStart.AddYears(100).AddSeconds(-1) : periodStart.AddMonths(1).AddSeconds(-1));
-            var invoice = new BillingInvoice
-            {
-                Id = Guid.NewGuid(),
-                InvoiceNo = invoiceNo,
-                TenantId = attempt.TenantId,
-                PeriodStartUtc = periodStart,
-                PeriodEndUtc = periodEnd,
-                Subtotal = subtotal,
-                TaxAmount = tax,
-                Total = subtotal + tax,
-                Status = "paid",
-                PaidAtUtc = attempt.PaidAtUtc ?? DateTime.UtcNow,
-                PdfUrl = string.Empty,
-                IntegrityAlgo = "SHA256",
-                IssuedAtUtc = DateTime.UtcNow,
-                CreatedAtUtc = DateTime.UtcNow
-            };
-            invoice.IntegrityHash = ComputeInvoiceIntegrityHash(invoice);
-            db.BillingInvoices.Add(invoice);
-            await TrySendBillingEventAsync(
-                attempt.TenantId,
-                "Invoice generated",
-                "A paid invoice has been generated for your subscription.",
-                new Dictionary<string, string>
-                {
-                    ["Invoice No"] = invoiceNo,
-                    ["Subtotal"] = $"{subtotal:0.00} {attempt.Currency}",
-                    ["Tax"] = $"{tax:0.00} {attempt.Currency}",
-                    ["Tax Rate"] = $"{taxRate:0.##}%",
-                    ["Total"] = $"{subtotal + tax:0.00} {attempt.Currency}"
-                },
-                ct);
-        }
     }
 
     private async Task<(decimal taxRatePercent, bool isTaxExempt, bool isReverseCharge)> ResolveTaxProfileAsync(Guid tenantId, CancellationToken ct)
@@ -485,6 +498,10 @@ public class PaymentWebhookController(
         var canonical = string.Join("|",
             invoice.InvoiceNo,
             invoice.TenantId.ToString("D"),
+            invoice.InvoiceKind,
+            invoice.BillingCycle,
+            invoice.TaxMode,
+            invoice.ReferenceNo,
             invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
             invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
             invoice.Subtotal.ToString("0.00"),
@@ -495,6 +512,45 @@ public class PaymentWebhookController(
             invoice.IssuedAtUtc.ToUniversalTime().ToString("O"));
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private readonly record struct InvoiceAmounts(decimal Subtotal, decimal TaxAmount, decimal Total);
+
+    private static InvoiceAmounts ComputeInvoiceAmounts(
+        decimal totalCharged,
+        decimal taxRatePercent,
+        string? taxMode,
+        bool isTaxExempt,
+        bool isReverseCharge)
+    {
+        var normalizedTaxMode = string.Equals(taxMode, "inclusive", StringComparison.OrdinalIgnoreCase) ? "inclusive" : "exclusive";
+        if (isTaxExempt || isReverseCharge || taxRatePercent <= 0m)
+            return new InvoiceAmounts(totalCharged, 0m, totalCharged);
+
+        if (normalizedTaxMode == "inclusive")
+        {
+            var subtotal = Math.Round(totalCharged / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
+            var tax = Math.Round(totalCharged - subtotal, 2, MidpointRounding.AwayFromZero);
+            return new InvoiceAmounts(subtotal, tax, totalCharged);
+        }
+
+        var subtotalExclusive = Math.Round(totalCharged / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
+        var taxExclusive = Math.Round(totalCharged - subtotalExclusive, 2, MidpointRounding.AwayFromZero);
+        return new InvoiceAmounts(subtotalExclusive, taxExclusive, totalCharged);
+    }
+
+    private static int ResolvePackUnitsFromLimits(string json, string? usageUnitName)
+    {
+        try
+        {
+            var limits = JsonSerializer.Deserialize<Dictionary<string, int>>(json) ?? new Dictionary<string, int>();
+            var key = string.IsNullOrWhiteSpace(usageUnitName) ? "smsCredits" : usageUnitName.Trim();
+            return Math.Max(0, limits.TryGetValue(key, out var value) ? value : 0);
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private static string NormalizeBillingCycle(string? billingCycle)

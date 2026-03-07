@@ -20,6 +20,7 @@ public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbCo
     public DbSet<TenantUsage> TenantUsages => Set<TenantUsage>();
     public DbSet<BillingInvoice> BillingInvoices => Set<BillingInvoice>();
     public DbSet<BillingPaymentAttempt> BillingPaymentAttempts => Set<BillingPaymentAttempt>();
+    public DbSet<TenantUsageCreditBalance> TenantUsageCreditBalances => Set<TenantUsageCreditBalance>();
     public DbSet<WebhookEvent> WebhookEvents => Set<WebhookEvent>();
     public DbSet<WabaErrorPolicy> WabaErrorPolicies => Set<WabaErrorPolicy>();
     public DbSet<PlatformRequestLog> PlatformRequestLogs => Set<PlatformRequestLog>();

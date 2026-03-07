@@ -716,8 +716,12 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "Id" uuid PRIMARY KEY,
             "Code" text NOT NULL,
             "Name" text NOT NULL,
+            "PricingModel" text NOT NULL DEFAULT 'subscription',
             "PriceMonthly" numeric(18,2) NOT NULL,
             "PriceYearly" numeric(18,2) NOT NULL,
+            "TaxMode" text NOT NULL DEFAULT 'exclusive',
+            "UsageUnitName" text NOT NULL DEFAULT '',
+            "IncludedQuantity" integer NOT NULL DEFAULT 0,
             "Currency" text NOT NULL,
             "IsActive" boolean NOT NULL,
             "SortOrder" integer NOT NULL,
@@ -728,6 +732,10 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_BillingPlans_Code" ON "BillingPlans" ("Code");""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingPlans" ADD COLUMN IF NOT EXISTS "PricingModel" text NOT NULL DEFAULT 'subscription';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingPlans" ADD COLUMN IF NOT EXISTS "TaxMode" text NOT NULL DEFAULT 'exclusive';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingPlans" ADD COLUMN IF NOT EXISTS "UsageUnitName" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingPlans" ADD COLUMN IF NOT EXISTS "IncludedQuantity" integer NOT NULL DEFAULT 0;""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "TenantSubscriptions" (
@@ -763,10 +771,26 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TenantUsages_Tenant_Month" ON "TenantUsages" ("TenantId","MonthKey");""");
 
     db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "TenantUsageCreditBalances" (
+            "Id" uuid PRIMARY KEY,
+            "TenantId" uuid NOT NULL,
+            "MetricKey" text NOT NULL,
+            "UnitsRemaining" integer NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL,
+            "UpdatedAtUtc" timestamp with time zone NOT NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TenantUsageCreditBalances_Tenant_Metric" ON "TenantUsageCreditBalances" ("TenantId","MetricKey");""");
+
+    db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "BillingInvoices" (
             "Id" uuid PRIMARY KEY,
             "InvoiceNo" text NOT NULL,
             "TenantId" uuid NOT NULL,
+            "InvoiceKind" text NOT NULL DEFAULT 'tax_invoice',
+            "BillingCycle" text NOT NULL DEFAULT 'monthly',
+            "TaxMode" text NOT NULL DEFAULT 'exclusive',
+            "ReferenceNo" text NOT NULL DEFAULT '',
             "PeriodStartUtc" timestamp with time zone NOT NULL,
             "PeriodEndUtc" timestamp with time zone NOT NULL,
             "Subtotal" numeric(18,2) NOT NULL,
@@ -779,6 +803,10 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingInvoices_TenantId" ON "BillingInvoices" ("TenantId");""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "InvoiceKind" text NOT NULL DEFAULT 'tax_invoice';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "BillingCycle" text NOT NULL DEFAULT 'monthly';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "TaxMode" text NOT NULL DEFAULT 'exclusive';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "ReferenceNo" text NOT NULL DEFAULT '';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "IntegrityAlgo" text NOT NULL DEFAULT 'SHA256';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "IntegrityHash" text NOT NULL DEFAULT '';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "IssuedAtUtc" timestamp with time zone NOT NULL DEFAULT now();""");

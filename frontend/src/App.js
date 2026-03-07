@@ -30,6 +30,7 @@ const AdminPage = lazy(() => import("@/pages/dashboard/AdminPage"));
 const TeamPage = lazy(() => import("@/pages/dashboard/TeamPage"));
 const PlatformSettingsPage = lazy(() => import("@/pages/dashboard/PlatformSettingsPage"));
 const PlatformBrandingPage = lazy(() => import("@/pages/dashboard/PlatformBrandingPage"));
+const PlatformOwnerDashboard = lazy(() => import("@/pages/dashboard/PlatformOwnerDashboard"));
 const SmsSetupPage = lazy(() => import("@/pages/dashboard/SmsSetupPage"));
 const MobileDevicesPage = lazy(() => import("@/pages/dashboard/MobileDevicesPage"));
 const WhatsAppOnboardingPage = lazy(() => import("@/pages/dashboard/WhatsAppOnboardingPage"));
@@ -80,7 +81,7 @@ function App() {
 
             {/* Dashboard Routes */}
             <Route path="/dashboard" element={authed ? <DashboardLayout /> : <Navigate to="/login" replace />}>
-              <Route index element={<DashboardOverview />} />
+              <Route index element={isPlatformView ? <PlatformOwnerDashboard /> : <DashboardOverview />} />
               <Route path="inbox" element={!isPlatformView && can("inbox.read") ? <InboxPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
               <Route path="contacts" element={!isPlatformView && can("contacts.read") ? <ContactsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />
               <Route path="campaigns" element={!isPlatformView && can("campaigns.read") ? <CampaignsPage /> : <Navigate to={isPlatformView ? "/dashboard" : firstTenantPath} replace />} />

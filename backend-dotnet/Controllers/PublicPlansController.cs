@@ -17,8 +17,12 @@ public class PublicPlansController(ControlDbContext db) : ControllerBase
         {
             p.Code,
             p.Name,
+            p.PricingModel,
             p.PriceMonthly,
             p.PriceYearly,
+            p.TaxMode,
+            p.UsageUnitName,
+            p.IncludedQuantity,
             p.Currency,
             Features = ParseStringList(p.FeaturesJson),
             Limits = ParseLimits(p.LimitsJson)

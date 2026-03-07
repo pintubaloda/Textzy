@@ -185,8 +185,12 @@ const PlatformSettingsPage = () => {
     id: "",
     code: "",
     name: "",
+    pricingModel: "subscription",
     priceMonthly: 0,
     priceYearly: 0,
+    taxMode: "exclusive",
+    usageUnitName: "smsCredits",
+    includedQuantity: 0,
     currency: "INR",
     isActive: true,
     sortOrder: 1,
@@ -2959,9 +2963,48 @@ const PlatformSettingsPage = () => {
             <div className="grid gap-3 md:grid-cols-3">
               <div className="space-y-1"><Label>Code</Label><Input value={planForm.code} onChange={(e) => setPlanForm((p) => ({ ...p, code: e.target.value }))} /></div>
               <div className="space-y-1"><Label>Name</Label><Input value={planForm.name} onChange={(e) => setPlanForm((p) => ({ ...p, name: e.target.value }))} /></div>
+              <div className="space-y-1">
+                <Label>Pricing Model</Label>
+                <Select value={planForm.pricingModel} onValueChange={(value) => setPlanForm((p) => ({ ...p, pricingModel: value }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="subscription">Subscription Plan</SelectItem>
+                    <SelectItem value="usage_pack">Usage Pack</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-1"><Label>Currency</Label><Input value={planForm.currency} onChange={(e) => setPlanForm((p) => ({ ...p, currency: e.target.value }))} /></div>
-              <div className="space-y-1"><Label>Monthly Price</Label><Input type="number" value={planForm.priceMonthly} onChange={(e) => setPlanForm((p) => ({ ...p, priceMonthly: Number(e.target.value || 0) }))} /></div>
-              <div className="space-y-1"><Label>Yearly Price</Label><Input type="number" value={planForm.priceYearly} onChange={(e) => setPlanForm((p) => ({ ...p, priceYearly: Number(e.target.value || 0) }))} /></div>
+              <div className="space-y-1"><Label>{planForm.pricingModel === "usage_pack" ? "Pack Price" : "Monthly Price"}</Label><Input type="number" value={planForm.priceMonthly} onChange={(e) => setPlanForm((p) => ({ ...p, priceMonthly: Number(e.target.value || 0) }))} /></div>
+              <div className="space-y-1">
+                <Label>{planForm.pricingModel === "usage_pack" ? "Usage Quantity" : "Yearly Price"}</Label>
+                {planForm.pricingModel === "usage_pack" ? (
+                  <Input type="number" value={planForm.includedQuantity ?? 0} onChange={(e) => setPlanForm((p) => ({ ...p, includedQuantity: Number(e.target.value || 0) }))} />
+                ) : (
+                  <Input type="number" value={planForm.priceYearly} onChange={(e) => setPlanForm((p) => ({ ...p, priceYearly: Number(e.target.value || 0) }))} />
+                )}
+              </div>
+              <div className="space-y-1">
+                <Label>GST Mode</Label>
+                <Select value={planForm.taxMode} onValueChange={(value) => setPlanForm((p) => ({ ...p, taxMode: value }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="exclusive">GST Excluded</SelectItem>
+                    <SelectItem value="inclusive">GST Included</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {planForm.pricingModel === "usage_pack" ? (
+                <div className="space-y-1">
+                  <Label>Usage Metric</Label>
+                  <Select value={planForm.usageUnitName} onValueChange={(value) => setPlanForm((p) => ({ ...p, usageUnitName: value }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="smsCredits">SMS Credits</SelectItem>
+                      <SelectItem value="whatsappMessages">WhatsApp Messages</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
               <div className="space-y-1"><Label>Sort Order</Label><Input type="number" value={planForm.sortOrder} onChange={(e) => setPlanForm((p) => ({ ...p, sortOrder: Number(e.target.value || 1) }))} /></div>
             </div>
             <div className="space-y-2">
@@ -3068,8 +3111,12 @@ const PlatformSettingsPage = () => {
                   const payload = {
                     code: planForm.code,
                     name: planForm.name,
+                    pricingModel: planForm.pricingModel,
                     priceMonthly: planForm.priceMonthly,
                     priceYearly: planForm.priceYearly,
+                    taxMode: planForm.taxMode,
+                    usageUnitName: planForm.usageUnitName,
+                    includedQuantity: planForm.includedQuantity,
                     currency: planForm.currency,
                     isActive: planForm.isActive,
                     sortOrder: planForm.sortOrder,
@@ -3080,7 +3127,7 @@ const PlatformSettingsPage = () => {
                   else await createPlatformBillingPlan(payload);
                   toast.success("Plan saved");
                   setPlans(await listPlatformBillingPlans());
-                  setPlanForm({ id: "", code: "", name: "", priceMonthly: 0, priceYearly: 0, currency: "INR", isActive: true, sortOrder: 1, features: [], customFeature: "", limits: { ...DEFAULT_LIMITS } });
+                  setPlanForm({ id: "", code: "", name: "", pricingModel: "subscription", priceMonthly: 0, priceYearly: 0, taxMode: "exclusive", usageUnitName: "smsCredits", includedQuantity: 0, currency: "INR", isActive: true, sortOrder: 1, features: [], customFeature: "", limits: { ...DEFAULT_LIMITS } });
                 } catch {
                   toast.error("Failed to save plan");
                 }
@@ -3092,7 +3139,7 @@ const PlatformSettingsPage = () => {
                   <tr>
                     <th className="text-left px-3 py-2">Code</th>
                     <th className="text-left px-3 py-2">Name</th>
-                    <th className="text-left px-3 py-2">Monthly</th>
+                    <th className="text-left px-3 py-2">Pricing</th>
                     <th className="text-left px-3 py-2">Status</th>
                     <th className="text-right px-3 py-2">Actions</th>
                   </tr>
@@ -3102,15 +3149,24 @@ const PlatformSettingsPage = () => {
                     <tr key={p.id} className="border-t border-slate-100">
                       <td className="px-3 py-2">{p.code}</td>
                       <td className="px-3 py-2">{p.name}</td>
-                      <td className="px-3 py-2">{p.currency} {Number(p.priceMonthly || 0).toLocaleString()}</td>
+                      <td className="px-3 py-2">
+                        {p.pricingModel === "usage_pack"
+                          ? `${p.currency} ${Number(p.priceMonthly || 0).toLocaleString()} for ${Number(p.includedQuantity || 0).toLocaleString()} ${p.usageUnitName || "units"}`
+                          : `${p.currency} ${Number(p.priceMonthly || 0).toLocaleString()}/month`}
+                        <div className="text-xs text-slate-500">{p.taxMode === "inclusive" ? "GST included" : "GST extra"}</div>
+                      </td>
                       <td className="px-3 py-2">{p.isActive ? "Active" : "Archived"}</td>
                       <td className="px-3 py-2 text-right">
                         <Button variant="outline" size="sm" className="mr-2" onClick={() => setPlanForm({
                           id: p.id,
                           code: p.code,
                           name: p.name,
+                          pricingModel: p.pricingModel || "subscription",
                           priceMonthly: p.priceMonthly || 0,
                           priceYearly: p.priceYearly || 0,
+                          taxMode: p.taxMode || "exclusive",
+                          usageUnitName: p.usageUnitName || "smsCredits",
+                          includedQuantity: p.includedQuantity || 0,
                           currency: p.currency || "INR",
                           isActive: !!p.isActive,
                           sortOrder: p.sortOrder || 1,

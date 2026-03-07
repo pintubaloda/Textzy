@@ -1,48 +1,186 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  ArrowUpRight,
+  BadgeIndianRupee,
+  Building2,
+  CreditCard,
+  Filter,
+  Layers3,
+  RefreshCcw,
+  ShieldCheck,
+  Users,
+  UsersRound,
+} from "lucide-react";
 import { toast } from "sonner";
-import { getPlatformCustomers, getPlatformCustomerDetails, getPlatformCustomerUsage, getPlatformCustomerSubscriptions, getPlatformCustomerInvoices, getPlatformCustomerMembers, getPlatformCustomerActivity, listPlatformBillingPlans, assignPlatformCustomerPlan, getPlatformUsers, getPlatformUserTenants, getPlatformCustomerFeatures, savePlatformCustomerFeatures } from "@/lib/api";
+import {
+  assignPlatformCustomerPlan,
+  getPlatformCustomerActivity,
+  getPlatformCustomerDetails,
+  getPlatformCustomerFeatures,
+  getPlatformCustomerInvoices,
+  getPlatformCustomerMembers,
+  getPlatformCustomerSubscriptions,
+  getPlatformCustomerUsage,
+  getPlatformCustomers,
+  getPlatformUserTenants,
+  getPlatformUsers,
+  listPlatformBillingPlans,
+  savePlatformCustomerFeatures,
+} from "@/lib/api";
 
-const AdminPage = () => {
-  const [q, setQ] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState([]);
+const DEFAULT_FEATURES = {
+  smsGatewayReportEnabled: false,
+};
+
+const formatMoney = (value) =>
+  `INR ${Number(value || 0).toLocaleString("en-IN", {
+    maximumFractionDigits: 0,
+  })}`;
+
+const formatDate = (value) => {
+  if (!value) return "-";
+  return new Date(value).toLocaleDateString();
+};
+
+const formatDateTime = (value) => {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+};
+
+function KpiCard({ title, value, hint, icon: Icon, tone = "orange" }) {
+  const tones = {
+    orange: "border-orange-100 bg-orange-50 text-orange-600",
+    emerald: "border-emerald-100 bg-emerald-50 text-emerald-600",
+    blue: "border-blue-100 bg-blue-50 text-blue-600",
+    violet: "border-violet-100 bg-violet-50 text-violet-600",
+  };
+
+  return (
+    <Card className="border-slate-200 shadow-sm">
+      <CardContent className="pt-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{title}</p>
+            <p className="mt-2 text-3xl font-bold text-slate-950">{value}</p>
+            <p className="mt-1 text-sm text-slate-500">{hint}</p>
+          </div>
+          <div className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl border ${tones[tone] || tones.orange}`}>
+            <Icon className="h-5 w-5" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SectionTable({ headers, rows, empty }) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead className="bg-slate-50">
+            <tr>
+              {headers.map((header) => (
+                <th key={header} className="px-4 py-3 text-left font-semibold text-slate-600">
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length ? (
+              rows
+            ) : (
+              <tr>
+                <td colSpan={headers.length} className="px-4 py-10 text-center text-slate-500">
+                  {empty}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+export default function AdminPage() {
+  const [query, setQuery] = useState("");
+  const [loadingCustomers, setLoadingCustomers] = useState(false);
+  const [customers, setCustomers] = useState([]);
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
   const [details, setDetails] = useState(null);
   const [usage, setUsage] = useState(null);
-  const [subs, setSubs] = useState([]);
+  const [subscriptions, setSubscriptions] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [members, setMembers] = useState([]);
   const [activity, setActivity] = useState([]);
   const [plans, setPlans] = useState([]);
-  const [platformUsers, setPlatformUsers] = useState([]);
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [userTenantReport, setUserTenantReport] = useState(null);
   const [assignPlanCode, setAssignPlanCode] = useState("");
   const [assignCycle, setAssignCycle] = useState("monthly");
   const [assigningPlan, setAssigningPlan] = useState(false);
-  const [tenantFeatures, setTenantFeatures] = useState({ smsGatewayReportEnabled: false });
+  const [tenantFeatures, setTenantFeatures] = useState(DEFAULT_FEATURES);
   const [savingFeatures, setSavingFeatures] = useState(false);
+  const [platformUsers, setPlatformUsers] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [userTenantReport, setUserTenantReport] = useState(null);
 
-  const loadCustomers = useCallback(async (query = "") => {
+  const loadCustomers = useCallback(async (search = "") => {
     try {
-      setLoading(true);
-      const data = await getPlatformCustomers(query);
-      setRows(Array.isArray(data) ? data : []);
-      setSelectedTenantId((prev) => (prev || (data?.[0]?.tenantId || "")));
-    } catch (e) {
-      toast.error(e.message || "Failed to load platform customers");
+      setLoadingCustomers(true);
+      const data = await getPlatformCustomers(search);
+      const rows = Array.isArray(data) ? data : [];
+      setCustomers(rows);
+      setSelectedTenantId((prev) => prev || rows[0]?.tenantId || "");
+    } catch (error) {
+      toast.error(error?.message || "Failed to load platform customers");
     } finally {
-      setLoading(false);
+      setLoadingCustomers(false);
     }
   }, []);
+
+  const loadTenantDetails = useCallback(async () => {
+    if (!selectedTenantId) return;
+    try {
+      const [
+        customerDetails,
+        customerUsage,
+        customerSubscriptions,
+        customerInvoices,
+        customerMembers,
+        customerActivity,
+        customerFeatures,
+      ] = await Promise.all([
+        getPlatformCustomerDetails(selectedTenantId),
+        getPlatformCustomerUsage(selectedTenantId, selectedMonth),
+        getPlatformCustomerSubscriptions(selectedTenantId),
+        getPlatformCustomerInvoices(selectedTenantId),
+        getPlatformCustomerMembers(selectedTenantId),
+        getPlatformCustomerActivity(selectedTenantId, 100),
+        getPlatformCustomerFeatures(selectedTenantId).catch(() => DEFAULT_FEATURES),
+      ]);
+
+      setDetails(customerDetails || null);
+      setUsage(customerUsage || null);
+      setSubscriptions(Array.isArray(customerSubscriptions) ? customerSubscriptions : []);
+      setInvoices(Array.isArray(customerInvoices) ? customerInvoices : []);
+      setMembers(Array.isArray(customerMembers) ? customerMembers : []);
+      setActivity(Array.isArray(customerActivity) ? customerActivity : []);
+      setTenantFeatures({
+        smsGatewayReportEnabled: !!customerFeatures?.smsGatewayReportEnabled,
+      });
+    } catch (error) {
+      toast.error(error?.message || "Failed to load tenant control data");
+    }
+  }, [selectedMonth, selectedTenantId]);
 
   useEffect(() => {
     loadCustomers("");
@@ -51,12 +189,12 @@ const AdminPage = () => {
   useEffect(() => {
     (async () => {
       try {
-        const p = await listPlatformBillingPlans();
-        const activePlans = Array.isArray(p) ? p.filter((x) => x.isActive) : [];
+        const data = await listPlatformBillingPlans();
+        const activePlans = Array.isArray(data) ? data.filter((plan) => plan.isActive) : [];
         setPlans(activePlans);
-        setAssignPlanCode((prev) => (prev || activePlans?.[0]?.code || ""));
+        setAssignPlanCode((prev) => prev || activePlans[0]?.code || "");
       } catch {
-        // keep screen usable even if plans endpoint fails
+        setPlans([]);
       }
     })();
   }, []);
@@ -64,391 +202,434 @@ const AdminPage = () => {
   useEffect(() => {
     (async () => {
       try {
-        const users = await getPlatformUsers("");
-        const rows = Array.isArray(users) ? users : [];
-        setPlatformUsers(rows);
-        setSelectedUserId((prev) => (prev || rows?.[0]?.userId || ""));
+        const data = await getPlatformUsers("");
+        const users = Array.isArray(data) ? data : [];
+        setPlatformUsers(users);
+        setSelectedUserId((prev) => prev || users[0]?.userId || "");
       } catch {
-        // keep page usable
+        setPlatformUsers([]);
       }
     })();
   }, []);
+
+  useEffect(() => {
+    loadTenantDetails();
+  }, [loadTenantDetails]);
 
   useEffect(() => {
     if (!selectedUserId) return;
     getPlatformUserTenants(selectedUserId)
-      .then((r) => setUserTenantReport(r || null))
+      .then((data) => setUserTenantReport(data || null))
       .catch(() => setUserTenantReport(null));
   }, [selectedUserId]);
 
-  useEffect(() => {
-    if (!selectedTenantId) return;
-    (async () => {
-      try {
-        const [d, u, s, i, m, a, f] = await Promise.all([
-          getPlatformCustomerDetails(selectedTenantId),
-          getPlatformCustomerUsage(selectedTenantId, selectedMonth),
-          getPlatformCustomerSubscriptions(selectedTenantId),
-          getPlatformCustomerInvoices(selectedTenantId),
-          getPlatformCustomerMembers(selectedTenantId),
-          getPlatformCustomerActivity(selectedTenantId, 100),
-          getPlatformCustomerFeatures(selectedTenantId).catch(() => ({ smsGatewayReportEnabled: false })),
-        ]);
-        setDetails(d || null);
-        setUsage(u || null);
-        setSubs(Array.isArray(s) ? s : []);
-        setInvoices(Array.isArray(i) ? i : []);
-        setMembers(Array.isArray(m) ? m : []);
-        setActivity(Array.isArray(a) ? a : []);
-        setTenantFeatures({
-          smsGatewayReportEnabled: !!f?.smsGatewayReportEnabled,
-        });
-      } catch (e) {
-        toast.error(e.message || "Failed to load tenant details");
-      }
-    })();
-  }, [selectedTenantId, selectedMonth]);
-
   const totals = useMemo(() => {
-    const tenants = rows.length;
-    const users = rows.reduce((acc, x) => acc + Number(x.users || 0), 0);
-    const activeUsers = rows.reduce((acc, x) => acc + Number(x.activeUsers || 0), 0);
-    const revenue = rows.reduce((acc, x) => acc + Number(x.totalRevenue || 0), 0);
-    return { tenants, users, activeUsers, revenue };
-  }, [rows]);
+    const tenants = customers.length;
+    const users = customers.reduce((acc, item) => acc + Number(item.users || 0), 0);
+    const activeUsers = customers.reduce((acc, item) => acc + Number(item.activeUsers || 0), 0);
+    const revenue = customers.reduce((acc, item) => acc + Number(item.totalRevenue || 0), 0);
+    const activePlans = customers.filter((item) => String(item.billingStatus || "").toLowerCase() === "active").length;
+    return { tenants, users, activeUsers, revenue, activePlans };
+  }, [customers]);
+
+  const selectedCustomer = useMemo(
+    () => customers.find((item) => item.tenantId === selectedTenantId) || null,
+    [customers, selectedTenantId],
+  );
+
+  const userCompanyRows = useMemo(() => {
+    return (userTenantReport?.groups || []).flatMap((group) => group.companies || []);
+  }, [userTenantReport]);
 
   return (
-    <div className="space-y-6" data-testid="admin-page">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-heading font-bold text-slate-900">Platform Owner Panel</h1>
-          <p className="text-slate-600">Monitor platform users, usage, plans, invoices and tenant activity.</p>
+    <div className="space-y-6">
+      <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(251,146,60,0.18),_transparent_28%),linear-gradient(135deg,#fff7ed_0%,#ffffff_46%,#f8fafc_100%)] p-6 shadow-sm">
+        <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+          <div className="max-w-3xl">
+            <Badge className="border-orange-200 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-orange-600 shadow-sm">
+              Platform Owner Control
+            </Badge>
+            <h1 className="mt-4 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">Operate tenants, revenue, plans and risk from one workspace.</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 md:text-base">
+              This admin console is the SaaS command layer for platform owners. Review commercial posture, inspect tenant state, assign plans, audit membership and apply tenant-level controls without switching pages.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Button variant="outline" className="h-11 rounded-xl border-slate-300 bg-white/80 px-5" onClick={() => loadCustomers(query)} disabled={loadingCustomers}>
+              <RefreshCcw className={`mr-2 h-4 w-4 ${loadingCustomers ? "animate-spin" : ""}`} />
+              Refresh portfolio
+            </Button>
+            <Button className="h-11 rounded-xl bg-orange-500 px-5 hover:bg-orange-600" onClick={() => window.location.assign("/dashboard/platform-settings?tab=billing-plans")}>
+              Billing Plans
+              <ArrowUpRight className="ml-2 h-4 w-4" />
+            </Button>
+          </div>
         </div>
-        <Button variant="outline" onClick={() => loadCustomers(q)} disabled={loading}>Refresh</Button>
+      </section>
+
+      <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-5">
+        <KpiCard title="Tenants" value={totals.tenants.toLocaleString()} hint="Customer workspaces under management" icon={Building2} />
+        <KpiCard title="Users" value={totals.users.toLocaleString()} hint={`${totals.activeUsers.toLocaleString()} active seats`} icon={Users} tone="blue" />
+        <KpiCard title="MRR" value={formatMoney(totals.revenue)} hint={`${totals.activePlans.toLocaleString()} active subscriptions`} icon={BadgeIndianRupee} tone="emerald" />
+        <KpiCard title="Plans" value={plans.length.toLocaleString()} hint="Commercial packs currently active" icon={Layers3} tone="violet" />
+        <KpiCard title="Feature Flags" value={tenantFeatures.smsGatewayReportEnabled ? "1 live" : "0 live"} hint="Selected tenant overrides" icon={ShieldCheck} tone="orange" />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card><CardContent className="pt-6"><p className="text-sm text-slate-500">Tenants</p><p className="text-2xl font-bold">{totals.tenants}</p></CardContent></Card>
-        <Card><CardContent className="pt-6"><p className="text-sm text-slate-500">Users</p><p className="text-2xl font-bold">{totals.users}</p></CardContent></Card>
-        <Card><CardContent className="pt-6"><p className="text-sm text-slate-500">Active Users</p><p className="text-2xl font-bold">{totals.activeUsers}</p></CardContent></Card>
-        <Card><CardContent className="pt-6"><p className="text-sm text-slate-500">Total Revenue</p><p className="text-2xl font-bold">₹{totals.revenue.toLocaleString()}</p></CardContent></Card>
-      </div>
-
-      <Card className="border-slate-200">
-        <CardHeader>
-          <CardTitle>Platform Customers</CardTitle>
-          <CardDescription>Select a tenant/company to view usage, purchase history and invoices.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="md:col-span-2">
-              <Label>Search tenant</Label>
-              <Input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search by company name or slug"
-                onKeyDown={(e) => { if (e.key === "Enter") loadCustomers(q); }}
-              />
+      <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader className="pb-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <CardTitle className="text-xl">Tenant Portfolio</CardTitle>
+                <CardDescription>Search and select any tenant to inspect lifecycle, billing and support posture.</CardDescription>
+              </div>
+              <div className="flex w-full flex-col gap-3 md:flex-row lg:w-auto">
+                <div className="relative min-w-[260px]">
+                  <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") loadCustomers(query);
+                    }}
+                    placeholder="Search by company, slug or owner"
+                    className="h-11 rounded-xl border-slate-300 pl-9"
+                  />
+                </div>
+                <Button variant="outline" className="h-11 rounded-xl" onClick={() => loadCustomers(query)} disabled={loadingCustomers}>
+                  Search
+                </Button>
+              </div>
             </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_280px]">
+              <SectionTable
+                headers={["Tenant", "Owner", "Plan", "Status", "Revenue"]}
+                empty="No tenants found for the current query."
+                rows={customers.map((item) => {
+                  const active = item.tenantId === selectedTenantId;
+                  return (
+                    <tr
+                      key={item.tenantId}
+                      className={`cursor-pointer border-t border-slate-100 transition ${active ? "bg-orange-50/70" : "hover:bg-slate-50"}`}
+                      onClick={() => setSelectedTenantId(item.tenantId)}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="font-semibold text-slate-900">{item.tenantName}</div>
+                        <div className="text-xs text-slate-500">{item.tenantSlug}</div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">{item.ownerName || "-"}</td>
+                      <td className="px-4 py-3 text-slate-700">{item.planName || "No Plan"}</td>
+                      <td className="px-4 py-3">
+                        <Badge variant="outline" className="border-slate-200 bg-white capitalize text-slate-700">
+                          {item.billingStatus || "unknown"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 font-medium text-slate-900">{formatMoney(item.totalRevenue || 0)}</td>
+                    </tr>
+                  );
+                })}
+              />
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Selected Tenant</p>
+                {selectedCustomer ? (
+                  <div className="mt-3 space-y-4">
+                    <div>
+                      <p className="text-lg font-bold text-slate-950">{selectedCustomer.tenantName}</p>
+                      <p className="text-sm text-slate-500">{selectedCustomer.tenantSlug}</p>
+                    </div>
+                    <div className="space-y-3 text-sm">
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                        <span className="text-slate-500">Owner</span>
+                        <span className="font-medium text-slate-900">{selectedCustomer.ownerName || "-"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                        <span className="text-slate-500">Plan</span>
+                        <span className="font-medium text-slate-900">{selectedCustomer.planName || "No Plan"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                        <span className="text-slate-500">Users</span>
+                        <span className="font-medium text-slate-900">{Number(selectedCustomer.users || 0).toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+                        <span className="text-slate-500">Revenue</span>
+                        <span className="font-medium text-slate-900">{formatMoney(selectedCustomer.totalRevenue || 0)}</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-500">Select a tenant to view its control panel.</p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="space-y-6">
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-xl">Commercial Control</CardTitle>
+              <CardDescription>Assign plans and keep each tenant on the correct billing cycle.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Plan</Label>
+                <Select value={assignPlanCode} onValueChange={setAssignPlanCode}>
+                  <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Select plan" /></SelectTrigger>
+                  <SelectContent>
+                    {plans.map((plan) => (
+                      <SelectItem key={plan.id} value={plan.code}>{plan.name} ({plan.code})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Billing Cycle</Label>
+                <Select value={assignCycle} onValueChange={setAssignCycle}>
+                  <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                    <SelectItem value="yearly">Yearly</SelectItem>
+                    <SelectItem value="lifetime">Lifetime</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                className="h-11 w-full rounded-xl bg-orange-500 hover:bg-orange-600"
+                disabled={!selectedTenantId || !assignPlanCode || assigningPlan}
+                onClick={async () => {
+                  try {
+                    setAssigningPlan(true);
+                    await assignPlatformCustomerPlan(selectedTenantId, {
+                      planCode: assignPlanCode,
+                      billingCycle: assignCycle,
+                      status: "active",
+                      resetStartDate: true,
+                    });
+                    toast.success("Plan assigned successfully.");
+                    await Promise.all([loadCustomers(query), loadTenantDetails()]);
+                  } catch (error) {
+                    toast.error(error?.message || "Failed to assign plan.");
+                  } finally {
+                    setAssigningPlan(false);
+                  }
+                }}
+              >
+                <CreditCard className="mr-2 h-4 w-4" />
+                {assigningPlan ? "Applying plan..." : "Assign Plan"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-xl">Tenant Feature Controls</CardTitle>
+              <CardDescription>Apply platform-managed feature flags at tenant level.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-950">SMS Gateway Report Visibility</p>
+                    <p className="mt-1 text-sm text-slate-500">Allow tenant users to access their own outbound SMS request and delivery reporting.</p>
+                  </div>
+                  <Badge className={tenantFeatures.smsGatewayReportEnabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}>
+                    {tenantFeatures.smsGatewayReportEnabled ? "Enabled" : "Disabled"}
+                  </Badge>
+                </div>
+                <Button
+                  variant={tenantFeatures.smsGatewayReportEnabled ? "outline" : "default"}
+                  className={`mt-4 h-10 rounded-xl ${tenantFeatures.smsGatewayReportEnabled ? "border-slate-300" : "bg-orange-500 hover:bg-orange-600"}`}
+                  disabled={!selectedTenantId || savingFeatures}
+                  onClick={async () => {
+                    try {
+                      setSavingFeatures(true);
+                      const nextValue = !tenantFeatures.smsGatewayReportEnabled;
+                      const updated = await savePlatformCustomerFeatures(selectedTenantId, {
+                        smsGatewayReportEnabled: nextValue,
+                      });
+                      setTenantFeatures({
+                        smsGatewayReportEnabled: !!updated?.smsGatewayReportEnabled,
+                      });
+                      toast.success(`SMS report ${nextValue ? "enabled" : "disabled"} for tenant.`);
+                    } catch (error) {
+                      toast.error(error?.message || "Failed to update tenant feature.");
+                    } finally {
+                      setSavingFeatures(false);
+                    }
+                  }}
+                >
+                  <ShieldCheck className="mr-2 h-4 w-4" />
+                  {savingFeatures ? "Saving..." : tenantFeatures.smsGatewayReportEnabled ? "Disable access" : "Enable access"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <Label>Select tenant</Label>
-              <Select value={selectedTenantId} onValueChange={setSelectedTenantId}>
-                <SelectTrigger><SelectValue placeholder="Select tenant" /></SelectTrigger>
+              <CardTitle className="text-xl">User to Company Mapping</CardTitle>
+              <CardDescription>Inspect which user belongs to which company, tenant and commercial plan.</CardDescription>
+            </div>
+            <div className="min-w-[280px]">
+              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                <SelectTrigger className="h-11 rounded-xl"><SelectValue placeholder="Select user" /></SelectTrigger>
                 <SelectContent>
-                  {rows.map((r) => (
-                    <SelectItem key={r.tenantId} value={r.tenantId}>{r.tenantName} ({r.tenantSlug})</SelectItem>
+                  {platformUsers.map((user) => (
+                    <SelectItem key={user.userId} value={user.userId}>{user.name} ({user.email})</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           </div>
+        </CardHeader>
+        <CardContent>
+          <SectionTable
+            headers={["Company", "Tenant", "Role", "Plan", "Billing Status"]}
+            empty="No company mappings available for the selected user."
+            rows={userCompanyRows.map((company) => (
+              <tr key={company.tenantId} className="border-t border-slate-100">
+                <td className="px-4 py-3 font-medium text-slate-900">{company.companyName || "-"}</td>
+                <td className="px-4 py-3 text-slate-700">{company.tenantName} ({company.tenantSlug})</td>
+                <td className="px-4 py-3 text-slate-700">{company.role || "-"}</td>
+                <td className="px-4 py-3 text-slate-700">{company.planName || "No Plan"}</td>
+                <td className="px-4 py-3"><Badge variant="outline" className="capitalize">{company.billingStatus || "unknown"}</Badge></td>
+              </tr>
+            ))}
+          />
+        </CardContent>
+      </Card>
 
-          <div className="rounded-lg border border-slate-200 p-4 space-y-3">
-            <p className="text-sm font-semibold text-slate-900">User Company/Tenant Plan Status</p>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <Label>Select user</Label>
-                <Select value={selectedUserId} onValueChange={setSelectedUserId}>
-                  <SelectTrigger><SelectValue placeholder="Select user" /></SelectTrigger>
-                  <SelectContent>
-                    {platformUsers.map((u) => (
-                      <SelectItem key={u.userId} value={u.userId}>{u.name} ({u.email})</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="text-sm text-slate-600 flex items-end">
-                {userTenantReport ? `Groups: ${userTenantReport.ownerGroupCount} • Tenants: ${userTenantReport.tenantCount}` : "No user report"}
-              </div>
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <CardTitle className="text-xl">Tenant Reporting Workspace</CardTitle>
+              <CardDescription>Usage, subscriptions, invoices, members and audit activity for the selected tenant.</CardDescription>
             </div>
-            <div className="rounded border border-slate-200 overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="text-left px-3 py-2">Company</th>
-                    <th className="text-left px-3 py-2">Tenant</th>
-                    <th className="text-left px-3 py-2">Role</th>
-                    <th className="text-left px-3 py-2">Plan</th>
-                    <th className="text-left px-3 py-2">Plan Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(userTenantReport?.groups || []).flatMap((g) => g.companies || []).map((c) => (
-                    <tr key={c.tenantId} className="border-t border-slate-100">
-                      <td className="px-3 py-2">{c.companyName || "-"}</td>
-                      <td className="px-3 py-2">{c.tenantName} ({c.tenantSlug})</td>
-                      <td className="px-3 py-2">{c.role}</td>
-                      <td className="px-3 py-2">{c.planName}</td>
-                      <td className="px-3 py-2"><Badge variant="outline">{c.billingStatus}</Badge></td>
-                    </tr>
-                  ))}
-                  {!((userTenantReport?.groups || []).flatMap((g) => g.companies || []).length) ? <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No tenants for selected user.</td></tr> : null}
-                </tbody>
-              </table>
+            <div className="w-full max-w-[220px]">
+              <Label className="mb-2 block">Usage month</Label>
+              <Input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} className="h-11 rounded-xl" />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="mb-5 grid gap-4 md:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tenant</p>
+              <p className="mt-2 text-lg font-bold text-slate-950">{details?.tenant?.name || "No tenant selected"}</p>
+              <p className="text-sm text-slate-500">{details?.tenant?.slug || "-"}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Subscription</p>
+              <p className="mt-2 text-lg font-bold text-slate-950">{details?.subscription?.plan?.name || "No Plan"}</p>
+              <p className="text-sm text-slate-500 capitalize">{details?.subscription?.status || "inactive"}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Members</p>
+              <p className="mt-2 text-lg font-bold text-slate-950">{members.length.toLocaleString()}</p>
+              <p className="text-sm text-slate-500">{subscriptions.length.toLocaleString()} subscription records</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Invoices</p>
+              <p className="mt-2 text-lg font-bold text-slate-950">{invoices.length.toLocaleString()}</p>
+              <p className="text-sm text-slate-500">{activity.length.toLocaleString()} audit events tracked</p>
             </div>
           </div>
 
-          {details ? (
-            <div className="rounded-lg border border-slate-200 p-4 grid md:grid-cols-4 gap-4">
-              <div><p className="text-xs text-slate-500">Tenant</p><p className="font-semibold">{details.tenant?.name}</p></div>
-              <div><p className="text-xs text-slate-500">Slug</p><p className="font-semibold">{details.tenant?.slug}</p></div>
-              <div><p className="text-xs text-slate-500">Owner</p><p className="font-semibold">{rows.find(x => x.tenantId === selectedTenantId)?.ownerName || "-"}</p></div>
-              <div><p className="text-xs text-slate-500">Plan</p><p className="font-semibold">{details.subscription?.plan?.name || "No Plan"}</p></div>
-            </div>
-          ) : null}
-
-          {selectedTenantId ? (
-            <div className="rounded-lg border border-slate-200 p-4">
-              <p className="text-sm font-semibold text-slate-900 mb-3">Assign Plan to Tenant</p>
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className="space-y-1">
-                  <Label>Plan</Label>
-                  <Select value={assignPlanCode} onValueChange={setAssignPlanCode}>
-                    <SelectTrigger><SelectValue placeholder="Select plan" /></SelectTrigger>
-                    <SelectContent>
-                      {plans.map((p) => (
-                        <SelectItem key={p.id} value={p.code}>{p.name} ({p.code})</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label>Billing Cycle</Label>
-                  <Select value={assignCycle} onValueChange={setAssignCycle}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="monthly">Monthly</SelectItem>
-                      <SelectItem value="yearly">Yearly</SelectItem>
-                      <SelectItem value="lifetime">Lifetime</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="md:col-span-2 flex items-end">
-                  <Button
-                    className="bg-orange-500 hover:bg-orange-600"
-                    disabled={!assignPlanCode || assigningPlan}
-                    onClick={async () => {
-                      try {
-                        setAssigningPlan(true);
-                        await assignPlatformCustomerPlan(selectedTenantId, {
-                          planCode: assignPlanCode,
-                          billingCycle: assignCycle,
-                          status: "active",
-                          resetStartDate: true,
-                        });
-                        toast.success("Plan assigned successfully.");
-                        const [d, s] = await Promise.all([
-                          getPlatformCustomerDetails(selectedTenantId),
-                          getPlatformCustomerSubscriptions(selectedTenantId),
-                        ]);
-                        setDetails(d || null);
-                        setSubs(Array.isArray(s) ? s : []);
-                        await loadCustomers(q);
-                      } catch (e) {
-                        toast.error(e.message || "Failed to assign plan.");
-                      } finally {
-                        setAssigningPlan(false);
-                      }
-                    }}
-                  >
-                    {assigningPlan ? "Assigning..." : "Assign Plan"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {selectedTenantId ? (
-            <div className="rounded-lg border border-slate-200 p-4">
-              <p className="text-sm font-semibold text-slate-900 mb-3">Tenant Feature Controls</p>
-              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <p className="text-sm font-medium text-slate-900">User-side SMS Message Report</p>
-                  <p className="text-xs text-slate-600">When enabled, this tenant can view their own Tata request/response logs in SMS setup page.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant={tenantFeatures.smsGatewayReportEnabled ? "default" : "secondary"}>
-                    {tenantFeatures.smsGatewayReportEnabled ? "Enabled" : "Disabled"}
-                  </Badge>
-                  <Button
-                    variant={tenantFeatures.smsGatewayReportEnabled ? "outline" : "default"}
-                    className={!tenantFeatures.smsGatewayReportEnabled ? "bg-orange-500 hover:bg-orange-600" : ""}
-                    disabled={savingFeatures}
-                    onClick={async () => {
-                      try {
-                        setSavingFeatures(true);
-                        const nextValue = !tenantFeatures.smsGatewayReportEnabled;
-                        const updated = await savePlatformCustomerFeatures(selectedTenantId, {
-                          smsGatewayReportEnabled: nextValue,
-                        });
-                        setTenantFeatures({
-                          smsGatewayReportEnabled: !!updated?.smsGatewayReportEnabled,
-                        });
-                        toast.success(`SMS report ${nextValue ? "enabled" : "disabled"} for tenant.`);
-                      } catch (e) {
-                        toast.error(e?.message || "Failed to update tenant feature.");
-                      } finally {
-                        setSavingFeatures(false);
-                      }
-                    }}
-                  >
-                    {savingFeatures ? "Saving..." : (tenantFeatures.smsGatewayReportEnabled ? "Disable" : "Enable")}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          <Tabs defaultValue="usage" className="space-y-4">
-            <TabsList>
-              <TabsTrigger value="usage">Usage</TabsTrigger>
-              <TabsTrigger value="subscriptions">Purchase History</TabsTrigger>
-              <TabsTrigger value="invoices">Invoices</TabsTrigger>
-              <TabsTrigger value="members">Users</TabsTrigger>
-              <TabsTrigger value="activity">Activity</TabsTrigger>
+          <Tabs defaultValue="usage" className="space-y-5">
+            <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2">
+              <TabsTrigger value="usage" className="rounded-xl">Usage</TabsTrigger>
+              <TabsTrigger value="subscriptions" className="rounded-xl">Subscriptions</TabsTrigger>
+              <TabsTrigger value="invoices" className="rounded-xl">Invoices</TabsTrigger>
+              <TabsTrigger value="members" className="rounded-xl">Members</TabsTrigger>
+              <TabsTrigger value="activity" className="rounded-xl">Activity</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="usage" className="space-y-3">
-              <div className="w-56">
-                <Label>Month</Label>
-                <Input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} />
-              </div>
-              <div className="grid md:grid-cols-4 gap-3">
-                {Object.entries(usage?.values || {}).map(([k, v]) => (
-                  <Card key={k}><CardContent className="pt-5"><p className="text-xs text-slate-500">{k}</p><p className="text-xl font-semibold">{Number(v || 0).toLocaleString()}</p></CardContent></Card>
+            <TabsContent value="usage" className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                {Object.entries(usage?.values || {}).map(([key, value]) => (
+                  <div key={key} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{key}</p>
+                    <p className="mt-3 text-2xl font-bold text-slate-950">{Number(value || 0).toLocaleString()}</p>
+                  </div>
                 ))}
-                {Object.keys(usage?.values || {}).length === 0 ? <p className="text-sm text-slate-500">No usage data for selected month.</p> : null}
+                {!Object.keys(usage?.values || {}).length ? (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/80 p-6 text-sm text-slate-500 md:col-span-2 xl:col-span-4">
+                    No usage has been recorded for the selected month.
+                  </div>
+                ) : null}
               </div>
             </TabsContent>
 
             <TabsContent value="subscriptions">
-              <div className="rounded-lg border border-slate-200 overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="text-left px-3 py-2">Plan</th>
-                      <th className="text-left px-3 py-2">Status</th>
-                      <th className="text-left px-3 py-2">Cycle</th>
-                      <th className="text-left px-3 py-2">Start</th>
-                      <th className="text-left px-3 py-2">Renew</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {subs.map((s) => (
-                      <tr key={s.id} className="border-t border-slate-100">
-                        <td className="px-3 py-2">{s.plan?.name || "-"}</td>
-                        <td className="px-3 py-2"><Badge variant="outline">{s.status}</Badge></td>
-                        <td className="px-3 py-2">{s.billingCycle}</td>
-                        <td className="px-3 py-2">{s.startedAtUtc ? new Date(s.startedAtUtc).toLocaleDateString() : "-"}</td>
-                        <td className="px-3 py-2">{s.renewAtUtc ? new Date(s.renewAtUtc).toLocaleDateString() : "-"}</td>
-                      </tr>
-                    ))}
-                    {subs.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">No purchase history.</td></tr> : null}
-                  </tbody>
-                </table>
-              </div>
+              <SectionTable
+                headers={["Plan", "Status", "Cycle", "Started", "Renewal"]}
+                empty="No subscription history for this tenant."
+                rows={subscriptions.map((subscription) => (
+                  <tr key={subscription.id} className="border-t border-slate-100">
+                    <td className="px-4 py-3 font-medium text-slate-900">{subscription.plan?.name || "-"}</td>
+                    <td className="px-4 py-3"><Badge variant="outline" className="capitalize">{subscription.status || "unknown"}</Badge></td>
+                    <td className="px-4 py-3 text-slate-700">{subscription.billingCycle || "-"}</td>
+                    <td className="px-4 py-3 text-slate-700">{formatDate(subscription.startedAtUtc)}</td>
+                    <td className="px-4 py-3 text-slate-700">{formatDate(subscription.renewAtUtc)}</td>
+                  </tr>
+                ))}
+              />
             </TabsContent>
 
             <TabsContent value="invoices">
-              <div className="rounded-lg border border-slate-200 overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="text-left px-3 py-2">Invoice</th>
-                      <th className="text-left px-3 py-2">Date</th>
-                      <th className="text-left px-3 py-2">Total</th>
-                      <th className="text-left px-3 py-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {invoices.map((inv) => (
-                      <tr key={inv.id} className="border-t border-slate-100">
-                        <td className="px-3 py-2">{inv.invoiceNo || inv.id}</td>
-                        <td className="px-3 py-2">{inv.createdAtUtc ? new Date(inv.createdAtUtc).toLocaleDateString() : "-"}</td>
-                        <td className="px-3 py-2">₹{Number(inv.total || 0).toLocaleString()}</td>
-                        <td className="px-3 py-2"><Badge variant="outline">{inv.status}</Badge></td>
-                      </tr>
-                    ))}
-                    {invoices.length === 0 ? <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-500">No invoices.</td></tr> : null}
-                  </tbody>
-                </table>
-              </div>
+              <SectionTable
+                headers={["Invoice", "Date", "Amount", "Status"]}
+                empty="No invoices found for this tenant."
+                rows={invoices.map((invoice) => (
+                  <tr key={invoice.id} className="border-t border-slate-100">
+                    <td className="px-4 py-3 font-medium text-slate-900">{invoice.invoiceNo || invoice.id}</td>
+                    <td className="px-4 py-3 text-slate-700">{formatDate(invoice.createdAtUtc)}</td>
+                    <td className="px-4 py-3 text-slate-900">{formatMoney(invoice.total || 0)}</td>
+                    <td className="px-4 py-3"><Badge variant="outline" className="capitalize">{invoice.status || "unknown"}</Badge></td>
+                  </tr>
+                ))}
+              />
             </TabsContent>
 
             <TabsContent value="members">
-              <div className="rounded-lg border border-slate-200 overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="text-left px-3 py-2">Name</th>
-                      <th className="text-left px-3 py-2">Email</th>
-                      <th className="text-left px-3 py-2">Role</th>
-                      <th className="text-left px-3 py-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {members.map((m) => (
-                      <tr key={m.userId} className="border-t border-slate-100">
-                        <td className="px-3 py-2">{m.name}</td>
-                        <td className="px-3 py-2">{m.email}</td>
-                        <td className="px-3 py-2">{m.role}</td>
-                        <td className="px-3 py-2"><Badge variant="outline">{m.isActive ? "active" : "inactive"}</Badge></td>
-                      </tr>
-                    ))}
-                    {members.length === 0 ? <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-500">No users.</td></tr> : null}
-                  </tbody>
-                </table>
-              </div>
+              <SectionTable
+                headers={["Name", "Email", "Role", "Status"]}
+                empty="No members found for this tenant."
+                rows={members.map((member) => (
+                  <tr key={member.userId} className="border-t border-slate-100">
+                    <td className="px-4 py-3 font-medium text-slate-900">{member.name || "-"}</td>
+                    <td className="px-4 py-3 text-slate-700">{member.email || "-"}</td>
+                    <td className="px-4 py-3 text-slate-700">{member.role || "-"}</td>
+                    <td className="px-4 py-3"><Badge variant="outline">{member.isActive ? "active" : "inactive"}</Badge></td>
+                  </tr>
+                ))}
+              />
             </TabsContent>
 
             <TabsContent value="activity">
-              <div className="rounded-lg border border-slate-200 overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="text-left px-3 py-2">Time</th>
-                      <th className="text-left px-3 py-2">Action</th>
-                      <th className="text-left px-3 py-2">Details</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activity.map((a) => (
-                      <tr key={a.id} className="border-t border-slate-100">
-                        <td className="px-3 py-2">{a.createdAtUtc ? new Date(a.createdAtUtc).toLocaleString() : "-"}</td>
-                        <td className="px-3 py-2">{a.action}</td>
-                        <td className="px-3 py-2">{a.details}</td>
-                      </tr>
-                    ))}
-                    {activity.length === 0 ? <tr><td colSpan={3} className="px-3 py-6 text-center text-slate-500">No activity found.</td></tr> : null}
-                  </tbody>
-                </table>
-              </div>
+              <SectionTable
+                headers={["Time", "Action", "Details"]}
+                empty="No activity has been recorded for this tenant."
+                rows={activity.map((event) => (
+                  <tr key={event.id} className="border-t border-slate-100">
+                    <td className="px-4 py-3 text-slate-700">{formatDateTime(event.createdAtUtc)}</td>
+                    <td className="px-4 py-3 font-medium text-slate-900">{event.action || "-"}</td>
+                    <td className="px-4 py-3 text-slate-700">{event.details || "-"}</td>
+                  </tr>
+                ))}
+              />
             </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
     </div>
   );
-};
-
-export default AdminPage;
+}

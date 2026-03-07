@@ -5,6 +5,10 @@ public class BillingInvoice
     public Guid Id { get; set; }
     public string InvoiceNo { get; set; } = string.Empty;
     public Guid TenantId { get; set; }
+    public string InvoiceKind { get; set; } = "tax_invoice";
+    public string BillingCycle { get; set; } = "monthly";
+    public string TaxMode { get; set; } = "exclusive";
+    public string ReferenceNo { get; set; } = string.Empty;
     public DateTime PeriodStartUtc { get; set; }
     public DateTime PeriodEndUtc { get; set; }
     public decimal Subtotal { get; set; }

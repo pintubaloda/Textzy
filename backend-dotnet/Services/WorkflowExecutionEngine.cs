@@ -66,6 +66,7 @@ public class WorkflowExecutionEngine(
         var (nodes, startNodeId) = ParseFlowDefinition(req.DefinitionJson);
         var trace = new List<object>();
         var log = new List<string>();
+        var allowSideEffects = !string.Equals(req.Run.Mode, "simulate", StringComparison.OrdinalIgnoreCase);
         var cursor = !string.IsNullOrWhiteSpace(req.StartNodeId)
             ? req.StartNodeId
             : ResolveResumeNodeId(nodes, startNodeId, req.IsInteractiveResume, req.ResumeSourceNodeId, req.InboundMessageText, req.InboundMatchKey);
@@ -163,7 +164,7 @@ public class WorkflowExecutionEngine(
                         nextNodeId = next
                     });
                 }
-                else if (nodeType is "text" or "text_message" or "textmessage" or "send_text" or "message" or "ask_question" or "bot_reply" or "botreply" or "buttons" or "list" or "cta_url" or "media")
+                else if (nodeType is "text" or "text_message" or "textmessage" or "send_text" or "message" or "ask_question" or "bot_reply" or "botreply" or "buttons" or "list" or "cta_url" or "media" or "location" or "form")
                 {
                     var recipient = ResolveValue(node.Config, req.Payload, "recipient");
                     if (string.IsNullOrWhiteSpace(recipient)) recipient = req.InboundRecipient;
@@ -198,7 +199,7 @@ public class WorkflowExecutionEngine(
                         }
                     }
 
-                    if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(body))
+                    if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(body) && allowSideEffects)
                     {
                         try
                         {
@@ -257,7 +258,7 @@ public class WorkflowExecutionEngine(
                             recipient,
                             bodyLength = body?.Length ?? 0,
                             skipped = true,
-                            reason = "empty_recipient_or_body"
+                            reason = !allowSideEffects ? "simulate_mode" : "empty_recipient_or_body"
                         });
                         controlDb.AuditLogs.Add(new AuditLog
                         {
@@ -265,7 +266,7 @@ public class WorkflowExecutionEngine(
                             TenantId = req.TenantId,
                             ActorUserId = Guid.Empty,
                             Action = "waba.workflow.send_skipped",
-                            Details = $"phoneNumberId={req.PhoneNumberId}; inboundMessageId={req.InboundMessageId}; flowId={req.FlowId}; nodeId={node.Id}; nodeType={nodeType}; reason=empty_recipient_or_body",
+                            Details = $"phoneNumberId={req.PhoneNumberId}; inboundMessageId={req.InboundMessageId}; flowId={req.FlowId}; nodeId={node.Id}; nodeType={nodeType}; reason={(allowSideEffects ? "empty_recipient_or_body" : "simulate_mode")}",
                             CreatedAtUtc = DateTime.UtcNow
                         });
                         await controlDb.SaveChangesAsync(ct);
@@ -292,7 +293,7 @@ public class WorkflowExecutionEngine(
                                 paramValues.Add(Interpolate(SafeString(item), req.Payload));
                         }
                     }
-                    if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(templateName))
+                    if (!string.IsNullOrWhiteSpace(recipient) && !string.IsNullOrWhiteSpace(templateName) && allowSideEffects)
                     {
                         var msg = await messaging.EnqueueAsync(new SendMessageRequest
                         {
@@ -332,7 +333,7 @@ public class WorkflowExecutionEngine(
                             recipient,
                             templateName,
                             skipped = true,
-                            reason = "empty_recipient_or_template"
+                            reason = !allowSideEffects ? "simulate_mode" : "empty_recipient_or_template"
                         });
                     }
                     next = node.OnSuccess ?? node.Next;
@@ -352,7 +353,8 @@ public class WorkflowExecutionEngine(
                 }
                 else if (nodeType is "assign_agent" or "assignagent" or "handoff")
                 {
-                    await TryAssignConversationAsync(req, node, ct);
+                    if (allowSideEffects)
+                        await TryAssignConversationAsync(req, node, ct);
                     next = node.OnSuccess ?? node.Next;
                     outputData = JsonSerializer.Serialize(new
                     {
@@ -364,9 +366,10 @@ public class WorkflowExecutionEngine(
                 }
                 else if (nodeType is "request_intervention" or "requesthelp")
                 {
-                    await TryAssignConversationAsync(req, node, ct);
+                    if (allowSideEffects)
+                        await TryAssignConversationAsync(req, node, ct);
                     var escalationMessage = ResolveValue(node.Config, req.Payload, "message", "body");
-                    if (!string.IsNullOrWhiteSpace(escalationMessage) && !string.IsNullOrWhiteSpace(req.InboundRecipient))
+                    if (allowSideEffects && !string.IsNullOrWhiteSpace(escalationMessage) && !string.IsNullOrWhiteSpace(req.InboundRecipient))
                     {
                         await messaging.EnqueueAsync(new SendMessageRequest
                         {
@@ -386,7 +389,7 @@ public class WorkflowExecutionEngine(
                 }
                 else if (nodeType is "tag_user" or "taguser")
                 {
-                    var labelsAdded = await TryTagConversationAsync(req, node, ct);
+                    var labelsAdded = allowSideEffects ? await TryTagConversationAsync(req, node, ct) : 0;
                     next = node.OnSuccess ?? node.Next;
                     outputData = JsonSerializer.Serialize(new
                     {
@@ -396,7 +399,9 @@ public class WorkflowExecutionEngine(
                 }
                 else if (nodeType is "webhook" or "api_call")
                 {
-                    var webhookResult = await TryInvokeWebhookAsync(req, node, ct);
+                    var webhookResult = allowSideEffects
+                        ? await TryInvokeWebhookAsync(req, node, ct)
+                        : (statusCode: 0, success: true, savedAs: "simulate_mode");
                     next = node.OnSuccess ?? node.Next;
                     outputData = JsonSerializer.Serialize(new
                     {
@@ -475,6 +480,11 @@ public class WorkflowExecutionEngine(
                     {
                         next = node.OnSuccess ?? node.Next;
                         outputData = JsonSerializer.Serialize(new { delaySeconds, inline = false, skipped = true, nextNodeId = next });
+                    }
+                    else if (!allowSideEffects)
+                    {
+                        next = node.OnSuccess ?? node.Next;
+                        outputData = JsonSerializer.Serialize(new { delaySeconds, inline = false, skipped = true, reason = "simulate_mode", nextNodeId = next });
                     }
                     else if (delaySeconds <= runtimeOptions.Value.InlineDelayMaxSeconds)
                     {
@@ -1148,6 +1158,17 @@ public class WorkflowExecutionEngine(
             return string.IsNullOrWhiteSpace(baseText) ? lines : $"{baseText}\n\n{lines}";
         }
 
+        if (nodeType == "location")
+        {
+            var prompt = ResolveValue(config, payload, "prompt", "body", "message", "question");
+            return string.IsNullOrWhiteSpace(prompt) ? "Please share your location." : prompt;
+        }
+
+        if (nodeType == "form")
+        {
+            return BuildFormPrompt(config, payload);
+        }
+
         if (nodeType == "bot_reply")
         {
             var replyMode = ResolveValue(config, payload, "replyMode");
@@ -1191,6 +1212,57 @@ public class WorkflowExecutionEngine(
         }
 
         return ResolveValue(config, payload, "body", "message", "question", "prompt");
+    }
+
+    private static string BuildFormPrompt(Dictionary<string, object?> config, Dictionary<string, object?> payload)
+    {
+        var title = ResolveValue(config, payload, "title", "prompt", "body", "message");
+        var labels = ReadFormFieldLabels(config.TryGetValue("fields", out var rawFields) ? rawFields : null);
+        if (labels.Count == 0)
+            return string.IsNullOrWhiteSpace(title) ? "Please share the requested details." : title;
+
+        var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(title)) lines.Add(title);
+        lines.Add("Please reply with:");
+        for (var index = 0; index < labels.Count; index++)
+            lines.Add($"{index + 1}. {labels[index]}");
+        return string.Join("\n", lines);
+    }
+
+    private static List<string> ReadFormFieldLabels(object? rawFields)
+    {
+        var labels = new List<string>();
+        if (rawFields is JsonElement json && json.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in json.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                var label = item.TryGetProperty("label", out var labelNode) ? labelNode.GetString() ?? string.Empty : string.Empty;
+                var key = item.TryGetProperty("key", out var keyNode) ? keyNode.GetString() ?? string.Empty : string.Empty;
+                var required = item.TryGetProperty("required", out var requiredNode) && requiredNode.ValueKind == JsonValueKind.True;
+                var display = !string.IsNullOrWhiteSpace(label) ? label : key;
+                if (string.IsNullOrWhiteSpace(display)) continue;
+                labels.Add(required ? $"{display} (required)" : display);
+            }
+            return labels;
+        }
+
+        if (rawFields is IEnumerable<object?> items)
+        {
+            foreach (var item in items)
+            {
+                if (item is JsonElement element)
+                {
+                    labels.AddRange(ReadFormFieldLabels(element));
+                    continue;
+                }
+
+                var text = SafeString(item).Trim();
+                if (!string.IsNullOrWhiteSpace(text)) labels.Add(text);
+            }
+        }
+
+        return labels;
     }
 
     private static Dictionary<string, string> ReadStringMap(object? raw)
