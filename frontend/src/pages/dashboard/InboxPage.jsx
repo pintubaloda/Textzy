@@ -1962,8 +1962,8 @@ const InboxPage = () => {
         </div>
       </div>
 
-      <div className="w-[280px] 2xl:w-[320px] min-w-0 flex-shrink-0 border-l border-slate-200 bg-white hidden xl:block">
-        <div className="p-6">
+      <div className="w-[280px] 2xl:w-[320px] min-w-0 flex-shrink-0 border-l border-slate-200 bg-white hidden xl:block overflow-y-auto">
+        <div className="p-6 min-h-full">
           <div className="text-center mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
             <Avatar className="w-24 h-24 mx-auto mb-4"><AvatarFallback className="bg-gradient-to-br from-orange-400 to-orange-600 text-white text-2xl font-medium">{selectedChat.avatar}</AvatarFallback></Avatar>
             <h3 className="font-semibold text-slate-900 text-base truncate">{selectedChat.name}</h3>

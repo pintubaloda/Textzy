@@ -1889,6 +1889,7 @@ export default function AutomationsPage() {
           {mode === "workflow" && <WorkflowCanvas
             flows={flows} selectedFlowId={selectedFlowId} setSelectedFlowId={setSelectedFlowId}
             selectedFlow={selectedFlow} nodes={nodes} edges={edges} selectedNodeId={selectedNodeId}
+            selectedFlowStatus={selectedFlowStatus}
             setSelectedNodeId={setSelectedNodeId} selectedNode={selectedNode} zoom={zoom} pan={pan}
             draggingNodeId={draggingNodeId} dragConnect={dragConnect} canvasRef={canvasRef}
             filteredSections={filteredSections} searchQuery={searchQuery} setSearchQuery={setSearchQuery}
@@ -2065,6 +2066,7 @@ function OverviewPage({ flows, limits, flowUsed, flowLimit, activeBots, chatbotL
 ═══════════════════════════════════════════════════════════════════════════════ */
 function WorkflowCanvas({
   flows, selectedFlowId, setSelectedFlowId, selectedFlow, nodes, edges, selectedNodeId, setSelectedNodeId,
+  selectedFlowStatus,
   selectedNode, zoom, pan, draggingNodeId, dragConnect, canvasRef, filteredSections, searchQuery, setSearchQuery,
   activeSection, setActiveSection, showPreview, setShowPreview, showVersions, setShowVersions, versions,
   outside24h, setOutside24h, triggerKeywords, setTriggerKeywords,
