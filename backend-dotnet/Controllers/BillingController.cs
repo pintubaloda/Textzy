@@ -440,6 +440,7 @@ public class BillingController(
         var provider = (cfg.TryGetValue("provider", out var p) ? p : "razorpay").Trim().ToLowerInvariant();
         var mode = NormalizeRazorpayMode(cfg.TryGetValue("mode", out var m) ? m : "test");
         var keyId = cfg.TryGetValue("keyId", out var kid) ? kid : string.Empty;
+        var isPlatformOwner = string.Equals(auth.Role, RolePermissionCatalog.SuperAdmin, StringComparison.OrdinalIgnoreCase);
 
         return Ok(new
         {
@@ -448,7 +449,7 @@ public class BillingController(
             razorpay = new
             {
                 enabled = provider == "razorpay" && !string.IsNullOrWhiteSpace(keyId),
-                keyId
+                keyId = isPlatformOwner ? keyId : string.Empty
             }
         });
     }

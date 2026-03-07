@@ -54,6 +54,7 @@ const IntegrationsPage = () => {
     ipWhitelist: "",
   });
   const session = getSession();
+  const isSuperAdmin = String(session?.role || "").toLowerCase() === "super_admin";
 
   const generateToken = (length = 32) => {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -168,6 +169,17 @@ const IntegrationsPage = () => {
   useEffect(() => {
     let active = true;
     (async () => {
+      if (!isSuperAdmin) {
+        if (!active) return;
+        setApiConfig({
+          enabled: false,
+          apiUsername: "",
+          apiPassword: "",
+          apiKey: "",
+          ipWhitelist: "",
+        });
+        return;
+      }
       try {
         const res = await getPlatformSettings("api-integration");
         if (!active) return;
@@ -187,7 +199,7 @@ const IntegrationsPage = () => {
     return () => {
       active = false;
     };
-  }, []);
+  }, [isSuperAdmin]);
 
   const handleCopyApiKey = () => {
     if (!apiConfig.apiKey) {
@@ -217,6 +229,10 @@ const IntegrationsPage = () => {
   };
 
   const saveApiIntegration = async () => {
+    if (!isSuperAdmin) {
+      toast.error("Public API credentials are managed by platform owner.");
+      return;
+    }
     try {
       setSavingApiConfig(true);
       await savePlatformSettings("api-integration", {
@@ -270,6 +286,11 @@ const IntegrationsPage = () => {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {!isSuperAdmin ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                Public API credentials are managed by platform owner. Tenant users can use project slug and API documentation, but cannot view or edit platform credentials here.
+              </div>
+            ) : null}
             <div className="flex items-center justify-between rounded-lg border border-slate-200 p-3">
               <div>
                 <Label className="text-sm font-medium">Enable Public API</Label>
@@ -279,6 +300,7 @@ const IntegrationsPage = () => {
                 checked={apiConfig.enabled}
                 onCheckedChange={(checked) => setApiConfig((p) => ({ ...p, enabled: checked }))}
                 data-testid="public-api-enabled-switch"
+                disabled={!isSuperAdmin}
               />
             </div>
 
@@ -307,14 +329,15 @@ const IntegrationsPage = () => {
                       value={apiConfig.apiUsername}
                       onChange={(e) => setApiConfig((p) => ({ ...p, apiUsername: e.target.value }))}
                       placeholder="MONEYART"
+                      disabled={!isSuperAdmin}
                     />
-                    <Button variant="ghost" size="icon" onClick={() => setShowApiUsername((v) => !v)} data-testid="toggle-api-username">
+                    <Button variant="ghost" size="icon" onClick={() => setShowApiUsername((v) => !v)} data-testid="toggle-api-username" disabled={!apiConfig.apiUsername}>
                       {showApiUsername ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={handleCopyApiUsername} data-testid="copy-api-username">
+                    <Button variant="ghost" size="icon" onClick={handleCopyApiUsername} data-testid="copy-api-username" disabled={!apiConfig.apiUsername}>
                       <Copy className="w-4 h-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={regenerateApiUsername} data-testid="regen-api-username">
+                    <Button variant="ghost" size="icon" onClick={regenerateApiUsername} data-testid="regen-api-username" disabled={!isSuperAdmin}>
                       <RefreshCw className="w-4 h-4" />
                     </Button>
                   </div>
@@ -327,14 +350,15 @@ const IntegrationsPage = () => {
                       value={apiConfig.apiPassword}
                       onChange={(e) => setApiConfig((p) => ({ ...p, apiPassword: e.target.value }))}
                       placeholder="Enter API password"
+                      disabled={!isSuperAdmin}
                     />
-                    <Button variant="ghost" size="icon" onClick={() => setShowApiPassword((v) => !v)} data-testid="toggle-api-password">
+                    <Button variant="ghost" size="icon" onClick={() => setShowApiPassword((v) => !v)} data-testid="toggle-api-password" disabled={!apiConfig.apiPassword}>
                       {showApiPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={handleCopyApiPassword} data-testid="copy-api-password">
+                    <Button variant="ghost" size="icon" onClick={handleCopyApiPassword} data-testid="copy-api-password" disabled={!apiConfig.apiPassword}>
                       <Copy className="w-4 h-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={regenerateApiPassword} data-testid="regen-api-password">
+                    <Button variant="ghost" size="icon" onClick={regenerateApiPassword} data-testid="regen-api-password" disabled={!isSuperAdmin}>
                       <RefreshCw className="w-4 h-4" />
                     </Button>
                   </div>
@@ -348,14 +372,15 @@ const IntegrationsPage = () => {
                       onChange={(e) => setApiConfig((p) => ({ ...p, apiKey: e.target.value }))}
                       className="font-mono text-sm"
                       placeholder="tx_live_sk_xxxxx"
+                      disabled={!isSuperAdmin}
                     />
-                    <Button variant="ghost" size="icon" onClick={() => setShowApiKey(!showApiKey)} data-testid="toggle-api-key">
+                    <Button variant="ghost" size="icon" onClick={() => setShowApiKey(!showApiKey)} data-testid="toggle-api-key" disabled={!apiConfig.apiKey}>
                       {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={handleCopyApiKey} data-testid="copy-api-key">
+                    <Button variant="ghost" size="icon" onClick={handleCopyApiKey} data-testid="copy-api-key" disabled={!apiConfig.apiKey}>
                       <Copy className="w-4 h-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={regenerateApiKey} data-testid="regen-api-key">
+                    <Button variant="ghost" size="icon" onClick={regenerateApiKey} data-testid="regen-api-key" disabled={!isSuperAdmin}>
                       <RefreshCw className="w-4 h-4" />
                     </Button>
                   </div>
@@ -367,14 +392,15 @@ const IntegrationsPage = () => {
                     value={apiConfig.ipWhitelist}
                     onChange={(e) => setApiConfig((p) => ({ ...p, ipWhitelist: e.target.value }))}
                     placeholder={"203.0.113.10\n203.0.113.0/24"}
+                    disabled={!isSuperAdmin}
                   />
                 </div>
               </div>
             </div>
             <div className="flex items-center justify-between">
-              <Button variant="outline" className="gap-2" onClick={saveApiIntegration} disabled={savingApiConfig} data-testid="save-public-api-btn">
+              <Button variant="outline" className="gap-2" onClick={saveApiIntegration} disabled={savingApiConfig || !isSuperAdmin} data-testid="save-public-api-btn">
                 <RefreshCw className={`w-4 h-4 ${savingApiConfig ? "animate-spin" : ""}`} />
-                {savingApiConfig ? "Saving..." : "Save Settings"}
+                {savingApiConfig ? "Saving..." : isSuperAdmin ? "Save Settings" : "Managed by Platform"}
               </Button>
               <Button variant="outline" className="gap-2" data-testid="view-docs-btn" onClick={openApiDocs}>
                 <Code className="w-4 h-4" />
