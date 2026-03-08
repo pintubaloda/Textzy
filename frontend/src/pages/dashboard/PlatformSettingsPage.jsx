@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { BadgeIndianRupee, Boxes, Layers3, ShieldCheck, Sparkles } from "lucide-react";
+import { BadgeIndianRupee, BookOpenText, Boxes, ExternalLink, FileText, Layers3, ShieldCheck, Sparkles } from "lucide-react";
 import {
   getPlatformSettings,
   savePlatformSettings,
@@ -235,6 +238,7 @@ const PlatformSettingsPage = () => {
   const [wabaTenantProbe, setWabaTenantProbe] = useState(null);
   const [mobileTelemetryRows, setMobileTelemetryRows] = useState([]);
   const [mobileTelemetryDays, setMobileTelemetryDays] = useState("1");
+  const [docViewer, setDocViewer] = useState({ open: false, type: "sms" });
   const [requestLogFilters, setRequestLogFilters] = useState({
     tenantId: "",
     method: "",
@@ -649,9 +653,21 @@ const PlatformSettingsPage = () => {
 
   return (
     <div className="space-y-4" data-testid="platform-settings-page">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>
-          <p className="text-sm text-slate-500">Platform owner level global configuration.</p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>
+            <p className="text-sm text-slate-500">Platform owner level global configuration.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setDocViewer({ open: true, type: "sms" })}>
+              <BookOpenText className="mr-2 h-4 w-4" />
+              API Docs
+            </Button>
+            <Button variant="outline" onClick={() => window.open("/docs/index.html", "_blank", "noopener,noreferrer")}>
+              <ExternalLink className="mr-2 h-4 w-4" />
+              Docs Index
+            </Button>
+          </div>
         </div>
 
       {tab === "waba-master" && (
@@ -800,6 +816,90 @@ const PlatformSettingsPage = () => {
           </CardContent>
         </Card>
       )}
+
+      {tab === "integration-catalog" && (
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle>Documentation Center</CardTitle>
+            <CardDescription>Use the same professional references your tenants use, with direct access to SMS and WhatsApp integration documentation.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 xl:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium text-slate-950">SMS API Reference</p>
+                  <p className="mt-1 text-sm text-slate-500">Public SMS API, DLT mapping, Tata delivery flow, sender registry, callbacks, and rollout checklist.</p>
+                </div>
+                <FileText className="h-5 w-5 text-orange-500" />
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button className="bg-orange-500 hover:bg-orange-600" onClick={() => setDocViewer({ open: true, type: "sms" })}>Read in App</Button>
+                <Button variant="outline" onClick={() => window.open("/docs/sms-api-reference.html", "_blank", "noopener,noreferrer")}>Open Full Page</Button>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium text-slate-950">WhatsApp API Reference</p>
+                  <p className="mt-1 text-sm text-slate-500">Messaging, templates, flows, automation, webhooks, diagnostics, and production operations.</p>
+                </div>
+                <FileText className="h-5 w-5 text-sky-500" />
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button className="bg-orange-500 hover:bg-orange-600" onClick={() => setDocViewer({ open: true, type: "whatsapp" })}>Read in App</Button>
+                <Button variant="outline" onClick={() => window.open("/docs/whatsapp-api-reference.html", "_blank", "noopener,noreferrer")}>Open Full Page</Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Dialog open={docViewer.open} onOpenChange={(open) => setDocViewer((prev) => ({ ...prev, open }))}>
+        <DialogContent className="max-w-6xl overflow-hidden border-slate-200 p-0">
+          <DialogHeader className="border-b border-slate-200 bg-[linear-gradient(135deg,#fff7ed_0%,#ffffff_60%,#f8fafc_100%)] px-6 py-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <DialogTitle className="text-xl font-bold text-slate-950">
+                  {docViewer.type === "sms" ? "SMS API Reference" : "WhatsApp API Reference"}
+                </DialogTitle>
+                <DialogDescription className="mt-1 text-sm text-slate-600">
+                  {docViewer.type === "sms"
+                    ? "Reference for SMS public API, DLT registry, Tata routing, delivery callbacks, and production rollout."
+                    : "Reference for WhatsApp messaging, templates, flows, media, webhooks, diagnostics, and operations."}
+                </DialogDescription>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant={docViewer.type === "sms" ? "default" : "outline"} className={docViewer.type === "sms" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setDocViewer({ open: true, type: "sms" })}>
+                  SMS API
+                </Button>
+                <Button variant={docViewer.type === "whatsapp" ? "default" : "outline"} className={docViewer.type === "whatsapp" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setDocViewer({ open: true, type: "whatsapp" })}>
+                  WhatsApp API
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    window.open(
+                      docViewer.type === "sms" ? "/docs/sms-api-reference.html" : "/docs/whatsapp-api-reference.html",
+                      "_blank",
+                      "noopener,noreferrer"
+                    )
+                  }
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Open Full Page
+                </Button>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="h-[78vh] bg-slate-50">
+            <iframe
+              title={docViewer.type === "sms" ? "SMS API Reference" : "WhatsApp API Reference"}
+              src={docViewer.type === "sms" ? "/docs/sms-api-reference.html" : "/docs/whatsapp-api-reference.html"}
+              className="h-full w-full border-0 bg-white"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {tab === "payment-gateway" && (
         <Card className="border-slate-200">

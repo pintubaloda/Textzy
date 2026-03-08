@@ -2,14 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   BadgeCheck,
+  BookOpenText,
   CreditCard,
   ExternalLink,
+  FileText,
   Key,
   LockKeyhole,
   Plug,
@@ -28,6 +31,7 @@ import {
   getSession,
   savePlatformSettings,
   setupAuthenticator,
+  ensureStepUp,
   verifyAuthenticator,
 } from "@/lib/api";
 
@@ -78,6 +82,7 @@ const IntegrationsPage = () => {
   const [showApiUsername, setShowApiUsername] = useState(false);
   const [showApiPassword, setShowApiPassword] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [docViewer, setDocViewer] = useState({ open: false, type: "sms" });
 
   const categories = useMemo(() => {
     const values = new Set(["all"]);
@@ -156,6 +161,21 @@ const IntegrationsPage = () => {
     return out;
   };
 
+  const regenerateProtectedToken = async (label, apply) => {
+    if (!isSuperAdmin) return;
+    try {
+      await ensureStepUp({
+        action: "api_credentials_regenerate",
+        title: "Verify credential regeneration",
+        message: `Enter your authenticator code to regenerate ${label}.`,
+      });
+      apply();
+      toast.success(`${label} regenerated locally. Save to persist the new credential.`);
+    } catch (e) {
+      toast.error(e?.message || `Failed to regenerate ${label}.`);
+    }
+  };
+
   const saveApiIntegration = async () => {
     if (!isSuperAdmin) return toast.error("Public API credentials are managed by platform owner.");
     try {
@@ -228,7 +248,8 @@ const IntegrationsPage = () => {
           <Badge variant="outline" className="rounded-full border-slate-200 px-3 py-1 text-slate-700">
             Tenant slug: {session?.tenantSlug || "n/a"}
           </Badge>
-          <Button variant="outline" onClick={() => window.open("/docs/api-integration.html", "_blank", "noopener,noreferrer")}>
+          <Button variant="outline" onClick={() => setDocViewer({ open: true, type: "sms" })}>
+            <BookOpenText className="mr-2 h-4 w-4" />
             View API Docs
           </Button>
         </div>
@@ -413,6 +434,57 @@ const IntegrationsPage = () => {
 
           <Card className="border-slate-200 shadow-sm">
             <CardHeader>
+              <CardTitle>Documentation Center</CardTitle>
+              <CardDescription>Professional API references for SMS and WhatsApp integrations, available directly inside the platform.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-slate-950">SMS API Reference</p>
+                      <p className="mt-1 text-sm text-slate-500">Simple URL mode, DLT mapping, Tata flow, sender registry, template registry, webhook model, and production checklist.</p>
+                    </div>
+                    <FileText className="h-5 w-5 text-orange-500" />
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button className="bg-orange-500 hover:bg-orange-600" onClick={() => setDocViewer({ open: true, type: "sms" })}>Read in App</Button>
+                    <Button variant="outline" onClick={() => window.open("/docs/sms-api-reference.html", "_blank", "noopener,noreferrer")}>Open Full Page</Button>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-slate-950">WhatsApp API Reference</p>
+                      <p className="mt-1 text-sm text-slate-500">Messaging, templates, media, webhook, flow builder, automation, smoke testing, diagnostics, and production operations.</p>
+                    </div>
+                    <FileText className="h-5 w-5 text-sky-500" />
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button className="bg-orange-500 hover:bg-orange-600" onClick={() => setDocViewer({ open: true, type: "whatsapp" })}>Read in App</Button>
+                    <Button variant="outline" onClick={() => window.open("/docs/whatsapp-api-reference.html", "_blank", "noopener,noreferrer")}>Open Full Page</Button>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-slate-900">Documentation Index</p>
+                      <p className="mt-1 text-slate-500">Use the documentation landing page for quick access to HTML references, markdown source, and Postman import files.</p>
+                    </div>
+                    <Button variant="outline" onClick={() => window.open("/docs/index.html", "_blank", "noopener,noreferrer")}>
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      Open Index
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
               <CardTitle>Public API Access</CardTitle>
               <CardDescription>Simple URL-based API credentials managed at platform level.</CardDescription>
             </CardHeader>
@@ -431,9 +503,9 @@ const IntegrationsPage = () => {
               </div>
               <div className="grid gap-4">
                 {[
-                  { label: "API Username", key: "apiUsername", visible: showApiUsername, setVisible: setShowApiUsername, regenerate: () => setApiConfig((prev) => ({ ...prev, apiUsername: regenerateToken("tx_user_", 10) })) },
-                  { label: "API Password", key: "apiPassword", visible: showApiPassword, setVisible: setShowApiPassword, regenerate: () => setApiConfig((prev) => ({ ...prev, apiPassword: regenerateToken("tx_pw_", 32) })) },
-                  { label: "API Key", key: "apiKey", visible: showApiKey, setVisible: setShowApiKey, regenerate: () => setApiConfig((prev) => ({ ...prev, apiKey: regenerateToken("tx_live_sk_", 36) })) },
+                  { label: "API Username", key: "apiUsername", visible: showApiUsername, setVisible: setShowApiUsername, regenerate: () => regenerateProtectedToken("API Username", () => setApiConfig((prev) => ({ ...prev, apiUsername: regenerateToken("tx_user_", 10) }))) },
+                  { label: "API Password", key: "apiPassword", visible: showApiPassword, setVisible: setShowApiPassword, regenerate: () => regenerateProtectedToken("API Password", () => setApiConfig((prev) => ({ ...prev, apiPassword: regenerateToken("tx_pw_", 32) }))) },
+                  { label: "API Key", key: "apiKey", visible: showApiKey, setVisible: setShowApiKey, regenerate: () => regenerateProtectedToken("API Key", () => setApiConfig((prev) => ({ ...prev, apiKey: regenerateToken("tx_live_sk_", 36) }))) },
                 ].map((item) => (
                   <div key={item.key} className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -466,6 +538,53 @@ const IntegrationsPage = () => {
           </Card>
         </div>
       </div>
+
+      <Dialog open={docViewer.open} onOpenChange={(open) => setDocViewer((prev) => ({ ...prev, open }))}>
+        <DialogContent className="max-w-6xl border-slate-200 p-0 overflow-hidden">
+          <DialogHeader className="border-b border-slate-200 bg-[linear-gradient(135deg,#fff7ed_0%,#ffffff_60%,#f8fafc_100%)] px-6 py-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <DialogTitle className="text-xl font-bold text-slate-950">
+                  {docViewer.type === "sms" ? "SMS API Reference" : "WhatsApp API Reference"}
+                </DialogTitle>
+                <DialogDescription className="mt-1 text-sm text-slate-600">
+                  {docViewer.type === "sms"
+                    ? "Reference for SMS public API, DLT registry, Tata mapping, sender setup, webhook flow, and production rollout."
+                    : "Reference for WhatsApp messaging, templates, media, flow builder, webhook processing, diagnostics, and operational readiness."}
+                </DialogDescription>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant={docViewer.type === "sms" ? "default" : "outline"} className={docViewer.type === "sms" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setDocViewer({ open: true, type: "sms" })}>
+                  SMS API
+                </Button>
+                <Button variant={docViewer.type === "whatsapp" ? "default" : "outline"} className={docViewer.type === "whatsapp" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setDocViewer({ open: true, type: "whatsapp" })}>
+                  WhatsApp API
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    window.open(
+                      docViewer.type === "sms" ? "/docs/sms-api-reference.html" : "/docs/whatsapp-api-reference.html",
+                      "_blank",
+                      "noopener,noreferrer"
+                    )
+                  }
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Open Full Page
+                </Button>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="h-[78vh] bg-slate-50">
+            <iframe
+              title={docViewer.type === "sms" ? "SMS API Reference" : "WhatsApp API Reference"}
+              src={docViewer.type === "sms" ? "/docs/sms-api-reference.html" : "/docs/whatsapp-api-reference.html"}
+              className="h-full w-full border-0 bg-white"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
