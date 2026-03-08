@@ -55,6 +55,29 @@ function categoryBadge(category) {
   return CATEGORY_META[category]?.title || category;
 }
 
+function resolveStatusMeta(item) {
+  const status = String(item?.activationStatus || "").toLowerCase();
+  if (status === "active") {
+    return {
+      label: "Purchased",
+      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      hint: "Enabled for this tenant"
+    };
+  }
+  if (status === "available") {
+    return {
+      label: "Available",
+      className: "border-amber-200 bg-amber-50 text-amber-700",
+      hint: "Not purchased or assigned yet"
+    };
+  }
+  return {
+    label: "Unavailable",
+    className: "border-slate-200 bg-slate-100 text-slate-600",
+    hint: "Disabled by platform owner"
+  };
+}
+
 const IntegrationsPage = () => {
   const session = getSession();
   const isSuperAdmin = String(session?.role || "").toLowerCase() === "super_admin";
@@ -207,6 +230,7 @@ const IntegrationsPage = () => {
                   {visibleItems.map((item) => {
                     const slug = String(item.slug || "");
                     const isSecurity = String(item.category || "").toLowerCase() === "security";
+                    const statusMeta = resolveStatusMeta(item);
                     const isCurrentProvider = authenticator?.enabled && (
                       (slug === "google-authenticator" && authenticator.provider === "google_authenticator") ||
                       (slug === "microsoft-authenticator" && authenticator.provider === "microsoft_authenticator")
@@ -224,8 +248,8 @@ const IntegrationsPage = () => {
                                 <p className="mt-1 text-sm text-slate-500">{item.description}</p>
                               </div>
                             </div>
-                            <Badge variant={item.isActive ? "outline" : "secondary"} className={item.isActive ? "border-emerald-200 text-emerald-700" : ""}>
-                              {item.isActive ? "Active" : "Inactive"}
+                            <Badge variant="outline" className={statusMeta.className}>
+                              {statusMeta.label}
                             </Badge>
                           </div>
                           <div className="flex flex-wrap gap-2 text-xs">
@@ -234,6 +258,7 @@ const IntegrationsPage = () => {
                               {priceLabel(item)}
                             </Badge>
                           </div>
+                          <p className="text-xs text-slate-500">{statusMeta.hint}</p>
 
                           {isSecurity ? (
                             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -274,7 +299,11 @@ const IntegrationsPage = () => {
                                 </div>
                               ) : (
                                 <div className="space-y-3">
-                                  <p className="text-sm text-slate-600">Scan a QR in {item.name} and verify the 6-digit code. Manual secret entry is not required.</p>
+                                  <p className="text-sm text-slate-600">
+                                    {item.isActive
+                                      ? `Scan a QR in ${item.name} and verify the 6-digit code. Manual secret entry is not required.`
+                                      : "This security add-on is not assigned to this tenant yet. Contact platform owner to enable it."}
+                                  </p>
                                   <Button className="bg-orange-500 hover:bg-orange-600" disabled={setupState.busy || item.isActive === false} onClick={() => beginAuthenticatorSetup(slug === "google-authenticator" ? "google_authenticator" : "microsoft_authenticator")}>
                                     {setupState.busy ? "Preparing..." : `Set up ${item.name}`}
                                   </Button>
@@ -284,11 +313,17 @@ const IntegrationsPage = () => {
                           ) : (
                             <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 p-4">
                               <div>
-                                <p className="font-medium text-slate-900">{String(item.pricingType || "free") === "paid" ? "Commercial add-on" : "Included with platform"}</p>
+                                <p className="font-medium text-slate-900">
+                                  {item.isActive
+                                    ? (String(item.pricingType || "free") === "paid" ? "Purchased add-on" : "Enabled for this tenant")
+                                    : (String(item.pricingType || "free") === "paid" ? "Commercial add-on" : "Available only after assignment")}
+                                </p>
                                 <p className="text-sm text-slate-500">
-                                  {String(item.pricingType || "free") === "paid"
-                                    ? `Commercialized by platform owner as ${String(item.billingFrequency || "monthly").replace("_", " ")} add-on.`
-                                    : "Activation and support are managed from the platform side."}
+                                  {item.isActive
+                                    ? "This integration is currently assigned and available for this tenant."
+                                    : String(item.pricingType || "free") === "paid"
+                                      ? `Commercialized by platform owner as ${String(item.billingFrequency || "monthly").replace("_", " ")} add-on.`
+                                      : "Platform owner must assign this integration before tenant-side use."}
                                 </p>
                               </div>
                               <ExternalLink className="h-5 w-5 text-slate-400" />

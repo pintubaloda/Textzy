@@ -38,8 +38,7 @@ public class AuthMiddleware(RequestDelegate next)
         var isAuthRefreshPath = path.StartsWith("/api/auth/refresh", StringComparison.OrdinalIgnoreCase);
         var isProjectPath = path.StartsWith("/api/auth/projects", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/switch-project", StringComparison.OrdinalIgnoreCase);
-        var isPublicTenantPath = path.StartsWith("/api/tenants", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/public", StringComparison.OrdinalIgnoreCase);
+        var isPublicTenantPath = path.StartsWith("/api/public", StringComparison.OrdinalIgnoreCase);
         var isSwaggerPath = path.StartsWith("/swagger", StringComparison.OrdinalIgnoreCase);
         var isHubPath = path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase);
         var isWabaWebhookPath = path.StartsWith("/api/waba/webhook", StringComparison.OrdinalIgnoreCase);
