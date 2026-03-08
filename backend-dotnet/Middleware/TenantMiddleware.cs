@@ -33,14 +33,9 @@ public class TenantMiddleware(RequestDelegate next)
         {
             var msgTenantSlug = context.Request.Query["tenantSlug"].FirstOrDefault()?.Trim();
             if (string.IsNullOrWhiteSpace(msgTenantSlug))
-                msgTenantSlug = context.Request.Headers["X-Tenant-Slug"].FirstOrDefault()?.Trim();
-            if (string.IsNullOrWhiteSpace(msgTenantSlug))
-                msgTenantSlug = context.Request.Query["user"].FirstOrDefault()?.Trim();
-
-            if (string.IsNullOrWhiteSpace(msgTenantSlug))
             {
                 context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                await context.Response.WriteAsync("tenantSlug (or user) query parameter is required.");
+                await context.Response.WriteAsync("tenantSlug query parameter is required.");
                 return;
             }
 

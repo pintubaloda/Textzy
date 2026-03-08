@@ -9,5 +9,7 @@ public class SessionToken
     public DateTime ExpiresAtUtc { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
     public DateTime? RevokedAtUtc { get; set; }
+    public DateTime? TwoFactorVerifiedAtUtc { get; set; }
+    public DateTime? StepUpVerifiedAtUtc { get; set; }
     public bool IsRevoked => RevokedAtUtc.HasValue;
 }

@@ -369,7 +369,6 @@ const InboxPage = () => {
 
   const realtimeSession = getSession();
   const realtimeTenantSlug = String(realtimeSession?.tenantSlug || "").trim();
-  const realtimeAccessToken = String(realtimeSession?.accessToken || realtimeSession?.token || "");
 
   const mapConversation = (x) => {
     const id = x.id ?? x.Id ?? "";
@@ -1168,7 +1167,6 @@ const InboxPage = () => {
     const connection = new signalR.HubConnectionBuilder()
       .withUrl(`${baseUrl}/hubs/inbox?tenantSlug=${encodeURIComponent(realtimeTenantSlug)}`, {
         withCredentials: true,
-        accessTokenFactory: () => realtimeAccessToken,
         transport: signalR.HttpTransportType.ServerSentEvents | signalR.HttpTransportType.LongPolling,
       })
       .withAutomaticReconnect()
@@ -1290,7 +1288,7 @@ const InboxPage = () => {
         }
       });
     };
-  }, [realtimeTenantSlug, realtimeAccessToken]);
+  }, [realtimeTenantSlug]);
 
   useEffect(() => {
     const conn = signalRConnectionRef.current;

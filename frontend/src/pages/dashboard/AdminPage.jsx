@@ -17,6 +17,7 @@ import {
   ExternalLink,
   Filter,
   FileText,
+  KeyRound,
   Layers3,
   RefreshCcw,
   ShieldCheck,
@@ -139,6 +140,11 @@ export default function AdminPage() {
   const [companySettings, setCompanySettings] = useState({
     billingEmail: "",
     billingPhone: "",
+    publicApiEnabled: false,
+    apiUsername: "",
+    apiPassword: "",
+    apiKey: "",
+    apiIpWhitelist: "",
     taxRatePercent: 18,
     isTaxExempt: false,
     isReverseCharge: false,
@@ -190,6 +196,11 @@ export default function AdminPage() {
       setCompanySettings({
         billingEmail: customerCompanySettings?.billingEmail || "",
         billingPhone: customerCompanySettings?.billingPhone || "",
+        publicApiEnabled: !!customerCompanySettings?.publicApiEnabled,
+        apiUsername: customerCompanySettings?.apiUsername || "",
+        apiPassword: customerCompanySettings?.apiPassword || "",
+        apiKey: customerCompanySettings?.apiKey || "",
+        apiIpWhitelist: customerCompanySettings?.apiIpWhitelist || "",
         taxRatePercent: Number(customerCompanySettings?.taxRatePercent ?? 18),
         isTaxExempt: !!customerCompanySettings?.isTaxExempt,
         isReverseCharge: !!customerCompanySettings?.isReverseCharge,
@@ -265,6 +276,22 @@ export default function AdminPage() {
   const userCompanyRows = useMemo(() => {
     return (userTenantReport?.groups || []).flatMap((group) => group.companies || []);
   }, [userTenantReport]);
+
+  const generateToken = (prefix, length) => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let value = prefix;
+    for (let i = 0; i < length; i += 1) value += chars.charAt(Math.floor(Math.random() * chars.length));
+    return value;
+  };
+
+  const copyValue = async (label, value) => {
+    if (!value) {
+      toast.error(`${label} is empty.`);
+      return;
+    }
+    await navigator.clipboard.writeText(value);
+    toast.success(`${label} copied.`);
+  };
 
   return (
     <div className="space-y-6">
@@ -595,6 +622,93 @@ export default function AdminPage() {
                   </div>
                 </div>
               </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-slate-900">Tenant Public API</p>
+                    <p className="text-xs text-slate-500">Simple tenant-scoped credentials for SMS and WhatsApp API use. Tenant slug stays explicit, but credentials are isolated per tenant.</p>
+                  </div>
+                  <Switch
+                    checked={!!companySettings.publicApiEnabled}
+                    onCheckedChange={(value) => setCompanySettings((prev) => ({ ...prev, publicApiEnabled: !!value }))}
+                    disabled={!selectedTenantId}
+                  />
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label>API Username</Label>
+                      <div className="flex gap-2">
+                        <Button type="button" size="sm" variant="outline" onClick={() => setCompanySettings((prev) => ({ ...prev, apiUsername: generateToken("tx_user_", 10) }))}>
+                          <RefreshCcw className="mr-2 h-4 w-4" />
+                          Generate
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={() => copyValue("API username", companySettings.apiUsername)}>
+                          <KeyRound className="mr-2 h-4 w-4" />
+                          Copy
+                        </Button>
+                      </div>
+                    </div>
+                    <Input
+                      value={companySettings.apiUsername}
+                      onChange={(event) => setCompanySettings((prev) => ({ ...prev, apiUsername: event.target.value }))}
+                      placeholder="tx_user_xxxx"
+                      disabled={!selectedTenantId}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label>API Password</Label>
+                      <div className="flex gap-2">
+                        <Button type="button" size="sm" variant="outline" onClick={() => setCompanySettings((prev) => ({ ...prev, apiPassword: generateToken("tx_pw_", 28) }))}>
+                          <RefreshCcw className="mr-2 h-4 w-4" />
+                          Generate
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={() => copyValue("API password", companySettings.apiPassword)}>
+                          <KeyRound className="mr-2 h-4 w-4" />
+                          Copy
+                        </Button>
+                      </div>
+                    </div>
+                    <Input
+                      value={companySettings.apiPassword}
+                      onChange={(event) => setCompanySettings((prev) => ({ ...prev, apiPassword: event.target.value }))}
+                      placeholder="tx_pw_xxxx"
+                      disabled={!selectedTenantId}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label>API Key</Label>
+                      <div className="flex gap-2">
+                        <Button type="button" size="sm" variant="outline" onClick={() => setCompanySettings((prev) => ({ ...prev, apiKey: generateToken("tx_live_sk_", 30) }))}>
+                          <RefreshCcw className="mr-2 h-4 w-4" />
+                          Generate
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={() => copyValue("API key", companySettings.apiKey)}>
+                          <KeyRound className="mr-2 h-4 w-4" />
+                          Copy
+                        </Button>
+                      </div>
+                    </div>
+                    <Input
+                      value={companySettings.apiKey}
+                      onChange={(event) => setCompanySettings((prev) => ({ ...prev, apiKey: event.target.value }))}
+                      placeholder="tx_live_sk_xxxx"
+                      disabled={!selectedTenantId}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>IP Whitelist</Label>
+                    <Input
+                      value={companySettings.apiIpWhitelist}
+                      onChange={(event) => setCompanySettings((prev) => ({ ...prev, apiIpWhitelist: event.target.value }))}
+                      placeholder="203.0.113.10, 198.51.100.0/24"
+                      disabled={!selectedTenantId}
+                    />
+                  </div>
+                </div>
+              </div>
               <Button
                 className="h-11 w-full rounded-xl bg-orange-500 hover:bg-orange-600"
                 disabled={!selectedTenantId || savingCompanySettings}
@@ -605,6 +719,11 @@ export default function AdminPage() {
                     setCompanySettings({
                       billingEmail: updated?.billingEmail || "",
                       billingPhone: updated?.billingPhone || "",
+                      publicApiEnabled: !!updated?.publicApiEnabled,
+                      apiUsername: updated?.apiUsername || "",
+                      apiPassword: updated?.apiPassword || "",
+                      apiKey: updated?.apiKey || "",
+                      apiIpWhitelist: updated?.apiIpWhitelist || "",
                       taxRatePercent: Number(updated?.taxRatePercent ?? 18),
                       isTaxExempt: !!updated?.isTaxExempt,
                       isReverseCharge: !!updated?.isReverseCharge,

@@ -24,6 +24,7 @@ public class AuthController(
     SecretCryptoService crypto,
     TemplateSyncOrchestrator templateSync,
     SensitiveDataRedactor redactor,
+    AuthenticatorTotpService totp,
     ILogger<AuthController> logger,
     IHttpClientFactory httpClientFactory,
     IConfiguration config) : ControllerBase
@@ -33,6 +34,9 @@ public class AuthController(
     private const int EmailActionLinkExpiryMinutes = 15;
     private const int EmailOtpMaxAttempts = 5;
     private const int EmailOtpResendCooldownSeconds = 30;
+    private const int LoginTwoFactorChallengeExpiryMinutes = 10;
+    private const int StepUpChallengeExpiryMinutes = 10;
+    private const int StepUpFreshMinutes = 10;
 
     private static readonly string[] DefaultAppApiCatalog =
     [
@@ -131,11 +135,133 @@ public class AuthController(
             }
         }
 
+        if (UserRequiresAuthenticator(user))
+        {
+            var challenge = await CreateTwoFactorChallengeAsync(
+                user,
+                tenantId,
+                "login",
+                "login_two_factor",
+                null,
+                LoginTwoFactorChallengeExpiryMinutes,
+                ct);
+            return Ok(new
+            {
+                requiresTwoFactor = true,
+                challengeToken = challenge.token,
+                provider = challenge.provider,
+                expiresAtUtc = challenge.expiresAtUtc,
+                title = "Two-factor authentication required",
+                message = "Open your authenticator app and enter the 6-digit code to finish signing in."
+            });
+        }
+
         var token = await sessions.CreateSessionAsync(user.Id, tenantId, ct);
         authCookie.SetToken(HttpContext, token);
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(token);
         return Ok(new AuthTokenResponse { AccessToken = token });
+    }
+
+    [HttpPost("two-factor/verify-login")]
+    public async Task<IActionResult> VerifyLoginTwoFactor([FromBody] VerifyLoginTwoFactorRequest request, CancellationToken ct)
+    {
+        var challengeToken = (request.ChallengeToken ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(challengeToken)) return BadRequest("Challenge token is required.");
+
+        var challenge = await db.TwoFactorChallenges
+            .FirstOrDefaultAsync(x => x.ChallengeTokenHash == HashToken(challengeToken) && x.Purpose == "login", ct);
+        if (challenge is null) return BadRequest("Two-factor challenge not found.");
+        if (challenge.ConsumedAtUtc.HasValue || challenge.ExpiresAtUtc <= DateTime.UtcNow) return BadRequest("Two-factor challenge expired.");
+
+        var user = await db.Users.FirstOrDefaultAsync(x => x.Id == challenge.UserId && x.IsActive, ct);
+        if (user is null) return Unauthorized("User not active.");
+        if (!UserRequiresAuthenticator(user)) return BadRequest("Authenticator is not enabled for this account.");
+
+        var secret = crypto.Decrypt(user.AuthenticatorSecretEncrypted);
+        if (!totp.VerifyTotp(secret, request.Code))
+            return BadRequest("Invalid authenticator code.");
+
+        var now = DateTime.UtcNow;
+        challenge.VerifiedAtUtc = now;
+        challenge.ConsumedAtUtc = now;
+        var token = await sessions.CreateSessionAsync(user.Id, challenge.TenantId, ct, now, now);
+        await db.SaveChangesAsync(ct);
+
+        authCookie.SetToken(HttpContext, token);
+        authCookie.EnsureCsrfToken(HttpContext);
+        WriteAuthHeaders(token);
+        return Ok(new AuthTokenResponse { AccessToken = token });
+    }
+
+    [HttpPost("step-up/request")]
+    public async Task<IActionResult> RequestStepUp([FromBody] RequestStepUpAuthRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        var user = await db.Users.FirstOrDefaultAsync(x => x.Id == auth.UserId && x.IsActive, ct);
+        if (user is null) return Unauthorized();
+        if (!UserRequiresAuthenticator(user))
+            return BadRequest("Authenticator 2FA is not enabled for this account.");
+
+        var action = InputGuardService.RequireTrimmed(request.Action ?? "sensitive_action", "Action", 120).ToLowerInvariant();
+        var challenge = await CreateTwoFactorChallengeAsync(
+            user,
+            auth.TenantId,
+            "step_up",
+            action,
+            auth.SessionId == Guid.Empty ? null : auth.SessionId,
+            StepUpChallengeExpiryMinutes,
+            ct);
+
+        return Ok(new
+        {
+            challengeToken = challenge.token,
+            provider = challenge.provider,
+            expiresAtUtc = challenge.expiresAtUtc,
+            title = string.IsNullOrWhiteSpace(request.Title) ? "Additional verification required" : request.Title.Trim(),
+            message = string.IsNullOrWhiteSpace(request.Message)
+                ? "Enter the 6-digit code from your authenticator app to continue."
+                : request.Message.Trim()
+        });
+    }
+
+    [HttpPost("step-up/verify")]
+    public async Task<IActionResult> VerifyStepUp([FromBody] VerifyStepUpAuthRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (auth.SessionId == Guid.Empty) return Unauthorized();
+
+        var challengeToken = (request.ChallengeToken ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(challengeToken)) return BadRequest("Challenge token is required.");
+
+        var challenge = await db.TwoFactorChallenges
+            .FirstOrDefaultAsync(x => x.ChallengeTokenHash == HashToken(challengeToken) && x.Purpose == "step_up", ct);
+        if (challenge is null) return BadRequest("Step-up challenge not found.");
+        if (challenge.UserId != auth.UserId || challenge.TenantId != auth.TenantId) return Forbid();
+        if (challenge.SessionTokenId.HasValue && challenge.SessionTokenId != auth.SessionId) return Forbid();
+        if (challenge.ConsumedAtUtc.HasValue || challenge.ExpiresAtUtc <= DateTime.UtcNow) return BadRequest("Step-up challenge expired.");
+
+        var user = await db.Users.FirstOrDefaultAsync(x => x.Id == auth.UserId && x.IsActive, ct);
+        if (user is null) return Unauthorized();
+        if (!UserRequiresAuthenticator(user)) return BadRequest("Authenticator 2FA is not enabled for this account.");
+
+        var secret = crypto.Decrypt(user.AuthenticatorSecretEncrypted);
+        if (!totp.VerifyTotp(secret, request.Code))
+            return BadRequest("Invalid authenticator code.");
+
+        var now = DateTime.UtcNow;
+        challenge.VerifiedAtUtc = now;
+        challenge.ConsumedAtUtc = now;
+        await sessions.MarkStepUpVerifiedAsync(auth.SessionId, ct);
+        await db.SaveChangesAsync(ct);
+
+        return Ok(new
+        {
+            ok = true,
+            action = challenge.ActionCode,
+            verifiedAtUtc = now,
+            validForSeconds = StepUpFreshMinutes * 60
+        });
     }
 
     [HttpPost("email-verification/request")]
@@ -436,7 +562,12 @@ public class AuthController(
         var memberCount = await db.TenantUsers.CountAsync(tu => tu.TenantId == invite.TenantId, ct);
         await billingGuard.SetAbsoluteUsageAsync(invite.TenantId, "teamMembers", memberCount, ct);
 
-        var sessionToken = await sessions.CreateSessionAsync(user.Id, invite.TenantId, ct);
+        var sessionToken = await sessions.CreateSessionAsync(
+            user.Id,
+            invite.TenantId,
+            ct,
+            auth.TwoFactorVerifiedAtUtc,
+            auth.StepUpVerifiedAtUtc);
         authCookie.SetToken(HttpContext, sessionToken);
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(sessionToken);
@@ -824,7 +955,12 @@ public class AuthController(
         });
         await db.SaveChangesAsync(ct);
 
-        var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
+        var token = await sessions.CreateSessionAsync(
+            auth.UserId,
+            tenant.Id,
+            ct,
+            auth.TwoFactorVerifiedAtUtc,
+            auth.StepUpVerifiedAtUtc);
         authCookie.SetToken(HttpContext, token);
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(token);
@@ -846,7 +982,12 @@ public class AuthController(
             .FirstOrDefaultAsync(tu => tu.UserId == auth.UserId && tu.TenantId == tenant.Id, ct);
         if (membership is null) return Forbid();
 
-        var token = await sessions.CreateSessionAsync(auth.UserId, tenant.Id, ct);
+        var token = await sessions.CreateSessionAsync(
+            auth.UserId,
+            tenant.Id,
+            ct,
+            auth.TwoFactorVerifiedAtUtc,
+            auth.StepUpVerifiedAtUtc);
         authCookie.SetToken(HttpContext, token);
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(token);
@@ -861,6 +1002,58 @@ public class AuthController(
         Response.Headers["Authorization"] = $"Bearer {token}";
         Response.Headers["X-Access-Token"] = token;
         Response.Headers["X-CSRF-Token"] = csrf;
+    }
+
+    private bool UserRequiresAuthenticator(User user)
+    {
+        return user.AuthenticatorEnabledAtUtc.HasValue
+            && !string.IsNullOrWhiteSpace(user.AuthenticatorProvider)
+            && !string.IsNullOrWhiteSpace(user.AuthenticatorSecretEncrypted);
+    }
+
+    private async Task<(string token, string provider, DateTime expiresAtUtc)> CreateTwoFactorChallengeAsync(
+        User user,
+        Guid tenantId,
+        string purpose,
+        string actionCode,
+        Guid? sessionTokenId,
+        int expiresMinutes,
+        CancellationToken ct)
+    {
+        var token = CreateOpaqueToken(32);
+        var now = DateTime.UtcNow;
+        var challenge = new TwoFactorChallenge
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            TenantId = tenantId,
+            SessionTokenId = sessionTokenId,
+            Purpose = purpose,
+            Provider = user.AuthenticatorProvider,
+            ActionCode = actionCode,
+            ChallengeTokenHash = HashToken(token),
+            ExpiresAtUtc = now.AddMinutes(expiresMinutes),
+            CreatedAtUtc = now
+        };
+        db.TwoFactorChallenges.Add(challenge);
+        await db.SaveChangesAsync(ct);
+        return (token, challenge.Provider, challenge.ExpiresAtUtc);
+    }
+
+    private static bool HasFreshStepUp(AuthContext auth, int freshnessMinutes)
+    {
+        return auth.StepUpVerifiedAtUtc.HasValue && auth.StepUpVerifiedAtUtc.Value >= DateTime.UtcNow.AddMinutes(-freshnessMinutes);
+    }
+
+    private ObjectResult BuildStepUpRequired(string action, string title, string message)
+    {
+        return StatusCode(StatusCodes.Status428PreconditionRequired, new
+        {
+            stepUpRequired = true,
+            action,
+            title,
+            message
+        });
     }
 
     private static string NormalizeSlug(string value)
@@ -1183,6 +1376,25 @@ public class AuthController(
         }
 
         return effective.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    public sealed class VerifyLoginTwoFactorRequest
+    {
+        public string ChallengeToken { get; set; } = string.Empty;
+        public string Code { get; set; } = string.Empty;
+    }
+
+    public sealed class RequestStepUpAuthRequest
+    {
+        public string Action { get; set; } = "sensitive_action";
+        public string Title { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+    }
+
+    public sealed class VerifyStepUpAuthRequest
+    {
+        public string ChallengeToken { get; set; } = string.Empty;
+        public string Code { get; set; } = string.Empty;
     }
 
     private static string BuildVerificationHtml(

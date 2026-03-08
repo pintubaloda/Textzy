@@ -13,6 +13,7 @@ const WABA_STATUS_CACHE_PREFIX = 'textzy.wabaStatus'
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 let refreshPromise = null
 let authRedirected = false
+let stepUpUiHandler = null
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 export function getApiBase() {
@@ -61,11 +62,10 @@ export function getSession() {
       projectName: p.projectName || '',
       role: p.role || '',
       email: p.email || '',
-      accessToken: p.accessToken || '',
       permissions
     }
   } catch {
-    return { tenantSlug: '', projectName: '', role: '', email: '', accessToken: '', permissions: [] }
+    return { tenantSlug: '', projectName: '', role: '', email: '', permissions: [] }
   }
 }
 
@@ -89,6 +89,13 @@ export function setSession(next) {
 export function clearSession() {
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(CSRF_STORAGE_KEY)
+}
+
+export function registerStepUpUiHandler(handler) {
+  stepUpUiHandler = handler
+  return () => {
+    if (stepUpUiHandler === handler) stepUpUiHandler = null
+  }
 }
 
 export function getLastTenantSlug() {
@@ -187,9 +194,6 @@ async function baseFetch(path, options = {}, useAuth = true) {
   ]
   const requiresTenant = useAuth && !tenantOptionalPrefixes.some((p) => path.startsWith(p))
   if (requiresTenant && s.tenantSlug) headers['X-Tenant-Slug'] = s.tenantSlug
-  if (useAuth && s.accessToken && !headers.Authorization) {
-    headers.Authorization = `Bearer ${s.accessToken}`
-  }
   if (requiresTenant && !headers['X-Tenant-Slug']) {
     if (typeof window !== 'undefined' && window.location.pathname !== '/projects') {
       window.location.assign('/projects')
@@ -213,6 +217,89 @@ async function baseFetch(path, options = {}, useAuth = true) {
 async function readErrorMessage(res, fallback) {
   const text = await res.text().catch(() => '')
   return text || `${fallback} (${res.status})`
+}
+
+async function buildApiError(res, fallback) {
+  const text = await res.text().catch(() => '')
+  if (text) {
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed === 'object') {
+        const err = new Error(parsed.message || parsed.title || fallback)
+        Object.assign(err, parsed)
+        err.status = res.status
+        err.rawBody = text
+        return err
+      }
+    } catch {
+      // ignore non-json
+    }
+  }
+  const err = new Error(text || `${fallback} (${res.status})`)
+  err.status = res.status
+  err.rawBody = text
+  return err
+}
+
+async function performStepUp(detail = {}) {
+  if (typeof stepUpUiHandler !== 'function') {
+    throw new Error(detail?.message || 'Additional verification is required.')
+  }
+
+  const requestRes = await baseFetch('/api/auth/step-up/request', {
+    method: 'POST',
+    body: JSON.stringify({
+      action: detail?.action || 'sensitive_action',
+      title: detail?.title || '',
+      message: detail?.message || ''
+    })
+  }, true)
+
+  if (!requestRes.ok) {
+    throw await buildApiError(requestRes, 'Failed to start step-up verification')
+  }
+
+  const challenge = await requestRes.json().catch(() => ({}))
+  let lastError = ''
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const code = await stepUpUiHandler({
+      ...challenge,
+      title: challenge?.title || detail?.title || 'Additional verification required',
+      message: challenge?.message || detail?.message || 'Enter the code from your authenticator app.',
+      errorMessage: lastError
+    })
+
+    if (!code) {
+      throw new Error('Verification cancelled.')
+    }
+
+    const verifyRes = await baseFetch('/api/auth/step-up/verify', {
+      method: 'POST',
+      body: JSON.stringify({
+        challengeToken: challenge?.challengeToken || '',
+        code
+      })
+    }, true)
+
+    if (verifyRes.ok) {
+      return verifyRes.json().catch(() => ({ ok: true }))
+    }
+
+    const verifyError = await buildApiError(verifyRes, 'Step-up verification failed')
+    const verifyMessage = String(verifyError?.message || '')
+    if (verifyRes.status === 400 && /authenticator code|verification/i.test(verifyMessage)) {
+      lastError = verifyMessage
+      continue
+    }
+    throw verifyError
+  }
+
+  throw new Error(lastError || 'Step-up verification failed.')
+}
+
+export async function ensureStepUp(detail = {}) {
+  await performStepUp(detail)
+  return true
 }
 
 async function refresh() {
@@ -280,9 +367,16 @@ export async function apiPost(path, body) {
     headers['Idempotency-Key'] = body?.idempotencyKey || buildIdempotencyKey('msg')
   }
   const res = await apiRequest(path, { method: 'POST', headers, body: JSON.stringify(body) })
+  if (res.status === 428) {
+    const err = await buildApiError(res, `POST ${path} failed`)
+    if (err?.stepUpRequired) {
+      await performStepUp(err)
+      return apiPost(path, body)
+    }
+    throw err
+  }
   if (!res.ok) {
-    const msg = await res.text()
-    throw new Error(msg || `POST ${path} failed (${res.status})`)
+    throw await buildApiError(res, `POST ${path} failed`)
   }
   const text = await res.text()
   return text ? JSON.parse(text) : null
@@ -304,16 +398,31 @@ export async function apiPostForm(path, formData, headers = {}) {
 
 export async function apiPut(path, body) {
   const res = await apiRequest(path, { method: 'PUT', body: JSON.stringify(body) })
-  if (!res.ok) throw new Error(`PUT ${path} failed (${res.status})`)
+  if (res.status === 428) {
+    const err = await buildApiError(res, `PUT ${path} failed`)
+    if (err?.stepUpRequired) {
+      await performStepUp(err)
+      return apiPut(path, body)
+    }
+    throw err
+  }
+  if (!res.ok) throw await buildApiError(res, `PUT ${path} failed`)
   const text = await res.text()
   return text ? JSON.parse(text) : null
 }
 
 export async function apiPatch(path, body) {
   const res = await apiRequest(path, { method: 'PATCH', body: JSON.stringify(body) })
+  if (res.status === 428) {
+    const err = await buildApiError(res, `PATCH ${path} failed`)
+    if (err?.stepUpRequired) {
+      await performStepUp(err)
+      return apiPatch(path, body)
+    }
+    throw err
+  }
   if (!res.ok) {
-    const msg = await res.text()
-    throw new Error(msg || `PATCH ${path} failed (${res.status})`)
+    throw await buildApiError(res, `PATCH ${path} failed`)
   }
   const text = await res.text()
   return text ? JSON.parse(text) : null
@@ -345,16 +454,9 @@ export async function authLogin({ email, password, tenantSlug, emailVerification
     throw new Error(msg)
   }
 
-  const headerToken = (res.headers.get('x-access-token') || '').trim() ||
-    (res.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
-
   const raw = await res.text()
   if (!raw || !raw.trim()) {
-    if (headerToken) {
-      setSession({ accessToken: headerToken })
-      return { accessToken: headerToken }
-    }
-    return { accessToken: '' }
+    return {}
   }
 
   let data = null
@@ -364,14 +466,27 @@ export async function authLogin({ email, password, tenantSlug, emailVerification
     throw new Error('Login response is not valid JSON. Check backend proxy/deployment.')
   }
 
-  if (data?.accessToken) {
-    setSession({ accessToken: data.accessToken })
-  } else if (headerToken) {
-    data.accessToken = headerToken
-    setSession({ accessToken: headerToken })
-  } else {
-    throw new Error('Login response is missing accessToken.')
+  if (data?.requiresTwoFactor) {
+    return data
   }
+  return data
+}
+
+export async function verifyLoginTwoFactor({ challengeToken, code, tenantSlug }) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (tenantSlug) headers['X-Tenant-Slug'] = tenantSlug
+  const res = await fetch(`${API_BASE}/api/auth/two-factor/verify-login`, {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+    body: JSON.stringify({ challengeToken, code })
+  })
+  persistCsrfFromResponse(res)
+  if (!res.ok) {
+    throw await buildApiError(res, 'Two-factor verification failed')
+  }
+  const raw = await res.text()
+  const data = raw ? JSON.parse(raw) : {}
   return data
 }
 
@@ -537,8 +652,7 @@ export async function createProject(name) {
     tenantSlug: data?.slug || '',
     projectName: data?.name || '',
     role: data?.role || 'owner',
-    permissions: Array.isArray(data?.permissions) ? data.permissions : [],
-    accessToken: data?.accessToken || getSession().accessToken || ''
+    permissions: Array.isArray(data?.permissions) ? data.permissions : []
   })
   invalidateWabaStatusCache()
   return data
@@ -550,8 +664,7 @@ export async function switchProject(slug) {
     tenantSlug: data?.tenantSlug || slug,
     projectName: data?.projectName || '',
     role: data?.role || '',
-    permissions: Array.isArray(data?.permissions) ? data.permissions : [],
-    accessToken: data?.accessToken || getSession().accessToken || ''
+    permissions: Array.isArray(data?.permissions) ? data.permissions : []
   })
   invalidateWabaStatusCache()
   return data

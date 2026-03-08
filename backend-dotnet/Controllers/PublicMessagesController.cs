@@ -48,24 +48,20 @@ public class PublicMessagesController(
     private async Task<IActionResult> SendCore(PublicSendRequest request, CancellationToken ct)
     {
         if (!tenancy.IsSet)
-            return BadRequest("tenantSlug (or user) query parameter is required.");
+            return BadRequest("tenantSlug query parameter is required.");
 
         if (!IsHttpsRequest(HttpContext))
             return StatusCode(StatusCodes.Status403Forbidden, "HTTPS is required.");
 
-        var settingsRows = await controlDb.PlatformSettings
+        var profile = await controlDb.TenantCompanyProfiles
             .AsNoTracking()
-            .Where(x => x.Scope == "api-integration")
-            .ToListAsync(ct);
-        var settings = settingsRows.ToDictionary(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase);
-
-        var enabled = ParseBool(GetValue(settings, "enabled", "false"), false);
-        if (!enabled)
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId, ct);
+        if (profile is null || !profile.PublicApiEnabled)
             return StatusCode(StatusCodes.Status403Forbidden, "Public API integration is disabled.");
 
-        var expectedUser = GetValue(settings, "apiUsername", GetValue(settings, "apiUser", string.Empty)).Trim();
-        var expectedPassword = GetValue(settings, "apiPassword", string.Empty).Trim();
-        var expectedApiKey = GetValue(settings, "apiKey", string.Empty).Trim();
+        var expectedUser = (profile.ApiUsername ?? string.Empty).Trim();
+        var expectedPassword = crypto.Decrypt(profile.ApiPasswordEncrypted).Trim();
+        var expectedApiKey = crypto.Decrypt(profile.ApiKeyEncrypted).Trim();
 
         if (string.IsNullOrWhiteSpace(expectedUser) || string.IsNullOrWhiteSpace(expectedPassword) || string.IsNullOrWhiteSpace(expectedApiKey))
             return StatusCode(StatusCodes.Status503ServiceUnavailable, "Public API credentials are not configured.");
@@ -81,7 +77,7 @@ public class PublicMessagesController(
             return Unauthorized("Invalid API credentials.");
         }
 
-        var ipWhitelist = GetValue(settings, "ipWhitelist", string.Empty);
+        var ipWhitelist = profile.ApiIpWhitelist ?? string.Empty;
         if (!IsIpAllowed(HttpContext.Connection.RemoteIpAddress, ipWhitelist))
             return StatusCode(StatusCodes.Status403Forbidden, "Client IP not allowed.");
 
@@ -158,18 +154,6 @@ public class PublicMessagesController(
             return new JsonResult(new { message = "Template_ID is required.", code = "422" }) { StatusCode = StatusCodes.Status422UnprocessableEntity };
 
         return new JsonResult(new { message = "Request rejected.", code = "400" }) { StatusCode = StatusCodes.Status400BadRequest };
-    }
-
-    private static string GetValue(Dictionary<string, string> map, string key, string fallback)
-    {
-        return map.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
-            ? value
-            : fallback;
-    }
-
-    private static bool ParseBool(string raw, bool fallback)
-    {
-        return bool.TryParse(raw, out var parsed) ? parsed : fallback;
     }
 
     private static ChannelType ParseChannel(string? raw)

@@ -16,6 +16,11 @@ public class TenantCompanyProfile
     public string Address { get; set; } = string.Empty;
     public string BillingEmail { get; set; } = string.Empty;
     public string BillingPhone { get; set; } = string.Empty;
+    public bool PublicApiEnabled { get; set; }
+    public string ApiUsername { get; set; } = string.Empty;
+    public string ApiPasswordEncrypted { get; set; } = string.Empty;
+    public string ApiKeyEncrypted { get; set; } = string.Empty;
+    public string ApiIpWhitelist { get; set; } = string.Empty;
     public decimal TaxRatePercent { get; set; } = 18m;
     public bool IsTaxExempt { get; set; }
     public bool IsReverseCharge { get; set; }

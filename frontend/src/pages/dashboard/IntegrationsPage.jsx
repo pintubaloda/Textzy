@@ -5,33 +5,25 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  BadgeCheck,
   BookOpenText,
   CreditCard,
   ExternalLink,
   FileText,
-  Key,
   LockKeyhole,
   Plug,
   QrCode,
-  RefreshCw,
   Shield,
   ShieldCheck,
-  Smartphone,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   disableAuthenticator,
   getAuthenticatorStatus,
   getIntegrationCatalog,
-  getPlatformSettings,
   getSession,
-  savePlatformSettings,
   setupAuthenticator,
-  ensureStepUp,
   verifyAuthenticator,
 } from "@/lib/api";
 
@@ -66,22 +58,11 @@ function categoryBadge(category) {
 const IntegrationsPage = () => {
   const session = getSession();
   const isSuperAdmin = String(session?.role || "").toLowerCase() === "super_admin";
-  const [apiConfig, setApiConfig] = useState({
-    enabled: false,
-    apiUsername: "",
-    apiPassword: "",
-    apiKey: "",
-    ipWhitelist: "",
-  });
-  const [savingApiConfig, setSavingApiConfig] = useState(false);
   const [catalog, setCatalog] = useState([]);
   const [catalogBusy, setCatalogBusy] = useState(true);
   const [authenticator, setAuthenticator] = useState({ enabled: false, provider: "", enrolledAtUtc: "" });
   const [setupState, setSetupState] = useState({ provider: "", qrUrl: "", code: "", busy: false });
   const [category, setCategory] = useState("all");
-  const [showApiUsername, setShowApiUsername] = useState(false);
-  const [showApiPassword, setShowApiPassword] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
   const [docViewer, setDocViewer] = useState({ open: false, type: "sms" });
 
   const categories = useMemo(() => {
@@ -129,77 +110,6 @@ const IntegrationsPage = () => {
       alive = false;
     };
   }, []);
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      if (!isSuperAdmin) return;
-      try {
-        const res = await getPlatformSettings("api-integration");
-        if (!alive) return;
-        const values = res?.values || {};
-        setApiConfig({
-          enabled: String(values.enabled || "false").toLowerCase() === "true",
-          apiUsername: String(values.apiUsername || values.apiUser || "").trim(),
-          apiPassword: String(values.apiPassword || "").trim(),
-          apiKey: String(values.apiKey || "").trim(),
-          ipWhitelist: String(values.ipWhitelist || "").trim(),
-        });
-      } catch {
-        if (!alive) return;
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [isSuperAdmin]);
-
-  const regenerateToken = (prefix, length) => {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let out = prefix;
-    for (let i = 0; i < length; i += 1) out += chars.charAt(Math.floor(Math.random() * chars.length));
-    return out;
-  };
-
-  const regenerateProtectedToken = async (label, apply) => {
-    if (!isSuperAdmin) return;
-    try {
-      await ensureStepUp({
-        action: "api_credentials_regenerate",
-        title: "Verify credential regeneration",
-        message: `Enter your authenticator code to regenerate ${label}.`,
-      });
-      apply();
-      toast.success(`${label} regenerated locally. Save to persist the new credential.`);
-    } catch (e) {
-      toast.error(e?.message || `Failed to regenerate ${label}.`);
-    }
-  };
-
-  const saveApiIntegration = async () => {
-    if (!isSuperAdmin) return toast.error("Public API credentials are managed by platform owner.");
-    try {
-      setSavingApiConfig(true);
-      await savePlatformSettings("api-integration", {
-        enabled: apiConfig.enabled ? "true" : "false",
-        apiUsername: apiConfig.apiUsername || "",
-        apiPassword: apiConfig.apiPassword || "",
-        apiKey: apiConfig.apiKey || "",
-        ipWhitelist: apiConfig.ipWhitelist || "",
-      });
-      toast.success("Public API integration settings saved");
-    } catch (e) {
-      toast.error(e?.message || "Failed to save public API integration settings");
-    } finally {
-      setSavingApiConfig(false);
-    }
-  };
-
-  const handleCopy = async (label, value) => {
-    if (!value) return toast.error(`${label} is empty`);
-    await navigator.clipboard.writeText(value);
-    toast.success(`${label} copied`);
-  };
 
   const beginAuthenticatorSetup = async (provider) => {
     try {
@@ -486,52 +396,23 @@ const IntegrationsPage = () => {
           <Card className="border-slate-200 shadow-sm">
             <CardHeader>
               <CardTitle>Public API Access</CardTitle>
-              <CardDescription>Simple URL-based API credentials managed at platform level.</CardDescription>
+              <CardDescription>Tenant-scoped API credentials are now managed from platform admin, not from this tenant screen.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {!isSuperAdmin ? (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                  Public API credentials are controlled by platform owner. You can use project slug <strong>{session?.tenantSlug || "n/a"}</strong> and the documented URL format once credentials are shared with you.
-                </div>
-              ) : null}
-              <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
-                <div>
-                  <Label className="font-medium text-slate-900">Enable Public API</Label>
-                  <p className="mt-1 text-sm text-slate-500">When disabled, public send endpoints reject requests.</p>
-                </div>
-                <Switch checked={apiConfig.enabled} onCheckedChange={(checked) => setApiConfig((prev) => ({ ...prev, enabled: checked }))} disabled={!isSuperAdmin} />
-              </div>
-              <div className="grid gap-4">
-                {[
-                  { label: "API Username", key: "apiUsername", visible: showApiUsername, setVisible: setShowApiUsername, regenerate: () => regenerateProtectedToken("API Username", () => setApiConfig((prev) => ({ ...prev, apiUsername: regenerateToken("tx_user_", 10) }))) },
-                  { label: "API Password", key: "apiPassword", visible: showApiPassword, setVisible: setShowApiPassword, regenerate: () => regenerateProtectedToken("API Password", () => setApiConfig((prev) => ({ ...prev, apiPassword: regenerateToken("tx_pw_", 32) }))) },
-                  { label: "API Key", key: "apiKey", visible: showApiKey, setVisible: setShowApiKey, regenerate: () => regenerateProtectedToken("API Key", () => setApiConfig((prev) => ({ ...prev, apiKey: regenerateToken("tx_live_sk_", 36) }))) },
-                ].map((item) => (
-                  <div key={item.key} className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label>{item.label}</Label>
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="outline" disabled={!isSuperAdmin} onClick={item.regenerate}><RefreshCw className="mr-2 h-4 w-4" />Regenerate</Button>
-                        <Button size="sm" variant="outline" disabled={!apiConfig[item.key]} onClick={() => handleCopy(item.label, apiConfig[item.key])}><Key className="mr-2 h-4 w-4" />Copy</Button>
-                        <Button size="icon" variant="outline" onClick={() => item.setVisible((prev) => !prev)}>{item.visible ? <BadgeCheck className="h-4 w-4" /> : <Smartphone className="h-4 w-4" />}</Button>
-                      </div>
-                    </div>
-                    <Input
-                      type={item.visible ? "text" : "password"}
-                      value={apiConfig[item.key]}
-                      onChange={(e) => setApiConfig((prev) => ({ ...prev, [item.key]: e.target.value }))}
-                      disabled={!isSuperAdmin}
-                    />
-                  </div>
-                ))}
-                <div className="space-y-2">
-                  <Label>IP Whitelist (optional)</Label>
-                  <Input value={apiConfig.ipWhitelist} onChange={(e) => setApiConfig((prev) => ({ ...prev, ipWhitelist: e.target.value }))} disabled={!isSuperAdmin} placeholder="203.0.113.10, 198.51.100.0/24" />
-                </div>
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                {isSuperAdmin ? (
+                  <>
+                    Tenant-scoped API credentials are managed from <strong>Platform Admin</strong> for each company. This prevents one credential set from being reused across tenants.
+                  </>
+                ) : (
+                  <>
+                    Public API credentials are controlled by platform owner. Use project slug <strong>{session?.tenantSlug || "n/a"}</strong> and request the tenant-specific credentials from platform admin.
+                  </>
+                )}
               </div>
               {isSuperAdmin ? (
-                <Button className="w-full bg-orange-500 hover:bg-orange-600" disabled={savingApiConfig} onClick={saveApiIntegration}>
-                  {savingApiConfig ? "Saving..." : "Save Public API Settings"}
+                <Button className="w-full bg-orange-500 hover:bg-orange-600" onClick={() => window.location.assign("/dashboard/admin")}>
+                  Open Platform Admin
                 </Button>
               ) : null}
             </CardContent>

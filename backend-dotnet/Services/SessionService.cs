@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
 using Textzy.Api.Models;
 
@@ -9,7 +10,12 @@ public class SessionService(ControlDbContext db)
 {
     private const int SessionHours = 12;
 
-    public async Task<string> CreateSessionAsync(Guid userId, Guid tenantId, CancellationToken ct = default)
+    public async Task<string> CreateSessionAsync(
+        Guid userId,
+        Guid tenantId,
+        CancellationToken ct = default,
+        DateTime? twoFactorVerifiedAtUtc = null,
+        DateTime? stepUpVerifiedAtUtc = null)
     {
         var tokenBytes = RandomNumberGenerator.GetBytes(32);
         var opaqueToken = Convert.ToBase64String(tokenBytes)
@@ -23,7 +29,9 @@ public class SessionService(ControlDbContext db)
             UserId = userId,
             TenantId = tenantId,
             TokenHash = HashToken(opaqueToken),
-            ExpiresAtUtc = DateTime.UtcNow.AddHours(SessionHours)
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(SessionHours),
+            TwoFactorVerifiedAtUtc = twoFactorVerifiedAtUtc,
+            StepUpVerifiedAtUtc = stepUpVerifiedAtUtc
         };
 
         db.SessionTokens.Add(session);
@@ -55,8 +63,24 @@ public class SessionService(ControlDbContext db)
         if (session is null) return null;
 
         session.RevokedAtUtc = DateTime.UtcNow;
-        var newToken = await CreateSessionAsync(session.UserId, session.TenantId, ct);
+        var newToken = await CreateSessionAsync(
+            session.UserId,
+            session.TenantId,
+            ct,
+            session.TwoFactorVerifiedAtUtc,
+            session.StepUpVerifiedAtUtc);
         return newToken;
+    }
+
+    public async Task MarkStepUpVerifiedAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        var session = await db.SessionTokens.FirstOrDefaultAsync(x => x.Id == sessionId, ct);
+        if (session is null) return;
+        var now = DateTime.UtcNow;
+        session.StepUpVerifiedAtUtc = now;
+        if (!session.TwoFactorVerifiedAtUtc.HasValue)
+            session.TwoFactorVerifiedAtUtc = now;
+        await db.SaveChangesAsync(ct);
     }
 
     private static string HashToken(string opaqueToken)

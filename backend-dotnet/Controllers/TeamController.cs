@@ -22,6 +22,7 @@ public class TeamController(
     IConfiguration config,
     AuditLogService audit) : ControllerBase
 {
+    private static readonly TimeSpan StepUpFreshWindow = TimeSpan.FromMinutes(10);
     [HttpGet("members")]
     public IActionResult Members()
     {
@@ -102,6 +103,16 @@ public class TeamController(
     {
         if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
         if (!CanManageTeam(auth.Role)) return Forbid();
+        if (!HasFreshStepUp())
+        {
+            return StatusCode(StatusCodes.Status428PreconditionRequired, new
+            {
+                stepUpRequired = true,
+                action = "team_invite",
+                title = "Verify team invitation",
+                message = "Enter your authenticator code to invite or update a team member."
+            });
+        }
 
         string email;
         try
@@ -297,6 +308,16 @@ public class TeamController(
     {
         if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
         if (!CanManageTeam(auth.Role)) return Forbid();
+        if (!HasFreshStepUp())
+        {
+            return StatusCode(StatusCodes.Status428PreconditionRequired, new
+            {
+                stepUpRequired = true,
+                action = "team_role_change",
+                title = "Verify role change",
+                message = "Enter your authenticator code to change a team member role."
+            });
+        }
 
         var nextRole = NormalizeRole(request.Role);
         if (string.IsNullOrWhiteSpace(nextRole)) return BadRequest("Valid role is required.");
@@ -320,6 +341,16 @@ public class TeamController(
     {
         if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
         if (!CanManageTeam(auth.Role)) return Forbid();
+        if (!HasFreshStepUp())
+        {
+            return StatusCode(StatusCodes.Status428PreconditionRequired, new
+            {
+                stepUpRequired = true,
+                action = "team_remove",
+                title = "Verify member removal",
+                message = "Enter your authenticator code to remove a team member."
+            });
+        }
 
         var member = await db.TenantUsers
             .FirstOrDefaultAsync(tu => tu.TenantId == tenancy.TenantId && tu.UserId == userId, ct);
@@ -395,6 +426,16 @@ public class TeamController(
     {
         if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
         if (!CanManageTeam(auth.Role)) return Forbid();
+        if (!HasFreshStepUp())
+        {
+            return StatusCode(StatusCodes.Status428PreconditionRequired, new
+            {
+                stepUpRequired = true,
+                action = "team_permission_change",
+                title = "Verify permission changes",
+                message = "Enter your authenticator code to update member permissions."
+            });
+        }
         var membership = await db.TenantUsers.FirstOrDefaultAsync(tu => tu.TenantId == tenancy.TenantId && tu.UserId == userId, ct);
         if (membership is null) return NotFound("Member not found.");
 
@@ -428,6 +469,9 @@ public class TeamController(
         await audit.WriteAsync("team.permission.overrides.update", $"tenant={tenancy.TenantId}; user={userId}; count={incoming.Count}", ct);
         return Ok(new { updated = true });
     }
+
+    private bool HasFreshStepUp()
+        => auth.StepUpVerifiedAtUtc.HasValue && auth.StepUpVerifiedAtUtc.Value >= DateTime.UtcNow.Subtract(StepUpFreshWindow);
 
     private static bool CanManageTeam(string role)
         => string.Equals(role, RolePermissionCatalog.Owner, StringComparison.OrdinalIgnoreCase)

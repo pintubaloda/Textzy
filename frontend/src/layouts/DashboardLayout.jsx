@@ -43,6 +43,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import StepUpAuthHost from "@/components/security/StepUpAuthHost";
 import {
   apiGet,
   authProjects,
@@ -915,6 +916,7 @@ const DashboardLayout = () => {
           )}
           <Outlet />
         </div>
+        <StepUpAuthHost />
       </main>
     </div>
   );

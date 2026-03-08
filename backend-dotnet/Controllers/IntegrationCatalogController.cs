@@ -15,6 +15,7 @@ public class IntegrationCatalogController(
     RbacService rbac,
     SecretCryptoService crypto) : ControllerBase
 {
+    private static readonly TimeSpan StepUpFreshWindow = TimeSpan.FromMinutes(10);
     private const string Scope = "integration-catalog";
     private const string Key = "items";
 
@@ -39,6 +40,16 @@ public class IntegrationCatalogController(
     {
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+        if (!HasFreshStepUp())
+        {
+            return StatusCode(StatusCodes.Status428PreconditionRequired, new
+            {
+                stepUpRequired = true,
+                action = "platform_settings_write",
+                title = "Verify before saving",
+                message = "Enter your authenticator code to update integration controls."
+            });
+        }
 
         var items = (request ?? [])
             .Where(x => !string.IsNullOrWhiteSpace(x.Slug) && !string.IsNullOrWhiteSpace(x.Name))
@@ -65,6 +76,9 @@ public class IntegrationCatalogController(
         await db.SaveChangesAsync(ct);
         return Ok(items);
     }
+
+    private bool HasFreshStepUp()
+        => auth.StepUpVerifiedAtUtc.HasValue && auth.StepUpVerifiedAtUtc.Value >= DateTime.UtcNow.Subtract(StepUpFreshWindow);
 
     private async Task<List<IntegrationCatalogItem>> ReadCatalogAsync(CancellationToken ct)
     {

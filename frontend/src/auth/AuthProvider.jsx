@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useState } from 'react'
-import { apiPost, authLogin, initializeMe, clearSession as clearApiSession, getSession as getApiSession } from '../lib/api'
+import { apiPost, authLogin, initializeMe, clearSession as clearApiSession } from '../lib/api'
 
 const AuthContext = createContext(null)
 
@@ -7,18 +7,17 @@ const SESSION_KEY = 'textzy.session'
 
 function readSession() {
   const raw = localStorage.getItem(SESSION_KEY)
-  if (!raw) return { tenantSlug: '', role: '', email: '', accessToken: '', permissions: [] }
+  if (!raw) return { tenantSlug: '', role: '', email: '', permissions: [] }
   try {
     const parsed = JSON.parse(raw)
     return {
       tenantSlug: parsed.tenantSlug || '',
       role: parsed.role || '',
       email: parsed.email || '',
-      accessToken: parsed.accessToken || '',
       permissions: Array.isArray(parsed.permissions) ? parsed.permissions : []
     }
   } catch {
-    return { tenantSlug: '', role: '', email: '', accessToken: '', permissions: [] }
+    return { tenantSlug: '', role: '', email: '', permissions: [] }
   }
 }
 
@@ -34,7 +33,7 @@ export function AuthProvider({ children }) {
   }
 
   function clearSession() {
-    const empty = { tenantSlug: '', role: '', email: '', accessToken: '', permissions: [] }
+    const empty = { tenantSlug: '', role: '', email: '', permissions: [] }
     setSession(empty)
     clearApiSession()
   }
@@ -48,8 +47,7 @@ export function AuthProvider({ children }) {
       role: me.role || '',
       email: me.email || '',
       permissions: Array.isArray(me.permissions) ? me.permissions : [],
-      tenantSlug: existing.tenantSlug || me.tenantSlug || '',
-      accessToken: getApiSession().accessToken || existing.accessToken || ''
+      tenantSlug: existing.tenantSlug || me.tenantSlug || ''
     })
   }
 

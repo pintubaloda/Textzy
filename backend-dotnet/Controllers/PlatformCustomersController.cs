@@ -14,9 +14,11 @@ public class PlatformCustomersController(
     ControlDbContext db,
     AuthContext auth,
     RbacService rbac,
-    AuditLogService audit) : ControllerBase
+    AuditLogService audit,
+    SecretCryptoService crypto) : ControllerBase
 {
     private const string TenantSmsGatewayReportFeatureKey = "tenant.smsGatewayReport.enabled";
+    private static readonly TimeSpan StepUpFreshWindow = TimeSpan.FromMinutes(10);
 
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] string q = "", CancellationToken ct = default)
@@ -325,6 +327,11 @@ public class PlatformCustomersController(
                 legalName = tenant.Name,
                 billingEmail = string.Empty,
                 billingPhone = string.Empty,
+                publicApiEnabled = false,
+                apiUsername = string.Empty,
+                apiPassword = string.Empty,
+                apiKey = string.Empty,
+                apiIpWhitelist = string.Empty,
                 taxRatePercent = 18m,
                 isTaxExempt = false,
                 isReverseCharge = false,
@@ -341,6 +348,11 @@ public class PlatformCustomersController(
             legalName = profile.LegalName,
             billingEmail = profile.BillingEmail,
             billingPhone = profile.BillingPhone,
+            publicApiEnabled = profile.PublicApiEnabled,
+            apiUsername = profile.ApiUsername,
+            apiPassword = crypto.Decrypt(profile.ApiPasswordEncrypted),
+            apiKey = crypto.Decrypt(profile.ApiKeyEncrypted),
+            apiIpWhitelist = profile.ApiIpWhitelist,
             taxRatePercent = profile.TaxRatePercent,
             isTaxExempt = profile.IsTaxExempt,
             isReverseCharge = profile.IsReverseCharge,
@@ -353,6 +365,17 @@ public class PlatformCustomersController(
     {
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+        if ((request.PublicApiEnabled || !string.IsNullOrWhiteSpace(request.ApiUsername) || !string.IsNullOrWhiteSpace(request.ApiPassword) || !string.IsNullOrWhiteSpace(request.ApiKey))
+            && !HasFreshStepUp())
+        {
+            return StatusCode(StatusCodes.Status428PreconditionRequired, new
+            {
+                stepUpRequired = true,
+                action = "api_credentials_write",
+                title = "Verify API credential update",
+                message = "Enter your authenticator code to change tenant API credentials."
+            });
+        }
 
         var tenant = await db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
         if (tenant is null) return NotFound("Tenant not found.");
@@ -375,10 +398,22 @@ public class PlatformCustomersController(
 
         profile.BillingEmail = InputGuardService.ValidateEmailOrEmpty(request.BillingEmail, "Billing email");
         profile.BillingPhone = (request.BillingPhone ?? string.Empty).Trim();
+        profile.PublicApiEnabled = request.PublicApiEnabled;
+        profile.ApiUsername = (request.ApiUsername ?? string.Empty).Trim();
+        profile.ApiPasswordEncrypted = crypto.Encrypt((request.ApiPassword ?? string.Empty).Trim());
+        profile.ApiKeyEncrypted = crypto.Encrypt((request.ApiKey ?? string.Empty).Trim());
+        profile.ApiIpWhitelist = (request.ApiIpWhitelist ?? string.Empty).Trim();
         profile.TaxRatePercent = Math.Clamp(request.TaxRatePercent, 0m, 100m);
         profile.IsTaxExempt = request.IsTaxExempt;
         profile.IsReverseCharge = request.IsReverseCharge;
         profile.UpdatedAtUtc = now;
+
+        if (profile.PublicApiEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(profile.ApiUsername)) return BadRequest("API username is required when public API is enabled.");
+            if (string.IsNullOrWhiteSpace(request.ApiPassword)) return BadRequest("API password is required when public API is enabled.");
+            if (string.IsNullOrWhiteSpace(request.ApiKey)) return BadRequest("API key is required when public API is enabled.");
+        }
 
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync(
@@ -395,6 +430,11 @@ public class PlatformCustomersController(
             legalName = profile.LegalName,
             billingEmail = profile.BillingEmail,
             billingPhone = profile.BillingPhone,
+            publicApiEnabled = profile.PublicApiEnabled,
+            apiUsername = profile.ApiUsername,
+            apiPassword = crypto.Decrypt(profile.ApiPasswordEncrypted),
+            apiKey = crypto.Decrypt(profile.ApiKeyEncrypted),
+            apiIpWhitelist = profile.ApiIpWhitelist,
             taxRatePercent = profile.TaxRatePercent,
             isTaxExempt = profile.IsTaxExempt,
             isReverseCharge = profile.IsReverseCharge,
@@ -669,8 +709,16 @@ public class PlatformCustomersController(
     {
         public string BillingEmail { get; set; } = string.Empty;
         public string BillingPhone { get; set; } = string.Empty;
+        public bool PublicApiEnabled { get; set; }
+        public string ApiUsername { get; set; } = string.Empty;
+        public string ApiPassword { get; set; } = string.Empty;
+        public string ApiKey { get; set; } = string.Empty;
+        public string ApiIpWhitelist { get; set; } = string.Empty;
         public decimal TaxRatePercent { get; set; } = 18m;
         public bool IsTaxExempt { get; set; }
         public bool IsReverseCharge { get; set; }
     }
+
+    private bool HasFreshStepUp()
+        => auth.StepUpVerifiedAtUtc.HasValue && auth.StepUpVerifiedAtUtc.Value >= DateTime.UtcNow.Subtract(StepUpFreshWindow);
 }

@@ -25,6 +25,8 @@ public class PlatformSettingsController(
     IConfiguration config,
     IHttpClientFactory httpClientFactory) : ControllerBase
 {
+    private static readonly TimeSpan StepUpFreshWindow = TimeSpan.FromMinutes(10);
+
     [HttpGet("{scope}")]
     public async Task<IActionResult> GetScope(string scope, CancellationToken ct)
     {
@@ -65,6 +67,22 @@ public class PlatformSettingsController(
         }
         if (values.Count == 0) return BadRequest("At least one key is required.");
         if (values.Count > 200) return BadRequest("Too many settings in one request.");
+        if (!HasFreshStepUp())
+        {
+            var action = scope switch
+            {
+                "payment-gateway" => "payment_settings_change",
+                "api-integration" => "api_credentials_write",
+                _ => "platform_settings_write"
+            };
+            return StatusCode(StatusCodes.Status428PreconditionRequired, new
+            {
+                stepUpRequired = true,
+                action,
+                title = "Verify before saving",
+                message = "Enter your authenticator code to save platform settings."
+            });
+        }
 
         foreach (var kv in values)
         {
@@ -101,6 +119,9 @@ public class PlatformSettingsController(
         await audit.WriteAsync("platform.settings.updated", $"scope={scope}; keys={string.Join(",", values.Keys)}", ct);
         return Ok(new { scope, updated = values.Keys.Count });
     }
+
+    private bool HasFreshStepUp()
+        => auth.StepUpVerifiedAtUtc.HasValue && auth.StepUpVerifiedAtUtc.Value >= DateTime.UtcNow.Subtract(StepUpFreshWindow);
 
     [HttpPost("smtp/test")]
     public async Task<IActionResult> TestSmtp([FromBody] SmtpTestRequest request, CancellationToken ct)

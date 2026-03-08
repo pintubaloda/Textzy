@@ -31,6 +31,7 @@ public class AuthMiddleware(RequestDelegate next)
 
         var path = context.Request.Path.Value ?? string.Empty;
         var isAuthPath = path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/auth/two-factor", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/email-verification", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/accept-invite", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/auth/invite-preview", StringComparison.OrdinalIgnoreCase);
@@ -162,14 +163,32 @@ public class AuthMiddleware(RequestDelegate next)
 
         if (isProjectPath)
         {
-            auth.Set(user.Id, session.TenantId, user.Email, user.IsSuperAdmin ? RolePermissionCatalog.SuperAdmin : "owner", null, user.FullName);
+            auth.Set(
+                user.Id,
+                session.TenantId,
+                user.Email,
+                user.IsSuperAdmin ? RolePermissionCatalog.SuperAdmin : "owner",
+                null,
+                user.FullName,
+                session.Id,
+                session.TwoFactorVerifiedAtUtc,
+                session.StepUpVerifiedAtUtc);
             await _next(context);
             return;
         }
 
         if (user.IsSuperAdmin)
         {
-            auth.Set(user.Id, session.TenantId, user.Email, RolePermissionCatalog.SuperAdmin, null, user.FullName);
+            auth.Set(
+                user.Id,
+                session.TenantId,
+                user.Email,
+                RolePermissionCatalog.SuperAdmin,
+                null,
+                user.FullName,
+                session.Id,
+                session.TwoFactorVerifiedAtUtc,
+                session.StepUpVerifiedAtUtc);
             await _next(context);
             return;
         }
@@ -192,7 +211,16 @@ public class AuthMiddleware(RequestDelegate next)
             else effective.Remove(ov.Permission);
         }
 
-        auth.Set(user.Id, session.TenantId, user.Email, tenantUser.Role, effective.ToList(), user.FullName);
+        auth.Set(
+            user.Id,
+            session.TenantId,
+            user.Email,
+            tenantUser.Role,
+            effective.ToList(),
+            user.FullName,
+            session.Id,
+            session.TwoFactorVerifiedAtUtc,
+            session.StepUpVerifiedAtUtc);
         await _next(context);
 
         if (ShouldCountApiUsage(context.Request.Path.Value ?? string.Empty, context.Response.StatusCode))
@@ -247,20 +275,13 @@ public class AuthMiddleware(RequestDelegate next)
             return false;
         }
 
-        var rows = await db.PlatformSettings
-            .Where(x => x.Scope == "api-integration")
-            .ToListAsync(context.RequestAborted);
-
-        var settings = rows.ToDictionary(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase);
-        var keyConfig = settings.TryGetValue("apiKey", out var k) ? (k ?? string.Empty) : string.Empty;
-        var secretConfig = settings.TryGetValue("apiSecret", out var s) ? (s ?? string.Empty) : string.Empty;
-        var allowIpsRaw = settings.TryGetValue("ipWhitelist", out var ipw) ? (ipw ?? string.Empty) : string.Empty;
-        var enabledRaw = settings.TryGetValue("enabled", out var en) ? (en ?? string.Empty) : "false";
-
-        // Fallback to env/config when platform settings are not configured yet.
-        var expectedKey = string.IsNullOrWhiteSpace(keyConfig) ? (config["IntegrationApi:ApiKey"] ?? string.Empty) : keyConfig;
-        var expectedSecret = string.IsNullOrWhiteSpace(secretConfig) ? (config["IntegrationApi:ApiSecret"] ?? string.Empty) : secretConfig;
-        var enabled = bool.TryParse(enabledRaw, out var e) ? e : !string.IsNullOrWhiteSpace(expectedKey) && !string.IsNullOrWhiteSpace(expectedSecret);
+        var profile = await db.TenantCompanyProfiles
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenancy.TenantId, context.RequestAborted);
+        var expectedKey = crypto.Decrypt(profile?.ApiKeyEncrypted ?? string.Empty);
+        var expectedSecret = crypto.Decrypt(profile?.ApiPasswordEncrypted ?? string.Empty);
+        var allowIpsRaw = profile?.ApiIpWhitelist ?? string.Empty;
+        var enabled = profile?.PublicApiEnabled == true;
         if (!enabled)
             return false;
 
@@ -271,8 +292,7 @@ public class AuthMiddleware(RequestDelegate next)
             return false;
         }
 
-        var ipWhitelist = string.IsNullOrWhiteSpace(allowIpsRaw) ? (config["IntegrationApi:IpWhitelist"] ?? string.Empty) : allowIpsRaw;
-        if (!IsIpAllowed(context.Connection.RemoteIpAddress, ipWhitelist))
+        if (!IsIpAllowed(context.Connection.RemoteIpAddress, allowIpsRaw))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             await context.Response.WriteAsync("Client IP is not allowed.");
@@ -288,13 +308,7 @@ public class AuthMiddleware(RequestDelegate next)
             new[]
             {
                 PermissionCatalog.ApiRead,
-                PermissionCatalog.ApiWrite,
-                PermissionCatalog.InboxRead,
-                PermissionCatalog.InboxWrite,
-                PermissionCatalog.TemplatesRead,
-                PermissionCatalog.TemplatesWrite,
-                PermissionCatalog.AutomationRead,
-                PermissionCatalog.AutomationWrite
+                PermissionCatalog.ApiWrite
             },
             "API Client");
 
@@ -306,10 +320,8 @@ public class AuthMiddleware(RequestDelegate next)
         return path.StartsWith("/api/messages/", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/sms/", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/waba/smoke/", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/waba/debug/", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/api/automation/meta/flows", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/automation/metrics/flows", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/api/automation/flows/", StringComparison.OrdinalIgnoreCase);
+            || path.StartsWith("/api/automation/metrics/flows", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsHttpsRequest(HttpContext context)

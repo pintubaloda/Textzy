@@ -11,6 +11,7 @@ public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbCo
     public DbSet<User> Users => Set<User>();
     public DbSet<TenantUser> TenantUsers => Set<TenantUser>();
     public DbSet<SessionToken> SessionTokens => Set<SessionToken>();
+    public DbSet<TwoFactorChallenge> TwoFactorChallenges => Set<TwoFactorChallenge>();
     public DbSet<PlatformSetting> PlatformSettings => Set<PlatformSetting>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<TeamInvitation> TeamInvitations => Set<TeamInvitation>();

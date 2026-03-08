@@ -160,6 +160,7 @@ builder.Services.AddScoped<TenancyContext>();
 builder.Services.AddScoped<AuthContext>();
 builder.Services.AddScoped<PasswordHasher>();
 builder.Services.AddScoped<SessionService>();
+builder.Services.AddScoped<AuthenticatorTotpService>();
 builder.Services.AddScoped<RbacService>();
 builder.Services.AddScoped<SecretCryptoService>();
 builder.Services.AddScoped<SensitiveDataRedactor>();
@@ -354,6 +355,11 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "TaxRatePercent" numeric(5,2) NOT NULL DEFAULT 18;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "IsTaxExempt" boolean NOT NULL DEFAULT false;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "IsReverseCharge" boolean NOT NULL DEFAULT false;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "PublicApiEnabled" boolean NOT NULL DEFAULT false;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "ApiUsername" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "ApiPasswordEncrypted" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "ApiKeyEncrypted" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "ApiIpWhitelist" text NOT NULL DEFAULT '';""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "Users" (
@@ -410,8 +416,39 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "ExpiresAtUtc" timestamp with time zone;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now();""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "RevokedAtUtc" timestamp with time zone NULL;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "TwoFactorVerifiedAtUtc" timestamp with time zone NULL;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "StepUpVerifiedAtUtc" timestamp with time zone NULL;""");
 
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SessionTokens_TokenHash" ON "SessionTokens" ("TokenHash");""");
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "TwoFactorChallenges" (
+            "Id" uuid PRIMARY KEY,
+            "UserId" uuid NOT NULL,
+            "TenantId" uuid NOT NULL,
+            "SessionTokenId" uuid NULL,
+            "Purpose" text NOT NULL,
+            "Provider" text NOT NULL,
+            "ActionCode" text NOT NULL DEFAULT '',
+            "ChallengeTokenHash" text NOT NULL,
+            "ExpiresAtUtc" timestamp with time zone NOT NULL,
+            "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+            "VerifiedAtUtc" timestamp with time zone NULL,
+            "ConsumedAtUtc" timestamp with time zone NULL
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TwoFactorChallenges" ADD COLUMN IF NOT EXISTS "UserId" uuid;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TwoFactorChallenges" ADD COLUMN IF NOT EXISTS "TenantId" uuid;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TwoFactorChallenges" ADD COLUMN IF NOT EXISTS "SessionTokenId" uuid NULL;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TwoFactorChallenges" ADD COLUMN IF NOT EXISTS "Purpose" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TwoFactorChallenges" ADD COLUMN IF NOT EXISTS "Provider" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TwoFactorChallenges" ADD COLUMN IF NOT EXISTS "ActionCode" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TwoFactorChallenges" ADD COLUMN IF NOT EXISTS "ChallengeTokenHash" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TwoFactorChallenges" ADD COLUMN IF NOT EXISTS "ExpiresAtUtc" timestamp with time zone NOT NULL DEFAULT now();""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TwoFactorChallenges" ADD COLUMN IF NOT EXISTS "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now();""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TwoFactorChallenges" ADD COLUMN IF NOT EXISTS "VerifiedAtUtc" timestamp with time zone NULL;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TwoFactorChallenges" ADD COLUMN IF NOT EXISTS "ConsumedAtUtc" timestamp with time zone NULL;""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TwoFactorChallenges_ChallengeTokenHash" ON "TwoFactorChallenges" ("ChallengeTokenHash");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TwoFactorChallenges_UserId_Purpose" ON "TwoFactorChallenges" ("UserId","Purpose");""");
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "PlatformSettings" (
             "Id" uuid PRIMARY KEY,

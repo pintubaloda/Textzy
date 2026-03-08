@@ -5,9 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { MessageSquare, Eye, EyeOff, ArrowRight, Download } from "lucide-react";
+import { MessageSquare, Eye, EyeOff, ArrowRight, Download, ShieldCheck, Smartphone } from "lucide-react";
 import { toast } from "sonner";
-import { authLogin, authRequestEmailOtp, authEmailOtpStatus, authVerifyEmailOtp, checkApiHealth, getLastTenantSlug, getPublicMobileDownloadInfo, initializeMe } from "@/lib/api";
+import { authLogin, authRequestEmailOtp, authEmailOtpStatus, authVerifyEmailOtp, checkApiHealth, getLastTenantSlug, getPublicMobileDownloadInfo, initializeMe, verifyLoginTwoFactor } from "@/lib/api";
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -24,7 +24,8 @@ const LoginPage = () => {
   const [otpVerified, setOtpVerified] = useState(false);
   const [verificationId, setVerificationId] = useState("");
   const [verificationState, setVerificationState] = useState("");
-  const [otpFlowStage, setOtpFlowStage] = useState("credentials"); // credentials | waiting | otp
+  const [otpFlowStage, setOtpFlowStage] = useState("credentials"); // credentials | waiting | otp | authenticator
+  const [twoFactor, setTwoFactor] = useState({ challengeToken: "", provider: "", expiresAtUtc: "", code: "", busy: false });
   const [formData, setFormData] = useState({
     email: "",
     password: "",
@@ -39,7 +40,19 @@ const LoginPage = () => {
       emailVerificationId,
       tenantSlug: preferredTenantSlug || undefined,
     };
-    await authLogin(loginPayload);
+    const loginResult = await authLogin(loginPayload);
+    if (loginResult?.requiresTwoFactor) {
+      setTwoFactor({
+        challengeToken: loginResult.challengeToken || "",
+        provider: loginResult.provider || "",
+        expiresAtUtc: loginResult.expiresAtUtc || "",
+        code: "",
+        busy: false,
+      });
+      setOtpFlowStage("authenticator");
+      toast.message(loginResult?.message || "Enter your authenticator code to continue.");
+      return;
+    }
     const me = await initializeMe();
     if (!me?.email) {
       throw new Error("Login succeeded but session/profile init failed. Check backend auth response.");
@@ -61,6 +74,10 @@ const LoginPage = () => {
     }
     if (otpFlowStage === "waiting") {
       toast.message("Waiting for email verification action.");
+      return;
+    }
+    if (otpFlowStage === "authenticator") {
+      toast.message("Enter your authenticator code to continue.");
       return;
     }
     setLoading(true);
@@ -145,6 +162,29 @@ const LoginPage = () => {
     }
   };
 
+  const verifyAuthenticatorLogin = async () => {
+    if (!twoFactor.challengeToken || !twoFactor.code.trim()) {
+      toast.error("Enter the 6-digit authenticator code.");
+      return;
+    }
+    setTwoFactor((prev) => ({ ...prev, busy: true }));
+    try {
+      await verifyLoginTwoFactor({
+        challengeToken: twoFactor.challengeToken,
+        code: twoFactor.code,
+        tenantSlug: getLastTenantSlug() || undefined,
+      });
+      const me = await initializeMe();
+      if (!me?.email) throw new Error("Login succeeded but session/profile init failed.");
+      toast.success("Welcome back! Select your project...");
+      navigate("/projects", { replace: true });
+    } catch (err) {
+      toast.error(err?.message || "Two-factor verification failed.");
+    } finally {
+      setTwoFactor((prev) => ({ ...prev, busy: false }));
+    }
+  };
+
   useEffect(() => {
     if (healthChecked) return;
     setHealthChecked(true);
@@ -193,6 +233,7 @@ const LoginPage = () => {
                       setVerificationId("");
                       setVerificationState("");
                       setOtpFlowStage("credentials");
+                      setTwoFactor({ challengeToken: "", provider: "", expiresAtUtc: "", code: "", busy: false });
                     }}
                     required
                     data-testid="login-email-input"
@@ -243,9 +284,9 @@ const LoginPage = () => {
                   </Link>
                 </div>
 
-                {(otpFlowStage === "waiting" || otpFlowStage === "otp") ? (
+                {(otpFlowStage === "waiting" || otpFlowStage === "otp" || otpFlowStage === "authenticator") ? (
                   <div className="space-y-2 rounded-md border border-slate-200 p-3">
-                    <Label>Email Verification</Label>
+                    <Label>{otpFlowStage === "authenticator" ? "Authenticator Verification" : "Email Verification"}</Label>
                     {otpFlowStage === "waiting" ? (
                       <>
                         <p className="text-xs text-slate-700">
@@ -255,7 +296,7 @@ const LoginPage = () => {
                           {otpStatusBusy ? "Checking verification status..." : "Auto-checking verification status..."}
                         </div>
                       </>
-                    ) : (
+                    ) : otpFlowStage === "otp" ? (
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
                         <Input
                           type="text"
@@ -266,6 +307,46 @@ const LoginPage = () => {
                         <Button type="button" onClick={verifyOtp} disabled={verifyBusy || !otpSent} className="bg-orange-500 hover:bg-orange-600">
                           {verifyBusy ? "Verifying..." : "Verify"}
                         </Button>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-orange-100 bg-gradient-to-br from-orange-50 via-white to-amber-50 p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-orange-500 text-white shadow-sm">
+                            <ShieldCheck className="h-5 w-5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-semibold text-slate-900">Confirm sign-in</p>
+                              <span className="rounded-full bg-white px-2 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-orange-600 shadow-sm">
+                                {String(twoFactor.provider || "authenticator").replace(/_/g, " ")}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-sm text-slate-600">
+                              Open your authenticator app and enter the current 6-digit code to continue.
+                            </p>
+                            {twoFactor.expiresAtUtc ? (
+                              <p className="mt-1 text-xs text-slate-500">
+                                Challenge expires at {new Date(twoFactor.expiresAtUtc).toLocaleTimeString()}
+                              </p>
+                            ) : null}
+                            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+                              <div className="relative">
+                                <Smartphone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                                <Input
+                                  inputMode="numeric"
+                                  maxLength={6}
+                                  className="pl-10"
+                                  placeholder="Enter 6-digit code"
+                                  value={twoFactor.code}
+                                  onChange={(e) => setTwoFactor((prev) => ({ ...prev, code: e.target.value }))}
+                                />
+                              </div>
+                              <Button type="button" onClick={verifyAuthenticatorLogin} disabled={twoFactor.busy} className="bg-orange-500 hover:bg-orange-600">
+                                {twoFactor.busy ? "Verifying..." : "Verify & Continue"}
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>
