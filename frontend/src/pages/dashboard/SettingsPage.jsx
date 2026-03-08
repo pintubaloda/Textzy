@@ -18,7 +18,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Globe, Phone, Upload, Save, MessageSquare, Instagram, ChevronRight, ExternalLink, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { getCompanySettings, getNotificationSettings, getSession, saveCompanySettings, saveNotificationSettings, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
+import { getCompanySettings, getNotificationSettings, getSecurityOverview, getSession, saveCompanySettings, saveNotificationSettings, wabaExchangeCode, wabaGetEmbeddedConfig, wabaGetOnboardingStatus, wabaRecheckOnboarding, wabaStartOnboarding } from "@/lib/api";
 import { loadFacebookSdk } from "@/lib/facebookSdk";
 
 const SettingsPage = () => {
@@ -68,6 +68,12 @@ const SettingsPage = () => {
     dndUntilUtc: null,
   });
   const [notifyUpdatedAtUtc, setNotifyUpdatedAtUtc] = useState(null);
+  const [securityOverview, setSecurityOverview] = useState({
+    authenticator: { enabled: false, provider: "", enrolledAtUtc: "" },
+    currentSession: null,
+    recentSessions: [],
+    sessionRetention: { note: "" },
+  });
   const session = getSession() || {};
   const displayName = String(session.fullName || session.name || session.email || "User").trim();
   const [firstName, ...restNames] = displayName.split(" ");
@@ -226,6 +232,18 @@ const SettingsPage = () => {
         })
         .catch(() => {});
     }
+    if (activeTab === "security") {
+      getSecurityOverview()
+        .then((data) => {
+          setSecurityOverview(data || {
+            authenticator: { enabled: false, provider: "", enrolledAtUtc: "" },
+            currentSession: null,
+            recentSessions: [],
+            sessionRetention: { note: "" },
+          });
+        })
+        .catch(() => {});
+    }
   }, [activeTab, ensureEmbeddedConfig]);
 
   useEffect(() => {
@@ -252,6 +270,12 @@ const SettingsPage = () => {
     }
     return { appId, configId };
   };
+
+  const authenticatorEnabled = !!securityOverview?.authenticator?.enabled;
+  const authenticatorProvider = securityOverview?.authenticator?.provider
+    ? String(securityOverview.authenticator.provider).replaceAll("_", " ")
+    : "";
+  const recentSessions = Array.isArray(securityOverview?.recentSessions) ? securityOverview.recentSessions : [];
 
   const loadWabaStatus = async (force = false) => {
     try {
@@ -561,19 +585,19 @@ const SettingsPage = () => {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        {/* Security Tab */}
+        </TabsContent>        {/* Security Tab */}
         <TabsContent value="security">
           <div className="space-y-6">
             <Card className="border-slate-200">
               <CardHeader>
                 <CardTitle>Account Security</CardTitle>
-                <CardDescription>Password and session management are not fully wired in this tenant dashboard yet</CardDescription>
+                <CardDescription>Authenticator status, current login context, and recent web session visibility.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                  Use dedicated authentication flows for password reset, email verification, and device/session security. This page no longer shows fake editable security forms.
+                <div className={`rounded-xl border p-4 text-sm ${authenticatorEnabled ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                  {authenticatorEnabled
+                    ? `Two-factor authentication is enabled using ${authenticatorProvider || "your authenticator app"}. Login and sensitive actions now require a valid 6-digit code.`
+                    : "Two-factor authentication is not enabled on this account yet. Open Integrations > Security and scan the QR code in Google Authenticator or Microsoft Authenticator."}
                 </div>
                 <div className="grid md:grid-cols-2 gap-4 text-sm">
                   <div className="rounded-lg border border-slate-200 p-4">
@@ -593,11 +617,28 @@ const SettingsPage = () => {
             <Card className="border-slate-200">
               <CardHeader>
                 <CardTitle>Two-Factor Authentication</CardTitle>
-                <CardDescription>2FA controls will appear here once tenant-level auth policy APIs are exposed</CardDescription>
+                <CardDescription>Current authenticator enrollment state for this login account.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                  2FA policy is not configurable from this page yet. When backend support is added, this section will manage authenticator enrollment and recovery controls.
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="font-medium text-slate-900">{authenticatorEnabled ? "Authenticator enabled" : "Authenticator not enabled"}</p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {authenticatorEnabled
+                          ? `${authenticatorProvider || "Authenticator"} enrolled on ${fmt(securityOverview?.authenticator?.enrolledAtUtc)}`
+                          : "No authenticator is enrolled yet for this account."}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Badge className={authenticatorEnabled ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-100" : "bg-slate-100 text-slate-600 hover:bg-slate-100"}>
+                        {authenticatorEnabled ? "Enabled" : "Disabled"}
+                      </Badge>
+                      <Button variant="outline" onClick={() => window.location.assign("/dashboard/integrations")}>
+                        {authenticatorEnabled ? "Manage 2FA" : "Enable 2FA"}
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -605,24 +646,30 @@ const SettingsPage = () => {
             <Card className="border-slate-200">
               <CardHeader>
                 <CardTitle>Active Sessions</CardTitle>
-                <CardDescription>Current authenticated context</CardDescription>
+                <CardDescription>Recent web sessions with IP address and device metadata.</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                        <Globe className="w-5 h-5 text-green-600" />
+                  {(recentSessions.length ? recentSessions : [securityOverview?.currentSession].filter(Boolean)).map((row) => (
+                    <div key={row.id || "current"} className="flex items-center justify-between gap-4 rounded-lg bg-slate-50 p-4">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                          <Globe className="w-5 h-5 text-green-600" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-slate-900">{row.isCurrent ? "Current web session" : (row.deviceLabel || "Recent session")}</p>
+                          <p className="text-sm text-slate-500">{row.lastSeenIpAddress || row.createdIpAddress || "IP unavailable"} • {row.deviceLabel || "Unknown device"}</p>
+                          <p className="text-xs text-slate-500">Started {fmt(row.createdAtUtc)} • Last seen {fmt(row.lastSeenAtUtc || row.createdAtUtc)}</p>
+                          {row.twoFactorVerified ? <p className="text-xs text-emerald-600">2FA verified</p> : null}
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium text-slate-900">Current web session</p>
-                        <p className="text-sm text-slate-500">{session.email || "Unknown user"} â€¢ Active now</p>
-                      </div>
+                      <Badge className={row.isRevoked ? "bg-slate-100 text-slate-600 hover:bg-slate-100" : "bg-green-100 text-green-700 hover:bg-green-100"}>
+                        {row.isRevoked ? "Revoked" : row.isCurrent ? "Active" : "Recent"}
+                      </Badge>
                     </div>
-                    <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Active</Badge>
-                  </div>
+                  ))}
                   <div className="rounded-lg border border-slate-200 p-4 text-sm text-slate-600">
-                    Historical session listing and revoke actions are not wired yet. Dummy device rows have been removed to avoid showing fake security data.
+                    {securityOverview?.sessionRetention?.note || "Session metadata is captured for recent web sessions. Lat/long is not collected in the current deployment."}
                   </div>
                 </div>
               </CardContent>
@@ -893,3 +940,4 @@ const SettingsPage = () => {
 };
 
 export default SettingsPage;
+

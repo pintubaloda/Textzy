@@ -6,7 +6,7 @@ using Textzy.Api.Models;
 
 namespace Textzy.Api.Services;
 
-public class SessionService(ControlDbContext db)
+public class SessionService(ControlDbContext db, IHttpContextAccessor httpContextAccessor)
 {
     private const int SessionHours = 12;
 
@@ -29,7 +29,12 @@ public class SessionService(ControlDbContext db)
             UserId = userId,
             TenantId = tenantId,
             TokenHash = HashToken(opaqueToken),
+            CreatedIpAddress = RequestMetadata.GetClientIp(httpContextAccessor.HttpContext),
+            LastSeenIpAddress = RequestMetadata.GetClientIp(httpContextAccessor.HttpContext),
+            UserAgent = RequestMetadata.GetUserAgent(httpContextAccessor.HttpContext),
+            DeviceLabel = RequestMetadata.GetDeviceLabel(httpContextAccessor.HttpContext),
             ExpiresAtUtc = DateTime.UtcNow.AddHours(SessionHours),
+            LastSeenAtUtc = DateTime.UtcNow,
             TwoFactorVerifiedAtUtc = twoFactorVerifiedAtUtc,
             StepUpVerifiedAtUtc = stepUpVerifiedAtUtc
         };
@@ -43,10 +48,23 @@ public class SessionService(ControlDbContext db)
     {
         var hash = HashToken(opaqueToken);
         var now = DateTime.UtcNow;
-        return db.SessionTokens.FirstOrDefault(s =>
+        var session = db.SessionTokens.FirstOrDefault(s =>
             s.TokenHash == hash &&
             s.RevokedAtUtc == null &&
             s.ExpiresAtUtc > now);
+        if (session is null) return null;
+        session.LastSeenAtUtc = now;
+        var ip = RequestMetadata.GetClientIp(httpContextAccessor.HttpContext);
+        if (!string.IsNullOrWhiteSpace(ip))
+            session.LastSeenIpAddress = ip;
+        var ua = RequestMetadata.GetUserAgent(httpContextAccessor.HttpContext);
+        if (!string.IsNullOrWhiteSpace(ua))
+        {
+            session.UserAgent = ua;
+            session.DeviceLabel = RequestMetadata.GetDeviceLabel(httpContextAccessor.HttpContext);
+        }
+        db.SaveChanges();
+        return session;
     }
 
     public async Task RevokeAsync(string opaqueToken, CancellationToken ct = default)

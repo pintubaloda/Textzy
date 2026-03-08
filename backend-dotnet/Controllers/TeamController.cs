@@ -383,6 +383,9 @@ public class TeamController(
                 id = a.Id,
                 action = a.Action,
                 details = a.Details,
+                ipAddress = a.IpAddress,
+                userAgent = a.UserAgent,
+                deviceLabel = a.DeviceLabel,
                 createdAtUtc = a.CreatedAtUtc
             })
             .ToList();

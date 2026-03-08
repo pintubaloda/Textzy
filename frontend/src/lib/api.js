@@ -1285,6 +1285,10 @@ export async function saveNotificationSettings(payload) {
   return apiPut('/api/settings/notifications', payload)
 }
 
+export async function getSecurityOverview() {
+  return apiGet('/api/settings/security')
+}
+
 export async function updateContactGroupById(id, payload) {
   return apiPut(`/api/contact-groups/${encodeURIComponent(id)}`, payload || {})
 }

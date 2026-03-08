@@ -415,6 +415,11 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "TokenHash" text;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "ExpiresAtUtc" timestamp with time zone;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now();""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "CreatedIpAddress" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "LastSeenIpAddress" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "UserAgent" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "DeviceLabel" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "LastSeenAtUtc" timestamp with time zone NULL;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "RevokedAtUtc" timestamp with time zone NULL;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "TwoFactorVerifiedAtUtc" timestamp with time zone NULL;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "StepUpVerifiedAtUtc" timestamp with time zone NULL;""");
@@ -468,9 +473,15 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "ActorUserId" uuid NOT NULL,
             "Action" text NOT NULL,
             "Details" text NOT NULL,
+            "IpAddress" text NOT NULL DEFAULT '',
+            "UserAgent" text NOT NULL DEFAULT '',
+            "DeviceLabel" text NOT NULL DEFAULT '',
             "CreatedAtUtc" timestamp with time zone NOT NULL
         );
         """);
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "AuditLogs" ADD COLUMN IF NOT EXISTS "IpAddress" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "AuditLogs" ADD COLUMN IF NOT EXISTS "UserAgent" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "AuditLogs" ADD COLUMN IF NOT EXISTS "DeviceLabel" text NOT NULL DEFAULT '';""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AuditLogs_CreatedAtUtc" ON "AuditLogs" ("CreatedAtUtc");""");
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "WebhookEvents" (

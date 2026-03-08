@@ -4,12 +4,12 @@ Professional SMS integration reference for Textzy.
 
 This document covers:
 - simple public SMS API
-- authenticated SMS send
+- app-internal tenant SMS send
 - DLT requirements
 - sender and template registry
 - Tata gateway behavior
-- webhooks and delivery status
-- testing and operational notes
+- tenant delivery reporting
+- operational notes
 
 ## 1. Base URL
 
@@ -32,12 +32,12 @@ Endpoints:
 - `GET /api/public/messages/send`
 - `POST /api/public/messages/send`
 
-### 2.2 Authenticated Tenant SMS API
+### 2.2 Textzy App SMS API
 
 Use when:
-- tenant is already logged in
-- send is triggered inside Textzy web/mobile/desktop apps
-- SMS activity must follow tenant billing and inbox workflow
+- the user is already signed in to Textzy
+- SMS is triggered from Textzy web, mobile, desktop, workflow, OTP, or automation
+- billing, audit, credits, and message history must stay inside Textzy
 
 Endpoint:
 - `POST /api/messages/send`
@@ -150,12 +150,23 @@ Common codes:
 - `429` rate limit exceeded
 - `503` gateway temporarily unavailable
 
-## 4. Authenticated SMS Send
+## 4. Textzy App SMS Send
 
 Endpoint:
 - `POST /api/messages/send`
 
-Example:
+This is not the partner/public API.
+
+It is the internal tenant API used by Textzy applications after login.
+
+Typical flow:
+1. user signs in to Textzy
+2. user selects a project
+3. Textzy checks SMS credits / plan rules
+4. Textzy sends the request to Tata using centrally managed gateway credentials
+5. delivery status is recorded in tenant reports and ledger
+
+Example request from Textzy app:
 
 ```json
 {
@@ -174,6 +185,19 @@ Requirements:
 - idempotency key header
 - SMS credits or valid billing allowance
 - cookie-based web/mobile/desktop session for first-party Textzy apps
+
+What the tenant/user supplies in this flow:
+- recipient
+- message body
+- sender ID
+- PE ID
+- template ID
+
+What Textzy supplies internally:
+- Tata gateway username
+- Tata gateway password
+- routing and audit metadata
+- billing / ledger handling
 
 ## 5. DLT Requirements
 
@@ -204,12 +228,19 @@ https://smsgw.tatatel.co.in:9095/campaignService/campaigns/qs
   &Template_ID=<TemplateID>
 ```
 
-Platform-managed Tata credentials are configured centrally, while the request payload passes:
+Textzy keeps Tata credentials at platform level and uses them internally.
+
+The tenant/request payload passes only:
 - recipient
 - sender
 - message
 - PE_ID
 - Template_ID
+
+This means:
+- customer integrations never need direct Tata credentials
+- tenant users never see platform gateway secrets
+- one tenant cannot reuse another tenant's API credentials
 
 ## 7. SMS Template Registry
 
@@ -252,35 +283,22 @@ Used for:
 - route type
 - verification state
 
-## 9. SMS Webhooks
+## 9. Delivery and Status Reporting
 
-### 9.1 DLR Webhook
+After a message is accepted:
+- Textzy stores the provider job ID
+- delivery callbacks update tenant SMS report
+- ledger and status history are refreshed automatically
 
-Endpoint:
-- `POST /api/sms/webhook/tata?tenantSlug=<tenantSlug>`
+Tenant-visible statuses typically include:
+- accepted
+- queued
+- sent
+- delivered
+- failed
+- rejected
 
-Purpose:
-- delivery updates
-- status propagation
-- tenant report updates
-- ledger finalization
-
-Operational note:
-- this endpoint is intended for direct gateway callback wiring by platform owner
-- do not expose or document webhook secrets in browser URLs or client-side integrations
-
-### 9.2 Inbound STOP / Unsubscribe Webhook
-
-Endpoint:
-- `POST /api/sms/webhook/tata/inbound?tenantSlug=<tenantSlug>`
-
-Supported opt-out keywords:
-- `stop`
-- `unsubscribe`
-- `optout`
-- `cancel`
-- `quit`
-- `end`
+STOP / unsubscribe handling is managed by Textzy internally and is not part of the normal tenant integration surface.
 
 ## 10. SMS Segment Logic
 
@@ -296,27 +314,24 @@ Textzy uses standard segment calculation:
 - `71-134` chars = 2 SMS
 - multipart uses `67` chars per segment
 
-## 11. Testing
-
-### Platform SMS test endpoint
-- `POST /api/platform/settings/sms/test`
-
-Typical use:
-- validate Tata connection
-- validate sender/PE/template mapping
-- confirm outbound gateway behavior
-
-## 12. Production Checklist
+## 11. Production Checklist
 
 - use backend URL only
 - use HTTPS only
 - protect API credentials
 - validate sender, PE_ID, and Template_ID
 - keep message text aligned with approved DLT template
-- monitor DLR callbacks
-- run SMS test before production rollout
+- verify delivery status in Textzy reports after go-live
 
-## 13. Best-Practice Recommendation
+## 12. Best-Practice Recommendation
+
+Use the public SMS API for outside systems such as:
+- CRM
+- ERP
+- websites
+- external admin panels
+
+Use the Textzy app SMS API only from inside Textzy products.
 
 For simple partner integrations:
 - use `POST /api/public/messages/send`

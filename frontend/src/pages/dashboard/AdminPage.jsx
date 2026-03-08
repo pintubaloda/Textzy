@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ApiDocsViewer from "@/components/docs/ApiDocsViewer";
 import {
   ArrowUpRight,
   BadgeIndianRupee,
@@ -134,6 +134,8 @@ export default function AdminPage() {
   const [plans, setPlans] = useState([]);
   const [assignPlanCode, setAssignPlanCode] = useState("");
   const [assignCycle, setAssignCycle] = useState("monthly");
+  const [assignStatus, setAssignStatus] = useState("active");
+  const [trialDays, setTrialDays] = useState(14);
   const [assigningPlan, setAssigningPlan] = useState(false);
   const [tenantFeatures, setTenantFeatures] = useState(DEFAULT_FEATURES);
   const [savingFeatures, setSavingFeatures] = useState(false);
@@ -452,6 +454,32 @@ export default function AdminPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Subscription Status</Label>
+                  <Select value={assignStatus} onValueChange={setAssignStatus}>
+                    <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="trial">Trial</SelectItem>
+                      <SelectItem value="suspended">Suspended</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {assignStatus === "trial" ? (
+                  <div className="space-y-2">
+                    <Label>Trial Days</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={trialDays}
+                      onChange={(event) => setTrialDays(Number(event.target.value || 14))}
+                      className="h-11 rounded-xl"
+                    />
+                  </div>
+                ) : null}
+              </div>
               <Button
                 className="h-11 w-full rounded-xl bg-orange-500 hover:bg-orange-600"
                 disabled={!selectedTenantId || !assignPlanCode || assigningPlan}
@@ -461,10 +489,11 @@ export default function AdminPage() {
                     await assignPlatformCustomerPlan(selectedTenantId, {
                       planCode: assignPlanCode,
                       billingCycle: assignCycle,
-                      status: "active",
+                      status: assignStatus,
+                      trialDays: assignStatus === "trial" ? trialDays : 0,
                       resetStartDate: true,
                     });
-                    toast.success("Plan assigned successfully.");
+                    toast.success(assignStatus === "trial" ? "Trial plan assigned successfully." : "Plan assigned successfully.");
                     await Promise.all([loadCustomers(query), loadTenantDetails()]);
                   } catch (error) {
                     toast.error(error?.message || "Failed to assign plan.");
@@ -889,13 +918,17 @@ export default function AdminPage() {
 
             <TabsContent value="activity">
               <SectionTable
-                headers={["Time", "Action", "Details"]}
+                headers={["Time", "Action", "Details", "IP / Device"]}
                 empty="No activity has been recorded for this tenant."
                 rows={activity.map((event) => (
                   <tr key={event.id} className="border-t border-slate-100">
                     <td className="px-4 py-3 text-slate-700">{formatDateTime(event.createdAtUtc)}</td>
                     <td className="px-4 py-3 font-medium text-slate-900">{event.action || "-"}</td>
                     <td className="px-4 py-3 text-slate-700">{event.details || "-"}</td>
+                    <td className="px-4 py-3 text-slate-700">
+                      <div>{event.ipAddress || "-"}</div>
+                      <div className="text-xs text-slate-500">{event.deviceLabel || event.userAgent || "No device data"}</div>
+                    </td>
                   </tr>
                 ))}
               />
@@ -904,52 +937,12 @@ export default function AdminPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={docViewer.open} onOpenChange={(open) => setDocViewer((prev) => ({ ...prev, open }))}>
-        <DialogContent className="max-w-6xl overflow-hidden border-slate-200 p-0">
-          <DialogHeader className="border-b border-slate-200 bg-[linear-gradient(135deg,#fff7ed_0%,#ffffff_60%,#f8fafc_100%)] px-6 py-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <DialogTitle className="text-xl font-bold text-slate-950">
-                  {docViewer.type === "sms" ? "SMS API Reference" : "WhatsApp API Reference"}
-                </DialogTitle>
-                <DialogDescription className="mt-1 text-sm text-slate-600">
-                  {docViewer.type === "sms"
-                    ? "Reference for SMS public API, DLT registry, Tata routing, delivery callbacks, and operational controls."
-                    : "Reference for WhatsApp messaging, templates, media, flow builder, webhooks, diagnostics, and production readiness."}
-                </DialogDescription>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant={docViewer.type === "sms" ? "default" : "outline"} className={docViewer.type === "sms" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setDocViewer({ open: true, type: "sms" })}>
-                  SMS API
-                </Button>
-                <Button variant={docViewer.type === "whatsapp" ? "default" : "outline"} className={docViewer.type === "whatsapp" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setDocViewer({ open: true, type: "whatsapp" })}>
-                  WhatsApp API
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    window.open(
-                      docViewer.type === "sms" ? "/docs/sms-api-reference.html" : "/docs/whatsapp-api-reference.html",
-                      "_blank",
-                      "noopener,noreferrer"
-                    )
-                  }
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Open Full Page
-                </Button>
-              </div>
-            </div>
-          </DialogHeader>
-          <div className="h-[78vh] bg-slate-50">
-            <iframe
-              title={docViewer.type === "sms" ? "SMS API Reference" : "WhatsApp API Reference"}
-              src={docViewer.type === "sms" ? "/docs/sms-api-reference.html" : "/docs/whatsapp-api-reference.html"}
-              className="h-full w-full border-0 bg-white"
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ApiDocsViewer
+        open={docViewer.open}
+        onOpenChange={(open) => setDocViewer((prev) => ({ ...prev, open }))}
+        type={docViewer.type}
+        onTypeChange={(nextType) => setDocViewer({ open: true, type: nextType })}
+      />
     </div>
   );
 }

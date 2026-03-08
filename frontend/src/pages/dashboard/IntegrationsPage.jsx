@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ApiDocsViewer from "@/components/docs/ApiDocsViewer";
 import {
   BookOpenText,
   CreditCard,
@@ -420,52 +420,12 @@ const IntegrationsPage = () => {
         </div>
       </div>
 
-      <Dialog open={docViewer.open} onOpenChange={(open) => setDocViewer((prev) => ({ ...prev, open }))}>
-        <DialogContent className="max-w-6xl border-slate-200 p-0 overflow-hidden">
-          <DialogHeader className="border-b border-slate-200 bg-[linear-gradient(135deg,#fff7ed_0%,#ffffff_60%,#f8fafc_100%)] px-6 py-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <DialogTitle className="text-xl font-bold text-slate-950">
-                  {docViewer.type === "sms" ? "SMS API Reference" : "WhatsApp API Reference"}
-                </DialogTitle>
-                <DialogDescription className="mt-1 text-sm text-slate-600">
-                  {docViewer.type === "sms"
-                    ? "Reference for SMS public API, DLT registry, Tata mapping, sender setup, webhook flow, and production rollout."
-                    : "Reference for WhatsApp messaging, templates, media, flow builder, webhook processing, diagnostics, and operational readiness."}
-                </DialogDescription>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant={docViewer.type === "sms" ? "default" : "outline"} className={docViewer.type === "sms" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setDocViewer({ open: true, type: "sms" })}>
-                  SMS API
-                </Button>
-                <Button variant={docViewer.type === "whatsapp" ? "default" : "outline"} className={docViewer.type === "whatsapp" ? "bg-orange-500 hover:bg-orange-600" : ""} onClick={() => setDocViewer({ open: true, type: "whatsapp" })}>
-                  WhatsApp API
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    window.open(
-                      docViewer.type === "sms" ? "/docs/sms-api-reference.html" : "/docs/whatsapp-api-reference.html",
-                      "_blank",
-                      "noopener,noreferrer"
-                    )
-                  }
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Open Full Page
-                </Button>
-              </div>
-            </div>
-          </DialogHeader>
-          <div className="h-[78vh] bg-slate-50">
-            <iframe
-              title={docViewer.type === "sms" ? "SMS API Reference" : "WhatsApp API Reference"}
-              src={docViewer.type === "sms" ? "/docs/sms-api-reference.html" : "/docs/whatsapp-api-reference.html"}
-              className="h-full w-full border-0 bg-white"
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ApiDocsViewer
+        open={docViewer.open}
+        onOpenChange={(open) => setDocViewer((prev) => ({ ...prev, open }))}
+        type={docViewer.type}
+        onTypeChange={(nextType) => setDocViewer({ open: true, type: nextType })}
+      />
     </div>
   );
 };

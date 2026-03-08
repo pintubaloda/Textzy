@@ -90,6 +90,50 @@ public class SettingsController(
         return Ok(Map(profile));
     }
 
+    [HttpGet("security")]
+    public async Task<IActionResult> GetSecurity(CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
+
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == auth.UserId && x.IsActive, ct);
+        if (user is null) return Unauthorized();
+
+        var recentSessions = await db.SessionTokens.AsNoTracking()
+            .Where(x => x.UserId == auth.UserId && x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(10)
+            .ToListAsync(ct);
+
+        return Ok(new
+        {
+            user = new
+            {
+                auth.UserId,
+                auth.Email,
+                name = auth.FullName,
+                tenantId = tenancy.TenantId,
+                tenantSlug = tenancy.TenantSlug,
+                projectName = tenancy.TenantSlug,
+                auth.Role
+            },
+            authenticator = new
+            {
+                provider = string.IsNullOrWhiteSpace(user.AuthenticatorProvider) ? "" : user.AuthenticatorProvider,
+                enabled = user.AuthenticatorEnabledAtUtc.HasValue,
+                enrolledAtUtc = user.AuthenticatorEnabledAtUtc
+            },
+            currentSession = recentSessions
+                .Where(x => x.Id == auth.SessionId)
+                .Select(x => MapSession(x, true))
+                .FirstOrDefault(),
+            recentSessions = recentSessions.Select(x => MapSession(x, x.Id == auth.SessionId)).ToList(),
+            sessionRetention = new
+            {
+                note = "IP address, device label, and user agent are captured for web sessions. Lat/long is not collected."
+            }
+        });
+    }
+
     [HttpPut("company")]
     public async Task<IActionResult> UpsertCompany([FromBody] UpsertCompanyProfileRequest request, CancellationToken ct)
     {
@@ -219,6 +263,23 @@ public class SettingsController(
             _ => "whatsapp"
         };
     }
+
+    private static object MapSession(SessionToken s, bool isCurrent) => new
+    {
+        s.Id,
+        s.CreatedAtUtc,
+        s.LastSeenAtUtc,
+        s.ExpiresAtUtc,
+        s.RevokedAtUtc,
+        s.CreatedIpAddress,
+        s.LastSeenIpAddress,
+        s.UserAgent,
+        deviceLabel = string.IsNullOrWhiteSpace(s.DeviceLabel) ? "Unknown device" : s.DeviceLabel,
+        twoFactorVerified = s.TwoFactorVerifiedAtUtc.HasValue,
+        stepUpVerified = s.StepUpVerifiedAtUtc.HasValue,
+        isCurrent,
+        isRevoked = s.IsRevoked
+    };
 
     public sealed class UpsertCompanyProfileRequest
     {

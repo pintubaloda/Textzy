@@ -67,7 +67,7 @@
   <div class="wrap">
     <section class="hero">
       <h1>Textzy WhatsApp API Reference</h1>
-      <p>Professional reference for Textzy WhatsApp Business messaging, approved templates, media upload, webhook processing, automation flows, Meta flow management, smoke testing, diagnostics, and tenant analytics.</p>
+      <p>Professional tenant-facing reference for Textzy WhatsApp Business messaging, approved templates, media upload, webhook processing, automation flows, Meta flow management, customer request examples, and tenant analytics. Platform-only operator APIs are intentionally excluded.</p>
       <div class="hero-grid">
         <div class="hero-box">
           <strong>Coverage</strong>
@@ -76,7 +76,7 @@
             <span class="pill">Template Messaging</span>
             <span class="pill">Interactive Messages</span>
             <span class="pill">Flows + Meta</span>
-            <span class="pill">Webhook + Diagnostics</span>
+            <span class="pill">Webhook + Analytics</span>
           </div>
         </div>
         <div class="hero-box">
@@ -99,11 +99,42 @@
             <li><code>GET /api/auth/me</code></li>
             <li><code>POST /api/auth/refresh</code></li>
           </ul>
-          <div class="note">Use authenticated tenant APIs for WhatsApp send, templates, inbox, analytics, and automation. Tenant context comes from the selected project, not from caller-supplied public credentials. Public simple URL mode is intended for SMS only.</div>
+          <div class="note">Use authenticated tenant APIs for WhatsApp send, templates, inbox, analytics, and automation. Tenant context comes from the selected project, not from caller-supplied public credentials. Public simple URL mode is intended for SMS only, and platform-only operator endpoints are not part of this reference.</div>
         </section>
 
         <section class="card">
-          <h2>2. Session and Template Messaging</h2>
+          <h2>2. Complete Working Flow</h2>
+          <ol style="color:var(--muted); line-height:1.7; padding-left:18px; margin:0;">
+            <li>Login to Textzy</li>
+            <li>If enabled, complete authenticator verification</li>
+            <li>Load projects and switch to the target tenant</li>
+            <li>Check WABA readiness</li>
+            <li>Send session, template, interactive, or flow message</li>
+            <li>Monitor inbox, webhook status, and analytics</li>
+          </ol>
+        </section>
+
+        <section class="card">
+          <h2>3. Login and Project Selection</h2>
+          <h3>Login</h3>
+          <pre>{
+  "email": "owner@company.com",
+  "password": "StrongPassword"
+}</pre>
+          <h3>Two-Factor Verify</h3>
+          <pre>{
+  "challengeToken": "LOGIN_CHALLENGE_TOKEN",
+  "code": "123456"
+}</pre>
+          <h3>Switch Project</h3>
+          <pre>{
+  "slug": "moneyart"
+}</pre>
+          <div class="note">WhatsApp tenant context comes from the selected project. This is not a public URL-style API.</div>
+        </section>
+
+        <section class="card">
+          <h2>4. Session and Template Messaging</h2>
           <h3>Session Message</h3>
           <pre>{
   "recipient": "919999999999",
@@ -124,7 +155,7 @@
         </section>
 
         <section class="card">
-          <h2>3. Interactive Messaging</h2>
+          <h2>5. Interactive Messaging</h2>
           <h3>Buttons</h3>
           <pre>{
   "recipient": "919999999999",
@@ -151,7 +182,7 @@
         </section>
 
         <section class="card">
-          <h2>4. Media and Template Assets</h2>
+          <h2>6. Media and Template Assets</h2>
           <ul>
             <li><code>POST /api/messages/upload-whatsapp-media</code></li>
             <li><code>POST /api/messages/upload-whatsapp-asset</code></li>
@@ -161,7 +192,7 @@
         </section>
 
         <section class="card">
-          <h2>5. WhatsApp Template Management</h2>
+          <h2>7. WhatsApp Template Management</h2>
           <ul>
             <li><code>GET /api/templates</code></li>
             <li><code>POST /api/templates</code></li>
@@ -181,7 +212,7 @@
 
       <div>
         <section class="card">
-          <h2>6. Webhooks</h2>
+          <h2>8. Webhooks</h2>
           <h3>Verification</h3>
           <p><code>GET /api/waba/webhook</code></p>
           <h3>Event Receiver</h3>
@@ -190,7 +221,7 @@
         </section>
 
         <section class="card">
-          <h2>7. Flow Builder and Automation</h2>
+          <h2>9. Flow Builder and Automation</h2>
           <ul>
             <li><code>GET /api/automation/flows</code></li>
             <li><code>POST /api/automation/flows</code></li>
@@ -207,7 +238,7 @@
         </section>
 
         <section class="card">
-          <h2>8. Meta Flow Management</h2>
+          <h2>10. Meta Flow Management</h2>
           <ul>
             <li><code>GET /api/automation/meta/flows</code></li>
             <li><code>POST /api/automation/meta/flows</code></li>
@@ -220,7 +251,7 @@
         </section>
 
         <section class="card">
-          <h2>9. Readiness and Smoke</h2>
+          <h2>11. Readiness and Smoke</h2>
           <p><code>GET /api/waba/smoke/readiness</code></p>
           <pre>{
   "recipient": "919999999999",
@@ -232,19 +263,19 @@
           <div class="mini-grid">
             <div class="metric"><b>Readiness</b> WABA config, webhook, template sync, runtime counters</div>
             <div class="metric"><b>Smoke Run</b> Session send, template send, session-open validation</div>
-            <div class="metric"><b>Diagnostics</b> Tenant probe, graph probe, webhook health</div>
+            <div class="metric"><b>Analytics</b> Tenant overview, webhook status, flow metrics</div>
           </div>
         </section>
 
         <section class="card">
-          <h2>10. Analytics and Operations</h2>
+          <h2>12. Analytics and Operations</h2>
           <ul>
             <li><code>GET /api/analytics/overview</code></li>
             <li><code>GET /api/analytics/webhook-status</code></li>
             <li><code>GET /api/automation/metrics/flows</code></li>
             <li><code>GET /api/automation/metrics/flows/events</code></li>
           </ul>
-          <div class="warn">Before production rollout, confirm WABA is connected, webhook is verified, templates are approved, smoke tests pass, and live event analytics match expected conversation behavior.</div>
+          <div class="warn">Before production rollout, confirm WABA is connected, webhook is verified, templates are approved, smoke tests pass, live event analytics match expected conversation behavior, and operational users can complete login plus project selection cleanly.</div>
           <div class="links" style="margin-top:14px;">
             <a href="/docs/WHATSAPP_API_REFERENCE.md" target="_blank" rel="noopener noreferrer">Open Markdown Source</a>
             <a href="/docs/index.html" target="_blank" rel="noopener noreferrer">Documentation Index</a>

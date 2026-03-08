@@ -580,6 +580,9 @@ public class PlatformCustomersController(
             x.ActorUserId,
             x.Action,
             x.Details,
+            x.IpAddress,
+            x.UserAgent,
+            x.DeviceLabel,
             x.CreatedAtUtc
         }));
     }
@@ -601,6 +604,10 @@ public class PlatformCustomersController(
         var cycle = string.IsNullOrWhiteSpace(request.BillingCycle) ? "monthly" : request.BillingCycle.Trim().ToLowerInvariant();
         if (cycle != "monthly" && cycle != "yearly" && cycle != "lifetime" && cycle != "usage_based")
             return BadRequest("billingCycle must be monthly, yearly, lifetime, or usage_based.");
+        var status = string.IsNullOrWhiteSpace(request.Status) ? "active" : request.Status.Trim().ToLowerInvariant();
+        if (status is not ("active" or "trial" or "trialing" or "suspended" or "cancelled"))
+            return BadRequest("status must be active, trial, suspended, or cancelled.");
+        var trialDays = Math.Clamp(request.TrialDays, 0, 365);
 
         var sub = await db.TenantSubscriptions
             .Where(x => x.TenantId == tenantId)
@@ -614,16 +621,10 @@ public class PlatformCustomersController(
                 Id = Guid.NewGuid(),
                 TenantId = tenantId,
                 PlanId = plan.Id,
-                Status = "active",
+                Status = status,
                 BillingCycle = cycle,
                 StartedAtUtc = DateTime.UtcNow,
-                RenewAtUtc = cycle switch
-                {
-                    "yearly" => DateTime.UtcNow.AddYears(1),
-                    "monthly" => DateTime.UtcNow.AddMonths(1),
-                    "usage_based" => DateTime.MaxValue,
-                    _ => DateTime.MaxValue
-                },
+                RenewAtUtc = ResolveRenewAtUtc(cycle, status, trialDays),
                 CreatedAtUtc = DateTime.UtcNow,
                 UpdatedAtUtc = DateTime.UtcNow
             };
@@ -632,22 +633,16 @@ public class PlatformCustomersController(
         else
         {
             sub.PlanId = plan.Id;
-            sub.Status = string.IsNullOrWhiteSpace(request.Status) ? "active" : request.Status.Trim().ToLowerInvariant();
+            sub.Status = status;
             sub.BillingCycle = cycle;
             if (request.ResetStartDate) sub.StartedAtUtc = DateTime.UtcNow;
-            sub.RenewAtUtc = cycle switch
-            {
-                "yearly" => DateTime.UtcNow.AddYears(1),
-                "monthly" => DateTime.UtcNow.AddMonths(1),
-                "usage_based" => DateTime.MaxValue,
-                _ => DateTime.MaxValue
-            };
+            sub.RenewAtUtc = ResolveRenewAtUtc(cycle, status, trialDays);
             sub.CancelledAtUtc = null;
             sub.UpdatedAtUtc = DateTime.UtcNow;
         }
 
         await db.SaveChangesAsync(ct);
-        await audit.WriteAsync("platform.customer.assign_plan", $"tenant={tenantId}; plan={plan.Code}; cycle={cycle}", ct);
+        await audit.WriteAsync("platform.customer.assign_plan", $"tenant={tenantId}; plan={plan.Code}; cycle={cycle}; status={status}; trialDays={trialDays}", ct);
 
         return Ok(new
         {
@@ -698,6 +693,21 @@ public class PlatformCustomersController(
         public string BillingCycle { get; set; } = "monthly";
         public string Status { get; set; } = "active";
         public bool ResetStartDate { get; set; } = true;
+        public int TrialDays { get; set; } = 14;
+    }
+
+    private static DateTime ResolveRenewAtUtc(string cycle, string status, int trialDays)
+    {
+        if (status is "trial" or "trialing")
+            return DateTime.UtcNow.AddDays(trialDays > 0 ? trialDays : 14);
+
+        return cycle switch
+        {
+            "yearly" => DateTime.UtcNow.AddYears(1),
+            "monthly" => DateTime.UtcNow.AddMonths(1),
+            "usage_based" => DateTime.MaxValue,
+            _ => DateTime.MaxValue
+        };
     }
 
     public sealed class TenantFeaturesRequest

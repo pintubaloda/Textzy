@@ -109,13 +109,13 @@
   <div class="wrap">
     <section class="hero">
       <h1>Textzy SMS API Reference</h1>
-      <p>Production-grade reference for Textzy SMS integrations covering simple public URL mode, authenticated tenant SMS send, DLT compliance, Tata gateway mapping, sender and template registries, webhook callbacks, and rollout controls.</p>
+      <p>Production-grade tenant-facing reference for Textzy SMS integrations covering simple public URL mode, Textzy app SMS send, DLT compliance, Tata gateway mapping, sender and template registries, tenant delivery reporting, and rollout controls. Platform-only operator APIs are intentionally excluded.</p>
       <div class="hero-grid">
         <div class="hero-pillbox">
           <strong>Integration modes</strong>
           <div class="pillrow">
             <span class="pill">Simple URL API</span>
-            <span class="pill">Authenticated Tenant API</span>
+            <span class="pill">Textzy App API</span>
             <span class="pill">DLT-ready</span>
             <span class="pill">Tata-compatible</span>
           </div>
@@ -176,12 +176,12 @@
             <tr><td><code>templateId</code> / <code>Template_ID</code></td><td>string</td><td>DLT template ID</td></tr>
             <tr><td><code>idempotencyKey</code></td><td>string</td><td>Optional request de-duplication key</td></tr>
           </table>
-          <div class="note">Platform owner provisions public API credentials per tenant. Requests are validated against the selected <code>tenantSlug</code> only, and optional IP whitelist rules can be enforced per tenant.</div>
+          <div class="note">Platform owner provisions public API credentials per tenant. Requests are validated against the selected <code>tenantSlug</code> only, and optional IP whitelist rules can be enforced per tenant. This document shows only the tenant-facing integration contract.</div>
         </section>
 
         <section class="card">
-          <h2>3. Authenticated Tenant SMS Send</h2>
-          <p>Use the authenticated tenant API when SMS sends originate from Textzy web, mobile, or desktop flows and need billing, audit, and inbox workflow integration.</p>
+          <h2>3. Textzy App SMS Send</h2>
+          <p>Use this when SMS is sent from inside Textzy web, mobile, desktop, workflow, OTP, or automation flows. This is not the external partner API.</p>
           <pre>{
   "recipient": "919999999999",
   "channel": "Sms",
@@ -190,7 +190,7 @@
   "smsPeId": "1601100000000006533",
   "smsTemplateId": "1207171593687982329"
 }</pre>
-          <div class="note">Requires authenticated tenant session, selected project, cookie-based first-party auth, and an idempotency key on send.</div>
+          <div class="note">Textzy handles tenant login, billing, credits, Tata gateway credentials, audit logging, and delivery reporting. Tenant users only send the business payload.</div>
         </section>
 
         <section class="card">
@@ -204,7 +204,7 @@
   &amp;sender=&lt;SenderAddress&gt;
   &amp;PE_ID=&lt;PEID&gt;
   &amp;Template_ID=&lt;TemplateID&gt;</pre>
-          <p>Textzy keeps the Tata transport centralized while your integration payload supplies the recipient, sender, PE_ID, template ID, and final approved message text.</p>
+          <p>Textzy keeps Tata credentials at platform level. Your request only supplies recipient, sender, message, PE_ID, and template ID.</p>
         </section>
 
         <section class="card">
@@ -245,12 +245,17 @@
         </section>
 
         <section class="card">
-          <h2>7. Webhooks</h2>
-          <h3>DLR Webhook</h3>
-          <p><code>POST /api/sms/webhook/tata?tenantSlug=&lt;tenantSlug&gt;</code></p>
-          <h3>Inbound STOP / Unsubscribe</h3>
-          <p><code>POST /api/sms/webhook/tata/inbound?tenantSlug=&lt;tenantSlug&gt;</code></p>
-          <p>Supported opt-out keywords: <code>stop</code>, <code>unsubscribe</code>, <code>optout</code>, <code>cancel</code>, <code>quit</code>, <code>end</code>.</p>
+          <h2>7. Delivery and Status Reporting</h2>
+          <p>After Textzy accepts the SMS request, provider job IDs and delivery updates are recorded in tenant SMS reports automatically.</p>
+          <ul>
+            <li><code>accepted</code></li>
+            <li><code>queued</code></li>
+            <li><code>sent</code></li>
+            <li><code>delivered</code></li>
+            <li><code>failed</code></li>
+            <li><code>rejected</code></li>
+          </ul>
+          <p>STOP and unsubscribe handling is managed internally by Textzy and is not part of the normal tenant integration document.</p>
         </section>
 
         <section class="card">
@@ -277,8 +282,7 @@
 
         <section class="card">
           <h2>9. Testing and Rollout</h2>
-          <p>Use <code>POST /api/platform/settings/sms/test</code> before go-live to validate Tata configuration and live parameter mapping.</p>
-          <div class="warn">Recommended production flow: secure credentials, use HTTPS only, validate DLT identifiers, watch DLR callbacks, and test every sender/template pair before routing customer traffic.</div>
+          <div class="warn">Recommended production flow: secure credentials, use HTTPS only, validate DLT identifiers, verify delivery status in Textzy reports, and test every sender/template pair before routing customer traffic.</div>
           <div class="links" style="margin-top:14px;">
             <a href="/docs/SMS_API_REFERENCE.md" target="_blank" rel="noopener noreferrer">Open Markdown Source</a>
             <a href="/docs/index.html" target="_blank" rel="noopener noreferrer">Documentation Index</a>

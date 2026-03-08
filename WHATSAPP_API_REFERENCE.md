@@ -8,8 +8,8 @@ This document covers:
 - media upload
 - webhook processing
 - flow builder and Meta flow APIs
-- smoke and diagnostics
-- operational notes for production use
+- customer-facing request examples
+- operational flow for production use
 
 ## 1. Base URL
 
@@ -42,7 +42,65 @@ Important behavior:
 - tenant context comes from the selected project
 - external callers should not try to supply WhatsApp tenant context by arbitrary header mutation
 
-## 3. Send WhatsApp Session Message
+## 3. Complete Working Flow
+
+Use this sequence for normal WhatsApp operations inside Textzy:
+
+1. Login  
+   `POST /api/auth/login`
+
+2. If 2FA is enabled, verify authenticator  
+   `POST /api/auth/two-factor/verify-login`
+
+3. Get available projects  
+   `GET /api/auth/projects`
+
+4. Select project / tenant  
+   `POST /api/auth/switch-project`
+
+5. Check readiness before messaging  
+   `GET /api/waba/smoke/readiness`
+
+6. Send one of:
+   - session message
+   - template message
+   - interactive message
+   - flow message
+
+7. Monitor:
+   - inbox updates
+   - webhook status
+   - analytics
+
+## 4. Sample Login and Project Selection
+
+### 4.1 Login
+
+```json
+{
+  "email": "owner@company.com",
+  "password": "StrongPassword"
+}
+```
+
+### 4.2 Two-Factor Verify
+
+```json
+{
+  "challengeToken": "LOGIN_CHALLENGE_TOKEN",
+  "code": "123456"
+}
+```
+
+### 4.3 Switch Project
+
+```json
+{
+  "slug": "moneyart"
+}
+```
+
+## 5. Send WhatsApp Session Message
 
 Endpoint:
 - `POST /api/messages/send`
@@ -63,7 +121,7 @@ Behavior:
 - session messages are blocked outside active WhatsApp session window
 - requires authenticated tenant context, not public API credentials
 
-## 4. Send WhatsApp Template Message
+## 6. Send WhatsApp Template Message
 
 Endpoint:
 - `POST /api/messages/send`
@@ -86,12 +144,25 @@ Use this when:
 - utility / authentication / marketing template must be sent
 - business flow requires approved template delivery
 
-## 5. Send Interactive WhatsApp Message
+Sample authentication template request:
+
+```json
+{
+  "recipient": "919999999999",
+  "channel": "WhatsApp",
+  "useTemplate": true,
+  "templateName": "login_otp",
+  "templateLanguageCode": "en",
+  "templateParameters": ["123456"]
+}
+```
+
+## 7. Send Interactive WhatsApp Message
 
 Endpoint:
 - `POST /api/messages/send`
 
-### 5.1 Button Example
+### 7.1 Button Example
 
 ```json
 {
@@ -104,7 +175,7 @@ Endpoint:
 }
 ```
 
-### 5.2 Flow Example
+### 7.2 Flow Example
 
 ```json
 {
@@ -122,7 +193,7 @@ Endpoint:
 }
 ```
 
-## 6. Media Upload and Send
+## 8. Media Upload and Send
 
 Endpoints:
 - `POST /api/messages/upload-whatsapp-media`
@@ -134,7 +205,7 @@ Use cases:
 - upload template header assets
 - preview or download inbound media from inbox
 
-## 7. WhatsApp Template Management
+## 9. WhatsApp Template Management
 
 Endpoints:
 - `GET /api/templates`
@@ -159,7 +230,7 @@ Supported categories:
 - `UTILITY`
 - `AUTHENTICATION`
 
-## 8. WhatsApp Webhook
+## 10. WhatsApp Webhook
 
 Verification endpoint:
 - `GET /api/waba/webhook`
@@ -174,9 +245,9 @@ Purpose:
 - automation trigger execution
 - flow completion handling
 
-## 9. WhatsApp Flow Builder and Automation API
+## 11. WhatsApp Flow Builder and Automation API
 
-## 9.1 Flow Catalog and Lifecycle
+## 11.1 Flow Catalog and Lifecycle
 
 Endpoints:
 - `GET /api/automation/catalogs/node-types`
@@ -192,7 +263,7 @@ Endpoints:
 - `POST /api/automation/flows/{flowId}/unpublish`
 - `POST /api/automation/flows/{flowId}/versions/{versionId}/rollback`
 
-## 9.2 Validation, Simulation, and Runtime
+## 11.2 Validation, Simulation, and Runtime
 
 Endpoints:
 - `POST /api/automation/flows/validate-definition`
@@ -202,7 +273,7 @@ Endpoints:
 - `GET /api/automation/runs`
 - `GET /api/automation/runs/{runId}`
 
-## 9.3 Meta Flow Management
+## 11.3 Meta Flow Management
 
 Endpoints:
 - `GET /api/automation/meta/flows`
@@ -213,7 +284,7 @@ Endpoints:
 - `POST /api/automation/meta/flows/{metaFlowId}/publish`
 - `POST /api/automation/flows/{flowId}/import-meta`
 
-## 9.4 Flow Delivery and Dynamic Data
+## 11.4 Flow Delivery and Dynamic Data
 
 Endpoints:
 - `POST /api/automation/flows/{flowId}/send-flow`
@@ -222,15 +293,12 @@ Endpoints:
 - `GET /api/automation/metrics/flows/events`
 - `GET /api/automation/trigger-audit`
 - `GET /api/automation/trigger-audit/summary`
-- `GET /api/automation/debug/tenant-flow-counts`
 
-Security note:
-- advanced debug endpoints are platform/diagnostic tools and should not be exposed to general external API clients
-- live customer automations should use published flow/runtime APIs only
+Live customer automations should use published flow/runtime APIs only.
 
-## 10. WhatsApp Diagnostics and Smoke Testing
+## 12. WhatsApp Diagnostics and Smoke Testing
 
-### 10.1 Readiness
+### 12.1 Readiness
 - `GET /api/waba/smoke/readiness`
 
 Returns readiness details such as:
@@ -240,7 +308,7 @@ Returns readiness details such as:
 - template sync state
 - 24-hour runtime counters
 
-### 10.2 Smoke Run
+### 12.2 Smoke Run
 - `POST /api/waba/smoke/run`
 
 Example:
@@ -260,14 +328,7 @@ Useful for:
 - test template send
 - confirming tenant-specific WABA readiness
 
-### 10.3 Debug Endpoints
-
-Platform / advanced diagnostics include:
-- `POST /api/waba/debug/graph-probe`
-- `GET /api/waba/debug/tenant-probe`
-- `GET /api/waba/debug/webhook-health`
-
-## 11. Analytics and Reporting
+## 13. Analytics and Reporting
 
 Tenant analytics endpoints relevant to WhatsApp:
 - `GET /api/analytics/overview`
@@ -279,10 +340,12 @@ These are typically used by dashboard analytics pages to show:
 - read counts
 - channel distribution
 - campaign performance
+- conversation load
+- flow activity
 
-Sensitive write paths such as platform settings, payment settings, API credential changes, and team permission changes can require step-up authenticator verification.
+Sensitive write paths can require step-up authenticator verification.
 
-## 12. Common Status Codes
+## 14. Common Status Codes
 
 - `200` success
 - `201` created
@@ -298,7 +361,7 @@ Sensitive write paths such as platform settings, payment settings, API credentia
 - `502` provider/gateway problem
 - `503` temporarily unavailable
 
-## 13. Production Checklist
+## 15. Production Checklist
 
 - use backend URL only
 - use HTTPS only
@@ -308,16 +371,21 @@ Sensitive write paths such as platform settings, payment settings, API credentia
 - use session send only inside open service window
 - run readiness and smoke checks before go-live
 - monitor webhook failures and message event drift
+- confirm login, project switch, and 2FA work for operational users
 
-## 14. Best-Practice Recommendation
+## 16. Best-Practice Recommendation
 
 For full WhatsApp operations, use Textzy authenticated tenant APIs rather than trying to expose WhatsApp send publicly.
 
 Recommended flow:
 1. login
-2. select project
-3. verify WABA readiness
-4. sync or create templates
-5. send session or template message
-6. monitor webhooks and analytics
-7. use flow APIs for richer automation and structured journey execution
+2. if required, complete authenticator verification
+3. select project
+4. check readiness
+5. send session, template, interactive, or flow message
+6. monitor inbox, webhooks, and analytics
+4. verify WABA readiness
+5. sync or create templates
+6. send session, template, interactive, or flow message
+7. monitor webhooks and analytics
+8. use flow APIs for richer automation and structured journey execution
