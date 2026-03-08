@@ -58,7 +58,7 @@ public class PlatformSecurityController(
             };
         }
 
-        var loginHistory = await (
+        var loginHistoryRows = await (
             from s in sessionQuery
             join u in users on s.UserId equals u.Id
             join t in tenants on s.TenantId equals t.Id
@@ -88,6 +88,56 @@ public class PlatformSecurityController(
             })
             .Take(limit)
             .ToListAsync(ct);
+
+        var distinctIpCountByUser = loginHistoryRows
+            .GroupBy(x => x.userId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => x.lastSeenIpAddress ?? x.ipAddress)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count());
+
+        var loginHistory = loginHistoryRows
+            .Select(x =>
+            {
+                var isPrivileged = string.Equals(x.role, "super_admin", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(x.role, "owner", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(x.role, "admin", StringComparison.OrdinalIgnoreCase);
+                var missingTwoFactor = !x.twoFactorVerifiedAtUtc.HasValue;
+                var ipDiversity = distinctIpCountByUser.TryGetValue(x.userId, out var ipCount) ? ipCount : 0;
+                var isSuspicious = string.IsNullOrWhiteSpace(x.ipAddress) || (isPrivileged && missingTwoFactor) || ipDiversity >= 3;
+
+                var suspiciousReasons = new List<string>();
+                if (string.IsNullOrWhiteSpace(x.ipAddress)) suspiciousReasons.Add("Missing source IP");
+                if (isPrivileged && missingTwoFactor) suspiciousReasons.Add("Privileged session without 2FA verification");
+                if (ipDiversity >= 3) suspiciousReasons.Add($"User seen from {ipDiversity} IPs in filtered range");
+
+                return new
+                {
+                    x.sessionId,
+                    x.userId,
+                    x.userEmail,
+                    x.userName,
+                    x.tenantId,
+                    x.tenantName,
+                    x.tenantSlug,
+                    x.role,
+                    x.createdAtUtc,
+                    x.lastSeenAtUtc,
+                    x.expiresAtUtc,
+                    x.revokedAtUtc,
+                    x.ipAddress,
+                    x.lastSeenIpAddress,
+                    x.deviceLabel,
+                    x.userAgent,
+                    x.twoFactorVerifiedAtUtc,
+                    x.stepUpVerifiedAtUtc,
+                    isSuspicious,
+                    suspiciousReasons = string.Join("; ", suspiciousReasons)
+                };
+            })
+            .ToList();
 
         var auditQuery = db.AuditLogs.AsNoTracking().AsQueryable();
         if (tenantId.HasValue && tenantId.Value != Guid.Empty)
@@ -130,6 +180,26 @@ public class PlatformSecurityController(
             .Take(limit)
             .ToListAsync(ct);
 
+        var auditEventsWithSeverity = auditEvents
+            .Select(x => new
+            {
+                x.id,
+                x.action,
+                x.details,
+                x.createdAtUtc,
+                x.actorUserId,
+                x.actorEmail,
+                x.actorName,
+                x.tenantId,
+                x.tenantName,
+                x.tenantSlug,
+                x.ipAddress,
+                x.userAgent,
+                x.deviceLabel,
+                severity = GetSeverity(x.action, x.details)
+            })
+            .ToList();
+
         var sessionsByUser = loginHistory
             .GroupBy(x => new { x.userId, x.userEmail, x.userName })
             .Select(g => new
@@ -168,7 +238,8 @@ public class PlatformSecurityController(
                 activeSessions = loginHistory.Count(x => x.revokedAtUtc == null && x.expiresAtUtc > now),
                 revokedSessions = loginHistory.Count(x => x.revokedAtUtc != null),
                 uniqueUsers = loginHistory.Select(x => x.userId).Distinct().Count(),
-                auditEvents = auditEvents.Count
+                auditEvents = auditEventsWithSeverity.Count,
+                suspiciousLogins = loginHistory.Count(x => x.isSuspicious)
             },
             notes = new
             {
@@ -176,7 +247,7 @@ public class PlatformSecurityController(
             },
             loginHistory,
             sessionsByUser,
-            auditEvents
+            auditEvents = auditEventsWithSeverity
         });
     }
 
@@ -204,7 +275,7 @@ public class PlatformSecurityController(
         var auditRows = (IEnumerable<object>)payload.GetType().GetProperty("auditEvents")!.GetValue(payload)!;
 
         var csv = new StringBuilder();
-        csv.AppendLine("section,tenantSlug,tenantName,userEmail,userName,action,details,sessionId,ipAddress,lastSeenIpAddress,deviceLabel,userAgent,createdAtUtc,lastSeenAtUtc,expiresAtUtc,revokedAtUtc,twoFactorVerifiedAtUtc,stepUpVerifiedAtUtc,sessionCount,activeSessions");
+        csv.AppendLine("section,tenantSlug,tenantName,userEmail,userName,action,details,severity,sessionId,ipAddress,lastSeenIpAddress,deviceLabel,userAgent,createdAtUtc,lastSeenAtUtc,expiresAtUtc,revokedAtUtc,twoFactorVerifiedAtUtc,stepUpVerifiedAtUtc,isSuspicious,suspiciousReasons,sessionCount,activeSessions");
 
         foreach (var row in loginRows)
         {
@@ -214,6 +285,7 @@ public class PlatformSecurityController(
                 Csv(GetProp(row, "tenantName")),
                 Csv(GetProp(row, "userEmail")),
                 Csv(GetProp(row, "userName")),
+                Csv(""),
                 Csv(""),
                 Csv(""),
                 Csv(GetProp(row, "sessionId")),
@@ -227,6 +299,8 @@ public class PlatformSecurityController(
                 Csv(GetProp(row, "revokedAtUtc")),
                 Csv(GetProp(row, "twoFactorVerifiedAtUtc")),
                 Csv(GetProp(row, "stepUpVerifiedAtUtc")),
+                Csv(GetProp(row, "isSuspicious")),
+                Csv(GetProp(row, "suspiciousReasons")),
                 Csv(""),
                 Csv("")));
         }
@@ -242,12 +316,15 @@ public class PlatformSecurityController(
                 Csv(""),
                 Csv(""),
                 Csv(""),
+                Csv(""),
                 Csv(GetProp(row, "lastIpAddress")),
                 Csv(""),
                 Csv(GetProp(row, "lastDeviceLabel")),
                 Csv(""),
                 Csv(""),
                 Csv(GetProp(row, "lastSeenAtUtc")),
+                Csv(""),
+                Csv(""),
                 Csv(""),
                 Csv(""),
                 Csv(""),
@@ -266,7 +343,7 @@ public class PlatformSecurityController(
                 Csv(GetProp(row, "actorName")),
                 Csv(GetProp(row, "action")),
                 Csv(GetProp(row, "details")),
-                Csv(""),
+                Csv(GetProp(row, "severity")),
                 Csv(GetProp(row, "ipAddress")),
                 Csv(""),
                 Csv(GetProp(row, "deviceLabel")),
@@ -278,11 +355,29 @@ public class PlatformSecurityController(
                 Csv(""),
                 Csv(""),
                 Csv(""),
+                Csv(""),
+                Csv(""),
                 Csv("")));
         }
 
         var fileName = $"platform-security-report-{DateTime.UtcNow:yyyyMMddHHmmss}.csv";
         return File(Encoding.UTF8.GetBytes(csv.ToString()), "text/csv; charset=utf-8", fileName);
+    }
+
+    [HttpPost("sessions/{id:guid}/revoke")]
+    public async Task<IActionResult> RevokeSession(Guid id, CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+
+        var session = await db.SessionTokens.FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (session is null) return NotFound();
+        if (session.RevokedAtUtc is not null) return Ok(new { ok = true, alreadyRevoked = true });
+
+        session.RevokedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("platform.security.session.revoked", $"sessionId={session.Id}; tenantId={session.TenantId}; userId={session.UserId}", ct);
+        return Ok(new { ok = true });
     }
 
     [HttpGet("signals")]
@@ -386,5 +481,15 @@ public class PlatformSecurityController(
     {
         var safe = (value ?? string.Empty).Replace("\"", "\"\"");
         return $"\"{safe}\"";
+    }
+
+    private static string GetSeverity(string action, string details)
+    {
+        var text = $"{action} {details}".ToLowerInvariant();
+        if (text.Contains("security") || text.Contains("payment") || text.Contains("billing") || text.Contains("permission") || text.Contains("team.role") || text.Contains("queue.purged") || text.Contains("session.revoked"))
+            return "high";
+        if (text.Contains("two-factor") || text.Contains("step-up") || text.Contains("invite") || text.Contains("remove") || text.Contains("deactivate") || text.Contains("api credential"))
+            return "medium";
+        return "low";
     }
 }

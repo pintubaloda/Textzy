@@ -1014,6 +1014,10 @@ export async function exportPlatformSecurityReport(filters = {}) {
   return apiGetBlob(`/api/platform/security/report/export?${q.toString()}`)
 }
 
+export async function revokePlatformSession(sessionId) {
+  return apiPost(`/api/platform/security/sessions/${sessionId}/revoke`, {})
+}
+
 export async function upsertPlatformSecurityControls(payload) {
   return apiPut("/api/platform/security/controls", payload)
 }

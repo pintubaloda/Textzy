@@ -2881,10 +2881,37 @@ const PlatformSettingsPage = () => {
           <CardHeader>
             <CardTitle>Security Operations</CardTitle>
             <CardDescription>
-              Manage circuit breaker, queue purge, and platform security signals.
+              Manage tenant circuit-breaker controls, queue operations, and open platform security signals. Use the dedicated security report for full login and action audit analysis.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Open Signals</div>
+                <div className="mt-2 text-2xl font-bold text-slate-950">{(securitySignals || []).filter((x) => String(x.status || "").toLowerCase() !== "resolved").length}</div>
+                <div className="mt-1 text-xs text-slate-500">Current filtered signal queue</div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Resolved</div>
+                <div className="mt-2 text-2xl font-bold text-slate-950">{(securitySignals || []).filter((x) => String(x.status || "").toLowerCase() === "resolved").length}</div>
+                <div className="mt-1 text-xs text-slate-500">Signals already acknowledged</div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Tenant Control</div>
+                <div className="mt-2 text-2xl font-bold text-slate-950">{securityTenantId ? "Ready" : "Select"}</div>
+                <div className="mt-1 text-xs text-slate-500">Pick a tenant before saving circuit-breaker controls</div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Deep Audit</div>
+                <div className="mt-2 text-2xl font-bold text-slate-950">Report</div>
+                <div className="mt-3">
+                  <Button variant="outline" size="sm" onClick={() => window.location.assign("/dashboard/platform-security-report")}>
+                    Open Security Report
+                  </Button>
+                </div>
+              </div>
+            </div>
+
             <div className="grid gap-3 md:grid-cols-5">
               <Select value={securityStatusFilter} onValueChange={setSecurityStatusFilter}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -3040,7 +3067,9 @@ const PlatformSettingsPage = () => {
                   ))}
                   {(securitySignals || []).length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-slate-500">No security signals.</td>
+                      <td colSpan={6} className="px-3 py-8 text-center text-slate-500">
+                        No security signals for the current filter. This tab only shows operational signals and tenant controls. Use the Security Report page for login history, per-user session drill-down, and full audit export.
+                      </td>
                     </tr>
                   )}
                 </tbody>
