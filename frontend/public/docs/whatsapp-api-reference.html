@@ -90,15 +90,16 @@
       <div>
         <section class="card">
           <h2>1. Authentication and Tenant Context <span class="tag">Tenant session</span></h2>
-          <p>WhatsApp operational APIs are tenant-scoped and intended for authenticated Textzy sessions.</p>
+          <p>WhatsApp operational APIs are tenant-scoped and intended for authenticated Textzy sessions using httpOnly cookie transport. Login can include authenticator verification when 2FA is enabled.</p>
           <ul>
             <li><code>POST /api/auth/login</code></li>
+            <li><code>POST /api/auth/two-factor/verify-login</code></li>
             <li><code>GET /api/auth/projects</code></li>
             <li><code>POST /api/auth/switch-project</code></li>
             <li><code>GET /api/auth/me</code></li>
             <li><code>POST /api/auth/refresh</code></li>
           </ul>
-          <div class="note">Use authenticated tenant APIs for WhatsApp send, templates, inbox, analytics, and automation. Public simple URL mode is intended for SMS only.</div>
+          <div class="note">Use authenticated tenant APIs for WhatsApp send, templates, inbox, analytics, and automation. Tenant context comes from the selected project, not from caller-supplied public credentials. Public simple URL mode is intended for SMS only.</div>
         </section>
 
         <section class="card">
@@ -119,7 +120,7 @@
   "templateLanguageCode": "en",
   "templateParameters": ["John", "#1234"]
 }</pre>
-          <div class="warn">Session sends work only inside the active 24-hour WhatsApp customer window. Outside that window, use an approved template.</div>
+          <div class="warn">Session sends work only inside the active 24-hour WhatsApp customer window. Outside that window, use an approved template. These writes depend on authenticated tenant session and CSRF protection in first-party clients.</div>
         </section>
 
         <section class="card">

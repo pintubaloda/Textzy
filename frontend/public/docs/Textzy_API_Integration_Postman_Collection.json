@@ -2,14 +2,13 @@
   "info": {
     "name": "Textzy API Integration (SMS + WhatsApp + Sandbox)",
     "_postman_id": "3f9a2c66-9fc2-4ecf-bb02-9d7b8f0d2a11",
-    "description": "Simple integration collection for Textzy partner/dev teams.",
+    "description": "Professional integration collection for Textzy covering tenant-scoped public SMS, cookie-session tenant APIs for WhatsApp and automation, and platform-only diagnostics.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "baseUrl", "value": "https://textzy-backend-production.up.railway.app" },
     { "key": "email", "value": "" },
     { "key": "password", "value": "" },
-    { "key": "accessToken", "value": "" },
     { "key": "csrfToken", "value": "" },
     { "key": "tenantSlug", "value": "" },
     { "key": "recipient", "value": "919999999999" },
@@ -19,12 +18,13 @@
     { "key": "metaFlowId", "value": "" },
     { "key": "flowId", "value": "" },
     { "key": "apiKey", "value": "" },
-    { "key": "apiSecret", "value": "" },
+    { "key": "apiUsername", "value": "" },
+    { "key": "apiPassword", "value": "" },
     { "key": "smsWebhookSecret", "value": "" }
   ],
   "item": [
     {
-      "name": "Auth + Tenant",
+      "name": "Tenant Session (Cookie + CSRF)",
       "item": [
         {
           "name": "Login",
@@ -45,11 +45,37 @@
               "script": {
                 "exec": [
                   "const body = pm.response.json();",
-                  "const access = body.accessToken || pm.response.headers.get('X-Access-Token') || '';",
                   "const csrf = pm.response.headers.get('X-CSRF-Token') || '';",
-                  "if (access) pm.collectionVariables.set('accessToken', access);",
                   "if (csrf) pm.collectionVariables.set('csrfToken', csrf);",
-                  "pm.test('login ok', () => pm.expect(pm.response.code).to.eql(200));"
+                  "pm.test('login ok', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('two-factor challenge or session created', () => pm.expect([200]).to.include(pm.response.code));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify Login Two-Factor",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{baseUrl}}/api/auth/two-factor/verify-login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"challengeToken\": \"\",\n  \"code\": \"000000\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const csrf = pm.response.headers.get('X-CSRF-Token') || '';",
+                  "if (csrf) pm.collectionVariables.set('csrfToken', csrf);",
+                  "pm.test('two-factor verified', () => pm.expect(pm.response.code).to.eql(200));"
                 ],
                 "type": "text/javascript"
               }
@@ -60,9 +86,6 @@
           "name": "Get Projects",
           "request": {
             "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
-            ],
             "url": "{{baseUrl}}/api/auth/projects"
           },
           "event": [
@@ -87,7 +110,6 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-CSRF-Token", "value": "{{csrfToken}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
@@ -103,9 +125,7 @@
               "script": {
                 "exec": [
                   "const body = pm.response.json();",
-                  "const nextAccess = body.accessToken || pm.response.headers.get('X-Access-Token');",
                   "const nextCsrf = pm.response.headers.get('X-CSRF-Token');",
-                  "if (nextAccess) pm.collectionVariables.set('accessToken', nextAccess);",
                   "if (nextCsrf) pm.collectionVariables.set('csrfToken', nextCsrf);",
                   "if (body.tenantSlug) pm.collectionVariables.set('tenantSlug', body.tenantSlug);",
                   "pm.test('switch project ok', () => pm.expect(pm.response.code).to.eql(200));"
@@ -118,14 +138,39 @@
       ]
     },
     {
-      "name": "SMS",
+      "name": "Public SMS (Tenant Scoped)",
       "item": [
         {
-          "name": "Send SMS (Textzy)",
+          "name": "Send SMS via GET",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/public/messages/send?recipient={{recipient}}&msg=Your%20approved%20DLT%20message%20text&user={{apiUsername}}&pswd={{apiPassword}}&apikey={{apiKey}}&channel=sms&sender=MNYART&PE_ID=1601100000000006533&Template_ID=1207171593687982329&tenantSlug={{tenantSlug}}"
+          }
+        },
+        {
+          "name": "Send SMS via POST",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": "{{baseUrl}}/api/public/messages/send",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient\": \"{{recipient}}\",\n  \"message\": \"Your approved DLT message text\",\n  \"tenantSlug\": \"{{tenantSlug}}\",\n  \"user\": \"{{apiUsername}}\",\n  \"password\": \"{{apiPassword}}\",\n  \"apiKey\": \"{{apiKey}}\",\n  \"channel\": \"sms\",\n  \"sender\": \"MNYART\",\n  \"peId\": \"1601100000000006533\",\n  \"templateId\": \"1207171593687982329\",\n  \"idempotencyKey\": \"{{idempotencyKey}}\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "SMS",
+      "item": [
+        {
+          "name": "Send SMS (Authenticated Tenant)",
+          "request": {
+            "method": "POST",
+            "header": [
               { "key": "X-CSRF-Token", "value": "{{csrfToken}}" },
               { "key": "X-Tenant-Slug", "value": "{{tenantSlug}}" },
               { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" },
@@ -143,7 +188,6 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-CSRF-Token", "value": "{{csrfToken}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
@@ -159,7 +203,6 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-Tenant-Slug", "value": "{{tenantSlug}}" }
             ],
             "url": "{{baseUrl}}/api/sms/templates"
@@ -175,7 +218,6 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-CSRF-Token", "value": "{{csrfToken}}" },
               { "key": "X-Tenant-Slug", "value": "{{tenantSlug}}" },
               { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" },
@@ -193,7 +235,6 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-CSRF-Token", "value": "{{csrfToken}}" },
               { "key": "X-Tenant-Slug", "value": "{{tenantSlug}}" },
               { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" },
@@ -209,14 +250,13 @@
       ]
     },
     {
-      "name": "Meta Flows",
+      "name": "Automation / Meta Flows",
       "item": [
         {
           "name": "List Meta Flows",
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-Tenant-Slug", "value": "{{tenantSlug}}" }
             ],
             "url": "{{baseUrl}}/api/automation/meta/flows"
@@ -227,7 +267,6 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-CSRF-Token", "value": "{{csrfToken}}" },
               { "key": "X-Tenant-Slug", "value": "{{tenantSlug}}" },
               { "key": "Content-Type", "value": "application/json" }
@@ -244,7 +283,6 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-CSRF-Token", "value": "{{csrfToken}}" },
               { "key": "X-Tenant-Slug", "value": "{{tenantSlug}}" },
               { "key": "Content-Type", "value": "application/json" }
@@ -258,7 +296,6 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-Tenant-Slug", "value": "{{tenantSlug}}" }
             ],
             "url": "{{baseUrl}}/api/automation/metrics/flows"
@@ -269,7 +306,6 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-Tenant-Slug", "value": "{{tenantSlug}}" }
             ],
             "url": "{{baseUrl}}/api/automation/metrics/flows/events"
@@ -278,14 +314,13 @@
       ]
     },
     {
-      "name": "Sandbox / Diagnostics",
+      "name": "Sandbox / Diagnostics (Tenant)",
       "item": [
         {
           "name": "WABA Smoke Readiness",
           "request": {
             "method": "GET",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-Tenant-Slug", "value": "{{tenantSlug}}" }
             ],
             "url": "{{baseUrl}}/api/waba/smoke/readiness"
@@ -296,7 +331,6 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
               { "key": "X-CSRF-Token", "value": "{{csrfToken}}" },
               { "key": "X-Tenant-Slug", "value": "{{tenantSlug}}" },
               { "key": "Content-Type", "value": "application/json" }
@@ -307,14 +341,16 @@
               "raw": "{\n  \"recipient\": \"{{recipient}}\",\n  \"sendSessionMessage\": true,\n  \"sessionMessageText\": \"Textzy smoke test\",\n  \"sendTemplateMessage\": false\n}"
             }
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "Platform Diagnostics (Owner Only)",
+      "item": [
         {
           "name": "WABA Webhook Health",
           "request": {
             "method": "GET",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
-            ],
             "url": "{{baseUrl}}/api/waba/debug/webhook-health"
           }
         }

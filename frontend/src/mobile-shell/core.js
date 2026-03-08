@@ -194,7 +194,7 @@ export const getDeviceLocation = async () => {
   });
 };
 
-export async function apiFetch(path, { method = "GET", token = "", tenantSlug = "", csrfToken = "", body, extraHeaders = {} } = {}) {
+export async function apiFetch(path, { method = "GET", tenantSlug = "", csrfToken = "", body, extraHeaders = {} } = {}) {
   const headers = { ...extraHeaders };
   if (typeof window !== "undefined" && window.__TEXTZY_MOBILE_DEVICE__) {
     const device = window.__TEXTZY_MOBILE_DEVICE__;
@@ -203,7 +203,6 @@ export async function apiFetch(path, { method = "GET", token = "", tenantSlug = 
     if (device.deviceModel) headers["X-Device-Model"] = String(device.deviceModel);
     if (device.appVersion) headers["X-App-Version"] = String(device.appVersion);
   }
-  if (token) headers.Authorization = `Bearer ${token}`;
   if (tenantSlug && !path.startsWith("/api/auth/") && !path.startsWith("/api/public/")) headers["X-Tenant-Slug"] = tenantSlug;
   if (path === "/api/messages/send" && !headers["Idempotency-Key"]) {
     headers["Idempotency-Key"] = body?.idempotencyKey || idempotencyKey();

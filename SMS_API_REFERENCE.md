@@ -26,6 +26,7 @@ Use when you need:
 - server-to-server SMS send
 - ERP/CRM/panel integration
 - no login session or bearer token flow
+- tenant-specific isolated credentials managed by platform owner
 
 Endpoints:
 - `GET /api/public/messages/send`
@@ -83,6 +84,7 @@ GET https://textzy-backend-production.up.railway.app/api/public/messages/send
 
 - `recipient`: mobile number with country code
 - `message` or `msg`: exact SMS text
+- `tenantSlug`: target tenant slug
 - `user`: API username
 - `password` or `pswd`: API password
 - `apiKey` or `apikey`: API key
@@ -92,11 +94,30 @@ GET https://textzy-backend-production.up.railway.app/api/public/messages/send
 
 ## 3.4 Optional Fields
 
-- `tenantSlug`
 - `idempotencyKey`
 - `channel` (defaults to SMS)
 
-## 3.5 Success Response
+## 3.5 Tenant-Scoped Security Model
+
+Public SMS credentials are not shared across the platform.
+
+Each tenant can have its own:
+- `publicApiEnabled`
+- `apiUsername`
+- `apiPassword`
+- `apiKey`
+- optional IP whitelist
+
+Platform owner provisions these credentials per tenant from the admin console.
+
+Important rules:
+- `tenantSlug` is required
+- credentials are validated against that tenant only
+- changing `tenantSlug` does not let a caller reuse another tenant's credentials
+- use HTTPS only
+- if IP whitelist is configured, requests outside that list are rejected
+
+## 3.6 Success Response
 
 ```json
 {
@@ -105,7 +126,7 @@ GET https://textzy-backend-production.up.railway.app/api/public/messages/send
 }
 ```
 
-## 3.6 Public Error Response
+## 3.7 Public Error Response
 
 ```json
 {
@@ -152,6 +173,7 @@ Requirements:
 - selected project
 - idempotency key header
 - SMS credits or valid billing allowance
+- cookie-based web/mobile/desktop session for first-party Textzy apps
 
 ## 5. DLT Requirements
 
@@ -242,6 +264,10 @@ Purpose:
 - status propagation
 - tenant report updates
 - ledger finalization
+
+Operational note:
+- this endpoint is intended for direct gateway callback wiring by platform owner
+- do not expose or document webhook secrets in browser URLs or client-side integrations
 
 ### 9.2 Inbound STOP / Unsubscribe Webhook
 

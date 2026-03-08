@@ -125,7 +125,6 @@ export default function TextzyMobile() {
   const [project, setProject] = useState(restored.project || null);
   const [projects, setProjects] = useState([]);
   const [session, setSession] = useState({
-    accessToken: restored.accessToken || "",
     csrfToken: restored.csrfToken || "",
     tenantSlug: restored.tenantSlug || "",
   });
@@ -190,7 +189,7 @@ export default function TextzyMobile() {
 
   const active       = contacts.find(c=>c.id===activeId);
   const unreadCount  = contacts.filter(c=>c.unread>0).length;
-  const authCtx = { token: session.accessToken, csrfToken: session.csrfToken, tenantSlug: session.tenantSlug };
+  const authCtx = { csrfToken: session.csrfToken, tenantSlug: session.tenantSlug };
   const selectedTemplate = templates.find((t) => String(t.id) === String(selectedTemplateId)) || templates[0] || null;
   const templateParamIndexes = extractTemplateParamIndexes(selectedTemplate?.body || "");
   const activeRecipient = (() => {
@@ -329,7 +328,6 @@ export default function TextzyMobile() {
   const persistSession = (nextSession, nextUser = user, nextProject = project) => {
     const deviceCtx = deviceCtxRef.current || resolveDeviceContext(restored);
     localStorage.setItem(SESSION_KEY, JSON.stringify({
-      accessToken: nextSession.accessToken,
       csrfToken: nextSession.csrfToken,
       tenantSlug: nextSession.tenantSlug || "",
       installId: deviceCtx.installId || "",
@@ -338,8 +336,8 @@ export default function TextzyMobile() {
     }));
   };
 
-  const loadProjects = async (token) => {
-    const { res } = await apiFetch("/api/auth/projects", { token });
+  const loadProjects = async () => {
+    const { res } = await apiFetch("/api/auth/projects");
     if (!res.ok) throw new Error(await res.text() || "Failed to load projects");
     const rows = await res.json();
     const mapped = (rows || []).map((p, idx) => ({
@@ -353,9 +351,8 @@ export default function TextzyMobile() {
   };
 
   const loadConversations = async (ctx = authCtx) => {
-    if (!ctx.token || !ctx.tenantSlug) return;
+    if (!ctx.tenantSlug) return;
     const { res } = await apiFetch("/api/inbox/conversations?take=100", {
-      token: ctx.token,
       tenantSlug: ctx.tenantSlug,
     });
     if (!res.ok) throw new Error(await res.text() || "Failed to load conversations");
@@ -375,7 +372,6 @@ export default function TextzyMobile() {
 
   const loadMessages = async (conversationId, ctx = authCtx) => {
     const { res } = await apiFetch(`/api/inbox/conversations/${conversationId}/messages?take=80`, {
-      token: ctx.token,
       tenantSlug: ctx.tenantSlug,
     });
     if (!res.ok) throw new Error(await res.text() || "Failed to load messages");
@@ -390,7 +386,6 @@ export default function TextzyMobile() {
 
   const loadTeamMembers = async (ctx = authCtx) => {
     const { res } = await apiFetch("/api/auth/team-members", {
-      token: ctx.token,
       tenantSlug: ctx.tenantSlug,
     });
     if (!res.ok) return [];
@@ -400,7 +395,6 @@ export default function TextzyMobile() {
 
   const loadDevices = async (ctx = authCtx) => {
     const { res } = await apiFetch("/api/auth/devices", {
-      token: ctx.token,
       tenantSlug: ctx.tenantSlug,
     });
     if (!res.ok) throw new Error(await res.text() || "Failed to load devices");
@@ -411,7 +405,6 @@ export default function TextzyMobile() {
   const loadNotes = async (conversationId, ctx = authCtx) => {
     if (!conversationId) return [];
     const { res } = await apiFetch(`/api/inbox/conversations/${conversationId}/notes?take=50`, {
-      token: ctx.token,
       tenantSlug: ctx.tenantSlug,
     });
     if (!res.ok) throw new Error(await res.text() || "Failed to load notes");
@@ -422,9 +415,7 @@ export default function TextzyMobile() {
   };
 
   const loadAppBootstrap = async (ctx = authCtx) => {
-    if (!ctx?.token) return null;
     const { res } = await apiFetch("/api/auth/app-bootstrap", {
-      token: ctx.token,
       tenantSlug: ctx.tenantSlug,
     });
     if (!res.ok) throw new Error(await res.text() || "Failed to load app bootstrap");
@@ -456,7 +447,6 @@ export default function TextzyMobile() {
 
   const loadApprovedTemplates = async (ctx = authCtx) => {
     const { res } = await apiFetch("/api/templates", {
-      token: ctx.token,
       tenantSlug: ctx.tenantSlug,
     });
     if (!res.ok) throw new Error(await res.text() || "Failed to load templates");
@@ -488,7 +478,6 @@ export default function TextzyMobile() {
       if (fcmToken) {
         const fcmRes = await apiFetch("/api/notifications/subscriptions", {
           method: "POST",
-          token: ctx.token,
           tenantSlug: ctx.tenantSlug,
           csrfToken: ctx.csrfToken,
           body: {
@@ -510,7 +499,6 @@ export default function TextzyMobile() {
       const keys = webPush.keys || {};
       const webPushRes = await apiFetch("/api/notifications/subscriptions", {
         method: "POST",
-        token: ctx.token,
         tenantSlug: ctx.tenantSlug,
         csrfToken: ctx.csrfToken,
         body: {
@@ -571,7 +559,7 @@ export default function TextzyMobile() {
     if (payload?.mode === "qr") {
       const deviceCtx = deviceCtxRef.current || resolveDeviceContext(restored);
       const location = await getDeviceLocation();
-      const { res, nextTokenHeader, nextCsrfHeader } = await apiFetch("/api/public/mobile/pair/exchange", {
+      const { res, nextCsrfHeader } = await apiFetch("/api/public/mobile/pair/exchange", {
         method: "POST",
         body: {
           pairingToken: payload.pairingToken,
@@ -589,7 +577,6 @@ export default function TextzyMobile() {
       });
       if (!res.ok) throw new Error(await res.text() || "Pairing code expired or invalid.");
       const json = await res.json().catch(() => ({}));
-      const accessToken = json.accessToken || json.AccessToken || nextTokenHeader;
       const csrfToken = resolveCsrf(json.csrfToken || json.CsrfToken || nextCsrfHeader);
       const tenantSlug =
         json.tenantSlug ||
@@ -602,11 +589,11 @@ export default function TextzyMobile() {
         json.Tenant?.Slug ||
         "";
       const loggedUser = json.user || json.User || { email: "mobile@textzy.io" };
-      const nextSession = { accessToken, csrfToken, tenantSlug };
+      const nextSession = { csrfToken, tenantSlug };
       setSession(nextSession);
       setUser(loggedUser);
       await loadAppBootstrap(nextSession).catch(() => null);
-      const projList = await loadProjects(accessToken).catch(() => []);
+      const projList = await loadProjects().catch(() => []);
       if (tenantSlug) {
         const selected = projList.find((p) => String(p.slug).toLowerCase() === String(tenantSlug).toLowerCase()) || {
           slug: tenantSlug,
@@ -625,51 +612,66 @@ export default function TextzyMobile() {
       return;
     }
 
-    const { res, nextTokenHeader, nextCsrfHeader } = await apiFetch("/api/auth/login", {
+    if (payload?.mode === "verify-authenticator") {
+      const { res, nextCsrfHeader } = await apiFetch("/api/auth/two-factor/verify-login", {
+        method: "POST",
+        body: { challengeToken: payload.challengeToken, code: payload.code },
+      });
+      if (!res.ok) throw new Error(await res.text() || "Authenticator code is invalid.");
+      const json = await res.json().catch(() => ({}));
+      const csrfToken = resolveCsrf(json.csrfToken || json.CsrfToken || nextCsrfHeader);
+      const nextSession = { csrfToken, tenantSlug: "" };
+      const nextUser = { email: payload.email };
+      setSession(nextSession);
+      setUser(nextUser);
+      await loadAppBootstrap(nextSession).catch(() => null);
+      await loadProjects();
+      setScreen("project");
+      persistSession(nextSession, nextUser, null);
+      return { ok: true };
+    }
+
+    const { res, nextCsrfHeader } = await apiFetch("/api/auth/login", {
       method: "POST",
       body: { email: payload.email, password: payload.password, emailVerificationId: payload.emailVerificationId || "" },
     });
     if (!res.ok) throw new Error(await res.text() || "Invalid credentials");
     const json = await res.json().catch(() => ({}));
-    const accessToken = json.accessToken || json.AccessToken || nextTokenHeader;
+    if (json?.requiresTwoFactor) return json;
     const csrfToken = resolveCsrf(json.csrfToken || json.CsrfToken || nextCsrfHeader);
-    const nextSession = { accessToken, csrfToken, tenantSlug: "" };
+    const nextSession = { csrfToken, tenantSlug: "" };
     const nextUser = { email: payload.email };
     setSession(nextSession);
     setUser(nextUser);
     await loadAppBootstrap(nextSession).catch(() => null);
-    await loadProjects(accessToken);
+    await loadProjects();
     setScreen("project");
     persistSession(nextSession, nextUser, null);
+    return { ok: true };
   };
 
   const handleSelectProject = async (p) => {
     return withBusy("project", async () => {
-    let workingToken = session.accessToken;
     let workingCsrf = resolveCsrf(session.csrfToken);
 
     // Always refresh before switch to ensure CSRF cookie/header are synced in WebView.
     const refreshed = await apiFetch("/api/auth/refresh", {
       method: "POST",
-      token: workingToken,
     });
     if (refreshed.res.ok) {
       const refreshedBody = await refreshed.res.json().catch(() => ({}));
-      workingToken = refreshedBody.accessToken || refreshedBody.AccessToken || refreshed.nextTokenHeader || workingToken;
       workingCsrf = resolveCsrf(refreshedBody.csrfToken || refreshedBody.CsrfToken || refreshed.nextCsrfHeader || workingCsrf);
-      setSession((prev) => ({ ...prev, accessToken: workingToken, csrfToken: workingCsrf }));
+      setSession((prev) => ({ ...prev, csrfToken: workingCsrf }));
     }
 
-    const trySwitch = async (accessToken, csrfToken) => apiFetch("/api/auth/switch-project", {
+    const trySwitch = async (csrfToken) => apiFetch("/api/auth/switch-project", {
       method: "POST",
-      token: accessToken,
       csrfToken: resolveCsrf(csrfToken),
       body: { slug: p.slug },
     });
 
-    let first = await trySwitch(workingToken, workingCsrf);
+    let first = await trySwitch(workingCsrf);
     let res = first.res;
-    let nextTokenHeader = first.nextTokenHeader;
     let nextCsrfHeader = first.nextCsrfHeader;
 
     if (!res.ok) {
@@ -677,16 +679,13 @@ export default function TextzyMobile() {
       if (res.status === 403 && errText.toLowerCase().includes("csrf")) {
         const refreshed = await apiFetch("/api/auth/refresh", {
           method: "POST",
-          token: session.accessToken,
         });
         if (refreshed.res.ok) {
           const refreshedBody = await refreshed.res.json().catch(() => ({}));
-          const refreshedToken = refreshedBody.accessToken || refreshedBody.AccessToken || refreshed.nextTokenHeader || session.accessToken;
           const refreshedCsrf = resolveCsrf(refreshedBody.csrfToken || refreshedBody.CsrfToken || refreshed.nextCsrfHeader || session.csrfToken);
-          setSession((prev) => ({ ...prev, accessToken: refreshedToken, csrfToken: refreshedCsrf }));
-          first = await trySwitch(refreshedToken, refreshedCsrf);
+          setSession((prev) => ({ ...prev, csrfToken: refreshedCsrf }));
+          first = await trySwitch(refreshedCsrf);
           res = first.res;
-          nextTokenHeader = first.nextTokenHeader || refreshedToken;
           nextCsrfHeader = first.nextCsrfHeader || refreshedCsrf;
         }
       }
@@ -694,11 +693,10 @@ export default function TextzyMobile() {
     }
 
     const json = await res.json().catch(() => ({}));
-    const accessToken = json.accessToken || json.AccessToken || nextTokenHeader || session.accessToken;
     const csrfToken = resolveCsrf(nextCsrfHeader || session.csrfToken);
     const tenantSlug = json.tenantSlug || json.TenantSlug || p.slug;
     const selectedProject = { ...p, role: json.role || json.Role || p.role };
-    const nextSession = { accessToken, csrfToken, tenantSlug };
+    const nextSession = { csrfToken, tenantSlug };
     setSession(nextSession);
     setProject(selectedProject);
     setScreen("app");
@@ -773,7 +771,6 @@ export default function TextzyMobile() {
 
     const { res } = await apiFetch("/api/messages/upload-whatsapp-media", {
       method: "POST",
-      token: authCtx.token,
       tenantSlug: authCtx.tenantSlug,
       csrfToken: authCtx.csrfToken,
       body: formData,
@@ -795,7 +792,6 @@ export default function TextzyMobile() {
       return;
     }
     const headers = {};
-    if (authCtx.token) headers.Authorization = `Bearer ${authCtx.token}`;
     if (authCtx.tenantSlug) headers["X-Tenant-Slug"] = authCtx.tenantSlug;
     const res = await fetch(`${API_BASE}/api/messages/media/${encodeURIComponent(mediaId)}`, {
       headers,
@@ -812,10 +808,9 @@ export default function TextzyMobile() {
   };
 
   const sendTyping = (isTyping) => {
-    if (!activeId || !authCtx.token || !authCtx.tenantSlug) return;
+    if (!activeId || !authCtx.tenantSlug) return;
     apiFetch("/api/inbox/typing", {
       method: "POST",
-      token: authCtx.token,
       tenantSlug: authCtx.tenantSlug,
       csrfToken: authCtx.csrfToken,
       body: { conversationId: activeId, isTyping },
@@ -864,7 +859,6 @@ export default function TextzyMobile() {
       try {
         const { res } = await apiFetch("/api/messages/send", {
           method: "POST",
-          token: authCtx.token,
           tenantSlug: authCtx.tenantSlug,
           csrfToken: authCtx.csrfToken,
           body: {
@@ -925,7 +919,6 @@ export default function TextzyMobile() {
         : `/api/inbox/conversations/${activeId}/transfer`;
       const { res } = await apiFetch(endpoint, {
         method: "POST",
-        token: authCtx.token,
         tenantSlug: authCtx.tenantSlug,
         csrfToken: authCtx.csrfToken,
         body: { userId, userName },
@@ -952,7 +945,6 @@ export default function TextzyMobile() {
       const labels = labelsInput.split(",").map((x) => x.trim()).filter(Boolean);
       const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/labels`, {
         method: "POST",
-        token: authCtx.token,
         tenantSlug: authCtx.tenantSlug,
         csrfToken: authCtx.csrfToken,
         body: { labels },
@@ -980,7 +972,6 @@ export default function TextzyMobile() {
       if (!body || !activeId) return;
       const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/notes`, {
         method: "POST",
-        token: authCtx.token,
         tenantSlug: authCtx.tenantSlug,
         csrfToken: authCtx.csrfToken,
         body: { body },
@@ -1002,7 +993,6 @@ export default function TextzyMobile() {
     const labels = has ? current.filter((x) => String(x).toLowerCase() !== "starred") : [...current, "starred"];
     const { res } = await apiFetch(`/api/inbox/conversations/${activeId}/labels`, {
       method: "POST",
-      token: authCtx.token,
       tenantSlug: authCtx.tenantSlug,
       csrfToken: authCtx.csrfToken,
       body: { labels },
@@ -1030,7 +1020,6 @@ export default function TextzyMobile() {
       }
       const { res } = await apiFetch("/api/messages/send", {
         method: "POST",
-        token: authCtx.token,
         tenantSlug: authCtx.tenantSlug,
         csrfToken: authCtx.csrfToken,
         body: {
@@ -1070,7 +1059,6 @@ export default function TextzyMobile() {
       const body = newChatBody.trim() || "Hello";
       const { res } = await apiFetch("/api/messages/send", {
         method: "POST",
-        token: authCtx.token,
         tenantSlug: authCtx.tenantSlug,
         csrfToken: authCtx.csrfToken,
         body: {
@@ -1092,7 +1080,7 @@ export default function TextzyMobile() {
   const openProjectSwitch = async () => {
     setShowMainMenu(false);
     try {
-      await loadProjects(authCtx.token);
+      await loadProjects();
       setScreen("project");
     } catch (e) {
       setNotice(e?.message || "Unable to load projects");
@@ -1116,7 +1104,6 @@ export default function TextzyMobile() {
     await withBusy("devices", async () => {
       const { res } = await apiFetch(`/api/auth/devices/${deviceId}`, {
         method: "DELETE",
-        token: authCtx.token,
         tenantSlug: authCtx.tenantSlug,
         csrfToken: authCtx.csrfToken,
       });
@@ -1139,24 +1126,23 @@ export default function TextzyMobile() {
 
   useEffect(() => {
     if (screen !== "app") return;
-    if (!authCtx.token || !authCtx.tenantSlug) return;
+    if (!authCtx.tenantSlug) return;
     if (contacts.length > 0) return;
     loadConversations().catch(() => setCons(CONTACTS));
-  }, [screen, authCtx.token, authCtx.tenantSlug]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [screen, authCtx.tenantSlug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!restored.accessToken) return;
+    if (!restored.csrfToken && !restored.tenantSlug) return;
     if (restored.tenantSlug) {
       setScreen("app");
       loadConversations({
-        token: restored.accessToken,
         csrfToken: restored.csrfToken || "",
         tenantSlug: restored.tenantSlug,
       }).catch(() => setScreen("project"));
       return;
     }
-    loadProjects(restored.accessToken)
+    loadProjects()
       .then(() => setScreen("project"))
       .catch(() => {
         localStorage.removeItem(SESSION_KEY);
@@ -1166,7 +1152,7 @@ export default function TextzyMobile() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (screen !== "app") return;
-    if (!authCtx.token || !authCtx.tenantSlug) return;
+    if (!authCtx.tenantSlug) return;
     const tick = () => {
       loadConversations().catch(() => {});
       if (view === "chat" && activeId) {
@@ -1176,21 +1162,21 @@ export default function TextzyMobile() {
     };
     const timer = setInterval(tick, 3000);
     return () => clearInterval(timer);
-  }, [screen, authCtx.token, authCtx.tenantSlug, view, activeId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [screen, authCtx.tenantSlug, view, activeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (screen !== "app") return;
-    if (!authCtx.token || !authCtx.tenantSlug) return;
+    if (!authCtx.tenantSlug) return;
     loadAppBootstrap(authCtx).catch(() => {});
-  }, [screen, authCtx.token, authCtx.tenantSlug]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [screen, authCtx.tenantSlug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (screen !== "app") return;
-    if (!authCtx.token || !authCtx.tenantSlug) return;
+    if (!authCtx.tenantSlug) return;
     ensureNotificationSubscription().catch(() => {});
-  }, [screen, authCtx.token, authCtx.tenantSlug, notifEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [screen, authCtx.tenantSlug, notifEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     return () => {
@@ -1206,7 +1192,7 @@ export default function TextzyMobile() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (screen !== "app") return;
-    if (!authCtx.token || !authCtx.tenantSlug) return;
+    if (!authCtx.tenantSlug) return;
     const runtimeConfig = typeof window !== "undefined" ? (window.__APP_CONFIG__ || {}) : {};
     const baseUrl =
       runtimeConfig.API_BASE ||
@@ -1217,7 +1203,6 @@ export default function TextzyMobile() {
     const connection = new signalR.HubConnectionBuilder()
       .withUrl(`${baseUrl}/hubs/inbox?tenantSlug=${encodeURIComponent(authCtx.tenantSlug)}`, {
         withCredentials: true,
-        accessTokenFactory: () => authCtx.token || "",
       })
       .withAutomaticReconnect()
       .build();
@@ -1270,7 +1255,7 @@ export default function TextzyMobile() {
         connection.stop().catch(() => {});
       }
     };
-  }, [screen, authCtx.token, authCtx.tenantSlug, view, activeId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [screen, authCtx.tenantSlug, view, activeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -1400,7 +1385,7 @@ export default function TextzyMobile() {
       openProjectSwitch={openProjectSwitch}
       onLogout={() => {
         localStorage.removeItem(SESSION_KEY);
-        setSession({ accessToken: "", csrfToken: "", tenantSlug: "" });
+        setSession({ csrfToken: "", tenantSlug: "" });
         setProjects([]);
         setProject(null);
         setUser(null);

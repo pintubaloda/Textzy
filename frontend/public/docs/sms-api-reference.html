@@ -131,7 +131,7 @@
       <div>
         <section class="card">
           <h2>1. Public SMS API <span class="tag">No bearer token</span></h2>
-          <p>Use this for ERP, CRM, admin-panel, or lightweight partner integrations where you want a browser-friendly or server-friendly request model without session login.</p>
+          <p>Use this for ERP, CRM, admin-panel, or lightweight partner integrations where you want a browser-friendly or server-friendly request model without session login, while still keeping each tenant on its own credential set.</p>
           <h3>GET Request</h3>
           <pre>GET https://textzy-backend-production.up.railway.app/api/public/messages/send
   ?recipient=919999999999
@@ -167,15 +167,16 @@
             <tr><th>Field</th><th>Type</th><th>Use</th></tr>
             <tr><td><code>recipient</code></td><td>string</td><td>Mobile number with country code</td></tr>
             <tr><td><code>message</code> / <code>msg</code></td><td>string</td><td>SMS text</td></tr>
-            <tr><td><code>user</code></td><td>string</td><td>API username</td></tr>
+            <tr><td><code>tenantSlug</code></td><td>string</td><td>Required target tenant slug</td></tr>
+            <tr><td><code>user</code></td><td>string</td><td>Tenant-scoped API username</td></tr>
             <tr><td><code>password</code> / <code>pswd</code></td><td>string</td><td>API password</td></tr>
             <tr><td><code>apiKey</code> / <code>apikey</code></td><td>string</td><td>API key</td></tr>
             <tr><td><code>sender</code></td><td>string</td><td>DLT-approved sender ID</td></tr>
             <tr><td><code>peId</code> / <code>PE_ID</code></td><td>string</td><td>DLT entity ID</td></tr>
             <tr><td><code>templateId</code> / <code>Template_ID</code></td><td>string</td><td>DLT template ID</td></tr>
-            <tr><td><code>tenantSlug</code></td><td>string</td><td>Optional tenant hint</td></tr>
             <tr><td><code>idempotencyKey</code></td><td>string</td><td>Optional request de-duplication key</td></tr>
           </table>
+          <div class="note">Platform owner provisions public API credentials per tenant. Requests are validated against the selected <code>tenantSlug</code> only, and optional IP whitelist rules can be enforced per tenant.</div>
         </section>
 
         <section class="card">
@@ -189,7 +190,7 @@
   "smsPeId": "1601100000000006533",
   "smsTemplateId": "1207171593687982329"
 }</pre>
-          <div class="note">Requires authenticated tenant session, selected project, and an idempotency key on send.</div>
+          <div class="note">Requires authenticated tenant session, selected project, cookie-based first-party auth, and an idempotency key on send.</div>
         </section>
 
         <section class="card">

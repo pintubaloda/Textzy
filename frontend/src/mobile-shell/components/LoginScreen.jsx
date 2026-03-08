@@ -243,6 +243,7 @@ const LoginScreen = ({ onLogin }) => {
   const [otpBusy,setOtpBusy] = useState(false);
   const [otpStatusBusy,setOtpStatusBusy] = useState(false);
   const [verifyBusy,setVerifyBusy] = useState(false);
+  const [twoFactor,setTwoFactor] = useState({ challengeToken:"", provider:"", expiresAtUtc:"", code:"", busy:false });
   const [showPass,setShowPass] = useState(false);
   const [loading,setLoad]= useState(false);
   const [err,setErr]     = useState("");
@@ -253,7 +254,16 @@ const LoginScreen = ({ onLogin }) => {
     setLoad(true);
     setErr("");
     try {
-      await onLogin({ mode: "password", email, password: pass, emailVerificationId: verificationId });
+      const result = await onLogin({ mode: "password", email, password: pass, emailVerificationId: verificationId });
+      if (result?.requiresTwoFactor) {
+        setTwoFactor({
+          challengeToken: result.challengeToken || "",
+          provider: result.provider || "authenticator",
+          expiresAtUtc: result.expiresAtUtc || "",
+          code: "",
+          busy: false,
+        });
+      }
     } catch (e) {
       setErr(e?.message || "Login failed.");
     } finally {
@@ -317,6 +327,25 @@ const LoginScreen = ({ onLogin }) => {
     } finally {
       setVerifyBusy(false);
     }
+  };
+
+  const verifyAuthenticator = async () => {
+    if (!twoFactor.challengeToken || !twoFactor.code.trim()) { setErr("Enter authenticator code first."); return; }
+    setErr("");
+    setTwoFactor((prev) => ({ ...prev, busy: true }));
+    try {
+      await onLogin({
+        mode: "verify-authenticator",
+        email,
+        challengeToken: twoFactor.challengeToken,
+        code: twoFactor.code.trim(),
+      });
+    } catch (e) {
+      setErr(e?.message || "Authenticator verification failed.");
+      setTwoFactor((prev) => ({ ...prev, busy: false }));
+      return;
+    }
+    setTwoFactor({ challengeToken:"", provider:"", expiresAtUtc:"", code:"", busy:false });
   };
 
   return (
@@ -390,6 +419,7 @@ const LoginScreen = ({ onLogin }) => {
                   setOtpVerified(false);
                   setVerificationId("");
                   setVerificationState("");
+                  setTwoFactor({ challengeToken:"", provider:"", expiresAtUtc:"", code:"", busy:false });
                 }}
                 onKeyDown={e=>e.key==="Enter"&&submit()}
                 style={{
@@ -433,46 +463,81 @@ const LoginScreen = ({ onLogin }) => {
                 </button>
               </div>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns: otpReady ? "1fr 92px 92px" : "1fr", gap:8, marginBottom:10 }}>
-              <button onClick={requestOtp} disabled={otpBusy} style={{ padding:"10px 12px",borderRadius:10,border:`1px solid ${C.divider}`,background:"#fff",fontWeight:700,color:C.textMain,cursor:otpBusy?"not-allowed":"pointer" }}>
-                {otpBusy ? "Sending..." : "Verify Email"}
-              </button>
-              {otpReady ? (
-                <>
-                  <input
-                    value={otp}
-                    onChange={(e)=>setOtp(e.target.value)}
-                    placeholder="OTP"
-                    style={{ padding:"10px 10px",borderRadius:10,border:`1px solid ${C.divider}`,fontSize:13 }}
-                  />
-                  <button onClick={verifyOtp} disabled={verifyBusy || !otpSent} style={{ padding:"10px 12px",borderRadius:10,border:"none",background:C.orange,color:"#fff",fontWeight:700,cursor:(verifyBusy || !otpSent)?"not-allowed":"pointer",opacity:(verifyBusy || !otpSent)?0.8:1 }}>
-                    {verifyBusy ? "..." : "Verify"}
+            {!twoFactor.challengeToken ? (
+              <>
+                <div style={{ display:"grid", gridTemplateColumns: otpReady ? "1fr 92px 92px" : "1fr", gap:8, marginBottom:10 }}>
+                  <button onClick={requestOtp} disabled={otpBusy} style={{ padding:"10px 12px",borderRadius:10,border:`1px solid ${C.divider}`,background:"#fff",fontWeight:700,color:C.textMain,cursor:otpBusy?"not-allowed":"pointer" }}>
+                    {otpBusy ? "Sending..." : "Verify Email"}
                   </button>
-                </>
-              ) : null}
-            </div>
-            {otpSent && (
-              <p style={{ fontSize:12, color: otpVerified ? C.online : C.textSub, margin:"0 0 8px" }}>
-                {otpVerified
-                  ? "Email verified successfully."
-                  : otpReady
-                    ? "Verification link confirmed. Enter OTP from email tab."
-                    : "Waiting for user action. Check your email and click Verify Now."}
-              </p>
+                  {otpReady ? (
+                    <>
+                      <input
+                        value={otp}
+                        onChange={(e)=>setOtp(e.target.value)}
+                        placeholder="OTP"
+                        style={{ padding:"10px 10px",borderRadius:10,border:`1px solid ${C.divider}`,fontSize:13 }}
+                      />
+                      <button onClick={verifyOtp} disabled={verifyBusy || !otpSent} style={{ padding:"10px 12px",borderRadius:10,border:"none",background:C.orange,color:"#fff",fontWeight:700,cursor:(verifyBusy || !otpSent)?"not-allowed":"pointer",opacity:(verifyBusy || !otpSent)?0.8:1 }}>
+                        {verifyBusy ? "..." : "Verify"}
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+                {otpSent && (
+                  <p style={{ fontSize:12, color: otpVerified ? C.online : C.textSub, margin:"0 0 8px" }}>
+                    {otpVerified
+                      ? "Email verified successfully."
+                      : otpReady
+                        ? "Verification link confirmed. Enter OTP from email tab."
+                        : "Waiting for user action. Check your email and click Verify Now."}
+                  </p>
+                )}
+              </>
+            ) : (
+              <div style={{ marginBottom:14, padding:"14px", borderRadius:16, border:`1px solid ${C.orangeLight2}`, background:"linear-gradient(180deg,#fff7ed 0%,#ffffff 100%)", boxShadow:"0 8px 22px rgba(249,115,22,0.08)" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+                  <div style={{ width:34, height:34, borderRadius:12, background:C.orangePale, color:C.orange, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <I.Shield/>
+                  </div>
+                  <div>
+                    <div style={{ fontWeight:800, fontSize:14, color:C.textMain }}>Two-factor authentication</div>
+                    <div style={{ fontSize:12, color:C.textSub }}>Enter the 6-digit code from your {String(twoFactor.provider || "authenticator").replace(/_/g, " ")} app.</div>
+                  </div>
+                </div>
+                {twoFactor.expiresAtUtc ? (
+                  <p style={{ margin:"0 0 10px", fontSize:12, color:C.textSub }}>
+                    Challenge expires at {new Date(twoFactor.expiresAtUtc).toLocaleTimeString()}
+                  </p>
+                ) : null}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 120px", gap:8 }}>
+                  <input
+                    value={twoFactor.code}
+                    onChange={(e)=>setTwoFactor((prev) => ({ ...prev, code: e.target.value }))}
+                    placeholder="Authenticator code"
+                    inputMode="numeric"
+                    style={{ padding:"11px 12px",borderRadius:10,border:`1px solid ${C.divider}`,fontSize:14 }}
+                  />
+                  <button onClick={verifyAuthenticator} disabled={twoFactor.busy} style={{ padding:"10px 12px",borderRadius:10,border:"none",background:C.orange,color:"#fff",fontWeight:700,cursor:twoFactor.busy?"not-allowed":"pointer",opacity:twoFactor.busy?0.8:1 }}>
+                    {twoFactor.busy ? "Checking..." : "Verify"}
+                  </button>
+                </div>
+              </div>
             )}
             {err&&<p style={{ color:C.danger,fontSize:13,marginBottom:10,textAlign:"center" }}>{err}</p>}
-            <button onClick={submit} disabled={loading} style={{
+            <button onClick={submit} disabled={loading || !!twoFactor.challengeToken} style={{
               width:"100%", padding:15, borderRadius:14, border:"none",
               background:`linear-gradient(135deg,${C.orange},${C.orangeLight})`,
               color:"#fff", fontWeight:700, fontSize:16,
-              cursor:loading?"not-allowed":"pointer", fontFamily:"inherit",
+              cursor:(loading || twoFactor.challengeToken)?"not-allowed":"pointer", fontFamily:"inherit",
               display:"flex", alignItems:"center", justifyContent:"center", gap:8,
               boxShadow:`0 6px 24px ${C.orange}55`,
-              opacity:loading?0.85:1, transition:"opacity 0.2s",
+              opacity:(loading || twoFactor.challengeToken)?0.85:1, transition:"opacity 0.2s",
             }}>
               {loading
                 ? <><div style={{ width:20,height:20,border:"2.5px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin 0.7s linear infinite" }}/>Signing in...</>
-                : <><span>Sign In</span><I.ArrowRight/></>}
+                : twoFactor.challengeToken
+                  ? <><span>Awaiting authenticator verification</span><I.Shield/></>
+                  : <><span>Sign In</span><I.ArrowRight/></>}
             </button>
             <p style={{ textAlign:"center",marginTop:16,fontSize:12,color:C.textMuted }}>
               <span style={{ display:"inline-flex",alignItems:"center",gap:6 }}><I.Shield/>Secure session | HTTPS only</span>

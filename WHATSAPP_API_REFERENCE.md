@@ -26,14 +26,21 @@ Use:
 - selected project / tenant
 - CSRF token on unsafe browser requests
 - cookie-based session transport
+- optional login-time authenticator verification when 2FA is enabled
 
 Core auth endpoints:
 - `POST /api/auth/login`
+- `POST /api/auth/two-factor/verify-login`
 - `GET /api/auth/projects`
 - `POST /api/auth/switch-project`
 - `GET /api/auth/me`
 - `POST /api/auth/refresh`
 - `POST /api/auth/logout`
+
+Important behavior:
+- first-party Textzy web and mobile apps use httpOnly cookie sessions
+- tenant context comes from the selected project
+- external callers should not try to supply WhatsApp tenant context by arbitrary header mutation
 
 ## 3. Send WhatsApp Session Message
 
@@ -54,6 +61,7 @@ Example:
 Behavior:
 - works inside the 24-hour customer service window
 - session messages are blocked outside active WhatsApp session window
+- requires authenticated tenant context, not public API credentials
 
 ## 4. Send WhatsApp Template Message
 
@@ -216,6 +224,10 @@ Endpoints:
 - `GET /api/automation/trigger-audit/summary`
 - `GET /api/automation/debug/tenant-flow-counts`
 
+Security note:
+- advanced debug endpoints are platform/diagnostic tools and should not be exposed to general external API clients
+- live customer automations should use published flow/runtime APIs only
+
 ## 10. WhatsApp Diagnostics and Smoke Testing
 
 ### 10.1 Readiness
@@ -267,6 +279,8 @@ These are typically used by dashboard analytics pages to show:
 - read counts
 - channel distribution
 - campaign performance
+
+Sensitive write paths such as platform settings, payment settings, API credential changes, and team permission changes can require step-up authenticator verification.
 
 ## 12. Common Status Codes
 
