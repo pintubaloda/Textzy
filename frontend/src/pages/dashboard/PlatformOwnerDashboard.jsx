@@ -23,6 +23,7 @@ import {
   Building2,
   CreditCard,
   Database,
+  Layers3,
   RefreshCcw,
   Rocket,
   ServerCog,
