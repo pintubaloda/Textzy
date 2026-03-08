@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ArrowUpRight,
@@ -22,6 +23,7 @@ import { toast } from "sonner";
 import {
   assignPlatformCustomerPlan,
   getPlatformCustomerActivity,
+  getPlatformCustomerCompanySettings,
   getPlatformCustomerDetails,
   getPlatformCustomerFeatures,
   getPlatformCustomerInvoices,
@@ -32,6 +34,7 @@ import {
   getPlatformUserTenants,
   getPlatformUsers,
   listPlatformBillingPlans,
+  savePlatformCustomerCompanySettings,
   savePlatformCustomerFeatures,
 } from "@/lib/api";
 
@@ -129,6 +132,14 @@ export default function AdminPage() {
   const [assigningPlan, setAssigningPlan] = useState(false);
   const [tenantFeatures, setTenantFeatures] = useState(DEFAULT_FEATURES);
   const [savingFeatures, setSavingFeatures] = useState(false);
+  const [companySettings, setCompanySettings] = useState({
+    billingEmail: "",
+    billingPhone: "",
+    taxRatePercent: 18,
+    isTaxExempt: false,
+    isReverseCharge: false,
+  });
+  const [savingCompanySettings, setSavingCompanySettings] = useState(false);
   const [platformUsers, setPlatformUsers] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [userTenantReport, setUserTenantReport] = useState(null);
@@ -152,6 +163,7 @@ export default function AdminPage() {
     try {
       const [
         customerDetails,
+        customerCompanySettings,
         customerUsage,
         customerSubscriptions,
         customerInvoices,
@@ -160,6 +172,7 @@ export default function AdminPage() {
         customerFeatures,
       ] = await Promise.all([
         getPlatformCustomerDetails(selectedTenantId),
+        getPlatformCustomerCompanySettings(selectedTenantId).catch(() => null),
         getPlatformCustomerUsage(selectedTenantId, selectedMonth),
         getPlatformCustomerSubscriptions(selectedTenantId),
         getPlatformCustomerInvoices(selectedTenantId),
@@ -169,6 +182,13 @@ export default function AdminPage() {
       ]);
 
       setDetails(customerDetails || null);
+      setCompanySettings({
+        billingEmail: customerCompanySettings?.billingEmail || "",
+        billingPhone: customerCompanySettings?.billingPhone || "",
+        taxRatePercent: Number(customerCompanySettings?.taxRatePercent ?? 18),
+        isTaxExempt: !!customerCompanySettings?.isTaxExempt,
+        isReverseCharge: !!customerCompanySettings?.isReverseCharge,
+      });
       setUsage(customerUsage || null);
       setSubscriptions(Array.isArray(customerSubscriptions) ? customerSubscriptions : []);
       setInvoices(Array.isArray(customerInvoices) ? customerInvoices : []);
@@ -465,6 +485,95 @@ export default function AdminPage() {
                   {savingFeatures ? "Saving..." : tenantFeatures.smsGatewayReportEnabled ? "Disable access" : "Enable access"}
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-xl">Tenant Tax Profile</CardTitle>
+              <CardDescription>Control GST rate and invoice tax handling for the selected tenant from the platform side.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Billing Email</Label>
+                  <Input
+                    value={companySettings.billingEmail}
+                    onChange={(event) => setCompanySettings((prev) => ({ ...prev, billingEmail: event.target.value }))}
+                    placeholder="accounts@tenant.com"
+                    disabled={!selectedTenantId}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Billing Phone</Label>
+                  <Input
+                    value={companySettings.billingPhone}
+                    onChange={(event) => setCompanySettings((prev) => ({ ...prev, billingPhone: event.target.value }))}
+                    placeholder="+91..."
+                    disabled={!selectedTenantId}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Tax Rate %</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={companySettings.taxRatePercent}
+                    onChange={(event) => setCompanySettings((prev) => ({ ...prev, taxRatePercent: Number(event.target.value || 0) }))}
+                    disabled={!selectedTenantId}
+                  />
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-slate-900">Tax Exempt</p>
+                      <p className="text-xs text-slate-500">No GST will be applied on invoices.</p>
+                    </div>
+                    <Switch
+                      checked={!!companySettings.isTaxExempt}
+                      onCheckedChange={(value) => setCompanySettings((prev) => ({ ...prev, isTaxExempt: !!value }))}
+                      disabled={!selectedTenantId}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-slate-900">Reverse Charge</p>
+                      <p className="text-xs text-slate-500">Invoices mark GST as reverse charge instead of collecting it.</p>
+                    </div>
+                    <Switch
+                      checked={!!companySettings.isReverseCharge}
+                      onCheckedChange={(value) => setCompanySettings((prev) => ({ ...prev, isReverseCharge: !!value }))}
+                      disabled={!selectedTenantId}
+                    />
+                  </div>
+                </div>
+              </div>
+              <Button
+                className="h-11 w-full rounded-xl bg-orange-500 hover:bg-orange-600"
+                disabled={!selectedTenantId || savingCompanySettings}
+                onClick={async () => {
+                  try {
+                    setSavingCompanySettings(true);
+                    const updated = await savePlatformCustomerCompanySettings(selectedTenantId, companySettings);
+                    setCompanySettings({
+                      billingEmail: updated?.billingEmail || "",
+                      billingPhone: updated?.billingPhone || "",
+                      taxRatePercent: Number(updated?.taxRatePercent ?? 18),
+                      isTaxExempt: !!updated?.isTaxExempt,
+                      isReverseCharge: !!updated?.isReverseCharge,
+                    });
+                    toast.success("Tenant tax profile updated.");
+                  } catch (error) {
+                    toast.error(error?.message || "Failed to update tenant tax profile.");
+                  } finally {
+                    setSavingCompanySettings(false);
+                  }
+                }}
+              >
+                {savingCompanySettings ? "Saving..." : "Save Tax Profile"}
+              </Button>
             </CardContent>
           </Card>
         </div>

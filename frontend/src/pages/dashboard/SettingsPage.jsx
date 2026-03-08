@@ -416,7 +416,7 @@ const SettingsPage = () => {
           <Card className="border-slate-200">
             <CardHeader>
               <CardTitle>Company Information</CardTitle>
-              <CardDescription>Update your business details</CardDescription>
+              <CardDescription>Update your business details. Tax profile is managed by the platform owner.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid md:grid-cols-2 gap-6">
@@ -485,36 +485,6 @@ const SettingsPage = () => {
                 <div className="space-y-2">
                   <Label>Billing Phone</Label>
                   <Input value={company.billingPhone} onChange={(e) => setCompany((p) => ({ ...p, billingPhone: e.target.value }))} data-testid="billing-phone-input" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Tax Rate %</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={company.taxRatePercent ?? 18}
-                    onChange={(e) => setCompany((p) => ({ ...p, taxRatePercent: Number(e.target.value || 0) }))}
-                    data-testid="tax-rate-input"
-                  />
-                </div>
-                <div className="space-y-2 flex items-end">
-                  <div className="w-full grid grid-cols-1 gap-3 rounded-lg border border-slate-200 p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium text-slate-900">Tax Exempt</p>
-                        <p className="text-xs text-slate-500">No tax applied on invoices</p>
-                      </div>
-                      <Switch checked={!!company.isTaxExempt} onCheckedChange={(v) => setCompany((p) => ({ ...p, isTaxExempt: !!v }))} />
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium text-slate-900">Reverse Charge</p>
-                        <p className="text-xs text-slate-500">Invoice shows reverse-charge handling</p>
-                      </div>
-                      <Switch checked={!!company.isReverseCharge} onCheckedChange={(v) => setCompany((p) => ({ ...p, isReverseCharge: !!v }))} />
-                    </div>
-                  </div>
                 </div>
               </div>
             </CardContent>

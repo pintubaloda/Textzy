@@ -116,6 +116,20 @@ const BillingPage = () => {
   const gstin = String(company?.gstin || "").trim();
   const pan = String(company?.pan || "").trim();
   const pct = (used, limit) => !limit ? 0 : Math.min(100, Math.round((used / limit) * 100));
+  const formatMoneyValue = (value, currency = "INR") =>
+    `${String(currency || "INR").toUpperCase() === "INR" ? "\u20B9" : `${String(currency || "INR").toUpperCase()} `}${Number(value || 0).toLocaleString()}`;
+  const describePlanPrice = (plan, cycle = "monthly") => {
+    if (!plan) return "-";
+    const currency = String(plan.currency || "INR").toUpperCase();
+    const taxSuffix = String(plan.taxMode || "exclusive").toLowerCase() === "inclusive" ? " incl. GST" : " + GST";
+    if (String(plan.pricingModel || "").toLowerCase() === "usage_pack") {
+      return `${formatMoneyValue(plan.priceMonthly || 0, currency)} for ${Number(plan.includedQuantity || 0).toLocaleString()} ${plan.usageUnitName || "units"}${taxSuffix}`;
+    }
+    const base = cycle === "yearly"
+      ? `${formatMoneyValue(plan.priceYearly || 0, currency)}/year`
+      : `${formatMoneyValue(plan.priceMonthly || 0, currency)}/month`;
+    return `${base}${taxSuffix}`;
+  };
   const usage = useMemo(() => {
     const limits = currentPlan?.limits || {};
     return {
@@ -303,9 +317,10 @@ const BillingPage = () => {
                     <CardHeader className="pt-8">
                       <CardTitle className="text-lg">{plan.name}</CardTitle>
                       <div className="mt-2">
-                        <span className="text-3xl font-bold text-slate-900">₹{Number(plan.priceMonthly || 0).toLocaleString()}</span>
-                        <span className="text-slate-500">/month</span>
+                        <span className="text-3xl font-bold text-slate-900">{formatMoneyValue(plan.priceMonthly || 0, plan.currency)}</span>
+                        <span className="ml-2 text-slate-500">{String(plan.taxMode || "exclusive").toLowerCase() === "inclusive" ? "incl. GST" : "+ GST"}</span>
                       </div>
+                      <p className="mt-2 text-sm text-slate-500">{describePlanPrice(plan)}</p>
                     </CardHeader>
                     <CardContent>
                       <ul className="space-y-2 mb-6">
@@ -373,7 +388,7 @@ const BillingPage = () => {
                   <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Active</Badge>
                 </div>
                 <p className="text-slate-600">
-                  ₹{Number(currentPlan?.priceMonthly || 0).toLocaleString()}/month • Renews on {sub?.subscription?.renewAtUtc ? new Date(sub.subscription.renewAtUtc).toLocaleDateString() : "-"}
+                  {describePlanPrice(currentPlan, sub?.subscription?.billingCycle || "monthly")} | Renews on {sub?.subscription?.renewAtUtc ? new Date(sub.subscription.renewAtUtc).toLocaleDateString() : "-"}
                 </p>
               </div>
             </div>
@@ -570,8 +585,8 @@ const BillingPage = () => {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex justify-between items-center">
-              <span className="text-slate-600">Plan Cost</span>
-              <span className="font-medium text-slate-900">{"\u20B9"}{planCost.toLocaleString()}</span>
+              <span className="text-slate-600">{taxMode === "inclusive" ? "Plan Cost (incl. GST)" : "Plan Cost (base)"}</span>
+              <span className="font-medium text-slate-900">{formatMoneyValue(planCost)}</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-slate-600">Additional SMS</span>
@@ -585,8 +600,13 @@ const BillingPage = () => {
             </div>
             <div className="border-t border-slate-200 pt-4 flex justify-between items-center">
               <span className="font-medium text-slate-900">Total</span>
-              <span className="text-xl font-bold text-slate-900">{"\u20B9"}{totalAmount.toLocaleString()}</span>
+              <span className="text-xl font-bold text-slate-900">{formatMoneyValue(totalAmount)}</span>
             </div>
+            {taxMode === "exclusive" ? (
+              <p className="text-xs text-slate-500">Displayed plan price excludes GST. GST is added on top during invoice and checkout.</p>
+            ) : (
+              <p className="text-xs text-slate-500">Displayed plan price already includes GST.</p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -621,7 +641,7 @@ const BillingPage = () => {
                 <TableRow key={invoice.id || invoice.invoiceNo}>
                   <TableCell className="font-medium">{invoice.invoiceNo || invoice.id}</TableCell>
                   <TableCell className="text-slate-600">{invoice.createdAtUtc ? new Date(invoice.createdAtUtc).toLocaleDateString() : "-"}</TableCell>
-                  <TableCell className="text-slate-900">₹{Number(invoice.total || 0).toLocaleString()}</TableCell>
+                  <TableCell className="text-slate-900">â‚¹{Number(invoice.total || 0).toLocaleString()}</TableCell>
                   <TableCell>
                     <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
                       {invoice.status}

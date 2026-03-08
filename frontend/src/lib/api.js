@@ -1019,6 +1019,14 @@ export async function getPlatformCustomerFeatures(tenantId) {
   return apiGet(`/api/platform/customers/${encodeURIComponent(tenantId)}/features`)
 }
 
+export async function getPlatformCustomerCompanySettings(tenantId) {
+  return apiGet(`/api/platform/customers/${encodeURIComponent(tenantId)}/company-settings`)
+}
+
+export async function savePlatformCustomerCompanySettings(tenantId, payload) {
+  return apiPut(`/api/platform/customers/${encodeURIComponent(tenantId)}/company-settings`, payload || {})
+}
+
 export async function savePlatformCustomerFeatures(tenantId, payload) {
   return apiPut(`/api/platform/customers/${encodeURIComponent(tenantId)}/features`, payload || {})
 }

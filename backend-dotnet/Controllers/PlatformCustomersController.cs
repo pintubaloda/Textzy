@@ -304,6 +304,104 @@ public class PlatformCustomersController(
         });
     }
 
+    [HttpGet("{tenantId:guid}/company-settings")]
+    public async Task<IActionResult> GetTenantCompanySettings(Guid tenantId, CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+
+        var tenant = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound("Tenant not found.");
+
+        var profile = await db.TenantCompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, ct);
+        if (profile is null)
+        {
+            return Ok(new
+            {
+                tenantId,
+                tenantName = tenant.Name,
+                tenantSlug = tenant.Slug,
+                companyName = tenant.Name,
+                legalName = tenant.Name,
+                billingEmail = string.Empty,
+                billingPhone = string.Empty,
+                taxRatePercent = 18m,
+                isTaxExempt = false,
+                isReverseCharge = false,
+                updatedAtUtc = (DateTime?)null
+            });
+        }
+
+        return Ok(new
+        {
+            tenantId,
+            tenantName = tenant.Name,
+            tenantSlug = tenant.Slug,
+            companyName = profile.CompanyName,
+            legalName = profile.LegalName,
+            billingEmail = profile.BillingEmail,
+            billingPhone = profile.BillingPhone,
+            taxRatePercent = profile.TaxRatePercent,
+            isTaxExempt = profile.IsTaxExempt,
+            isReverseCharge = profile.IsReverseCharge,
+            updatedAtUtc = profile.UpdatedAtUtc
+        });
+    }
+
+    [HttpPut("{tenantId:guid}/company-settings")]
+    public async Task<IActionResult> UpsertTenantCompanySettings(Guid tenantId, [FromBody] TenantCompanySettingsRequest request, CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+
+        var tenant = await db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is null) return NotFound("Tenant not found.");
+
+        var now = DateTime.UtcNow;
+        var profile = await db.TenantCompanyProfiles.FirstOrDefaultAsync(x => x.TenantId == tenantId, ct);
+        if (profile is null)
+        {
+            profile = new TenantCompanyProfile
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                OwnerGroupId = tenant.OwnerGroupId,
+                CompanyName = tenant.Name,
+                LegalName = tenant.Name,
+                CreatedAtUtc = now,
+            };
+            db.TenantCompanyProfiles.Add(profile);
+        }
+
+        profile.BillingEmail = InputGuardService.ValidateEmailOrEmpty(request.BillingEmail, "Billing email");
+        profile.BillingPhone = (request.BillingPhone ?? string.Empty).Trim();
+        profile.TaxRatePercent = Math.Clamp(request.TaxRatePercent, 0m, 100m);
+        profile.IsTaxExempt = request.IsTaxExempt;
+        profile.IsReverseCharge = request.IsReverseCharge;
+        profile.UpdatedAtUtc = now;
+
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync(
+            "platform.customer.company_settings.updated",
+            $"tenant={tenantId}; taxRate={profile.TaxRatePercent}; exempt={profile.IsTaxExempt}; reverseCharge={profile.IsReverseCharge}",
+            ct);
+
+        return Ok(new
+        {
+            tenantId,
+            tenantName = tenant.Name,
+            tenantSlug = tenant.Slug,
+            companyName = profile.CompanyName,
+            legalName = profile.LegalName,
+            billingEmail = profile.BillingEmail,
+            billingPhone = profile.BillingPhone,
+            taxRatePercent = profile.TaxRatePercent,
+            isTaxExempt = profile.IsTaxExempt,
+            isReverseCharge = profile.IsReverseCharge,
+            updatedAtUtc = profile.UpdatedAtUtc
+        });
+    }
+
     [HttpPut("{tenantId:guid}/features")]
     public async Task<IActionResult> UpsertTenantFeatures(Guid tenantId, [FromBody] TenantFeaturesRequest request, CancellationToken ct = default)
     {
@@ -565,5 +663,14 @@ public class PlatformCustomersController(
     public sealed class TenantFeaturesRequest
     {
         public bool SmsGatewayReportEnabled { get; set; }
+    }
+
+    public sealed class TenantCompanySettingsRequest
+    {
+        public string BillingEmail { get; set; } = string.Empty;
+        public string BillingPhone { get; set; } = string.Empty;
+        public decimal TaxRatePercent { get; set; } = 18m;
+        public bool IsTaxExempt { get; set; }
+        public bool IsReverseCharge { get; set; }
     }
 }
