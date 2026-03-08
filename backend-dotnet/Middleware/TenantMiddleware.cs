@@ -107,6 +107,10 @@ public class TenantMiddleware(RequestDelegate next)
                 await _next(context);
                 return;
             }
+
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await context.Response.WriteAsync("Invalid or expired session.");
+            return;
         }
 
         if (!context.Request.Headers.TryGetValue("X-Tenant-Slug", out var tenantSlug))

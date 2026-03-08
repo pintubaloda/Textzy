@@ -446,7 +446,7 @@ export async function authLogin({ email, password, tenantSlug, emailVerification
     method: 'POST',
     headers,
     credentials: 'include',
-    body: JSON.stringify({ email, password, emailVerificationId: emailVerificationId || '' })
+    body: JSON.stringify({ email, password, tenantSlug: tenantSlug || '', emailVerificationId: emailVerificationId || '' })
   })
   persistCsrfFromResponse(res)
   if (!res.ok) {
@@ -748,6 +748,36 @@ export async function getPlatformSettings(scope) {
 
 export async function savePlatformSettings(scope, values) {
   return apiPut(`/api/platform/settings/${scope}`, values)
+}
+
+export async function getSupportContext() {
+  return apiGet('/api/support/context')
+}
+
+export async function getSupportTickets(filters = {}) {
+  const q = new URLSearchParams()
+  if (filters.status) q.set('status', filters.status)
+  if (filters.service) q.set('service', filters.service)
+  if (filters.q) q.set('q', filters.q)
+  if (filters.page) q.set('page', String(filters.page))
+  if (filters.pageSize) q.set('pageSize', String(filters.pageSize))
+  return apiGet(`/api/support/tickets${q.toString() ? `?${q.toString()}` : ''}`)
+}
+
+export async function getSupportTicketDetails(ticketId) {
+  return apiGet(`/api/support/tickets/${encodeURIComponent(ticketId)}`)
+}
+
+export async function createSupportTicket(payload) {
+  return apiPost('/api/support/tickets', payload || {})
+}
+
+export async function replySupportTicket(ticketId, payload) {
+  return apiPost(`/api/support/tickets/${encodeURIComponent(ticketId)}/reply`, payload || {})
+}
+
+export async function reopenSupportTicket(ticketId, payload = {}) {
+  return apiPost(`/api/support/tickets/${encodeURIComponent(ticketId)}/reopen`, payload || {})
 }
 
 export async function testPlatformSmtp(email) {
@@ -1223,6 +1253,29 @@ export async function viewPlatformPurchaseInvoice(invoiceId) {
 
 export async function sendPlatformPurchaseInvoice(invoiceId) {
   return apiPost(`/api/platform/purchases/${encodeURIComponent(invoiceId)}/send`, {})
+}
+
+export async function getPlatformSupportTickets(filters = {}) {
+  const q = new URLSearchParams()
+  if (filters.status) q.set('status', filters.status)
+  if (filters.service) q.set('service', filters.service)
+  if (filters.q) q.set('q', filters.q)
+  if (filters.tenantId) q.set('tenantId', filters.tenantId)
+  if (filters.page) q.set('page', String(filters.page))
+  if (filters.pageSize) q.set('pageSize', String(filters.pageSize))
+  return apiGet(`/api/platform/support/tickets${q.toString() ? `?${q.toString()}` : ''}`)
+}
+
+export async function getPlatformSupportTicketDetails(ticketId) {
+  return apiGet(`/api/platform/support/tickets/${encodeURIComponent(ticketId)}`)
+}
+
+export async function replyPlatformSupportTicket(ticketId, payload) {
+  return apiPost(`/api/platform/support/tickets/${encodeURIComponent(ticketId)}/reply`, payload || {})
+}
+
+export async function updatePlatformSupportTicketStatus(ticketId, payload) {
+  return apiPost(`/api/platform/support/tickets/${encodeURIComponent(ticketId)}/status`, payload || {})
 }
 
 export async function archivePlatformBillingPlan(id) {

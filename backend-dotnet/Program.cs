@@ -493,6 +493,53 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""ALTER TABLE "AuditLogs" ADD COLUMN IF NOT EXISTS "DeviceLabel" text NOT NULL DEFAULT '';""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_AuditLogs_CreatedAtUtc" ON "AuditLogs" ("CreatedAtUtc");""");
     db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "SupportTickets" (
+            "Id" uuid PRIMARY KEY,
+            "TicketNo" text NOT NULL,
+            "TenantId" uuid NOT NULL,
+            "OwnerGroupId" uuid NULL,
+            "CreatedByUserId" uuid NOT NULL,
+            "TenantName" text NOT NULL DEFAULT '',
+            "TenantSlug" text NOT NULL DEFAULT '',
+            "CompanyName" text NOT NULL DEFAULT '',
+            "CreatedByName" text NOT NULL DEFAULT '',
+            "CreatedByEmail" text NOT NULL DEFAULT '',
+            "ServiceKey" text NOT NULL DEFAULT '',
+            "ServiceName" text NOT NULL DEFAULT '',
+            "Subject" text NOT NULL DEFAULT '',
+            "Status" text NOT NULL DEFAULT 'open',
+            "Priority" text NOT NULL DEFAULT 'normal',
+            "LastMessagePreview" text NOT NULL DEFAULT '',
+            "LastActorType" text NOT NULL DEFAULT 'customer',
+            "ClosedByUserId" uuid NULL,
+            "ClosedAtUtc" timestamp with time zone NULL,
+            "ReopenedByUserId" uuid NULL,
+            "ReopenedAtUtc" timestamp with time zone NULL,
+            "LastMessageAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+            "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+            "UpdatedAtUtc" timestamp with time zone NOT NULL DEFAULT now()
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_SupportTickets_TicketNo" ON "SupportTickets" ("TicketNo");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SupportTickets_Tenant_Status_LastMessageAtUtc" ON "SupportTickets" ("TenantId","Status","LastMessageAtUtc" DESC);""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SupportTickets_Status_LastMessageAtUtc" ON "SupportTickets" ("Status","LastMessageAtUtc" DESC);""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SupportTickets_ServiceKey" ON "SupportTickets" ("ServiceKey");""");
+    db.Database.ExecuteSqlRaw("""
+        CREATE TABLE IF NOT EXISTS "SupportTicketMessages" (
+            "Id" uuid PRIMARY KEY,
+            "TicketId" uuid NOT NULL,
+            "TenantId" uuid NOT NULL,
+            "AuthorUserId" uuid NOT NULL,
+            "AuthorName" text NOT NULL DEFAULT '',
+            "AuthorEmail" text NOT NULL DEFAULT '',
+            "AuthorType" text NOT NULL DEFAULT '',
+            "Body" text NOT NULL DEFAULT '',
+            "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now()
+        );
+        """);
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SupportTicketMessages_TicketId_CreatedAtUtc" ON "SupportTicketMessages" ("TicketId","CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SupportTicketMessages_TenantId" ON "SupportTicketMessages" ("TenantId");""");
+    db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "WebhookEvents" (
             "Id" uuid PRIMARY KEY,
             "Provider" text NOT NULL,

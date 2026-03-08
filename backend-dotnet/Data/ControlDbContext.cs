@@ -22,6 +22,8 @@ public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbCo
     public DbSet<BillingInvoice> BillingInvoices => Set<BillingInvoice>();
     public DbSet<BillingPaymentAttempt> BillingPaymentAttempts => Set<BillingPaymentAttempt>();
     public DbSet<TenantUsageCreditBalance> TenantUsageCreditBalances => Set<TenantUsageCreditBalance>();
+    public DbSet<SupportTicket> SupportTickets => Set<SupportTicket>();
+    public DbSet<SupportTicketMessage> SupportTicketMessages => Set<SupportTicketMessage>();
     public DbSet<WebhookEvent> WebhookEvents => Set<WebhookEvent>();
     public DbSet<WabaErrorPolicy> WabaErrorPolicies => Set<WabaErrorPolicy>();
     public DbSet<PlatformRequestLog> PlatformRequestLogs => Set<PlatformRequestLog>();

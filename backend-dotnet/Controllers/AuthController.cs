@@ -110,30 +110,11 @@ public class AuthController(
             await db.SaveChangesAsync(ct);
         }
 
-        Guid tenantId;
-        if (tenancy.IsSet)
-        {
-            var hasAccess = db.TenantUsers.Any(tu => tu.UserId == user.Id && tu.TenantId == tenancy.TenantId);
-            if (!user.IsSuperAdmin && !hasAccess) return Forbid();
-            tenantId = tenancy.TenantId;
-        }
-        else
-        {
-            if (user.IsSuperAdmin)
-            {
-                tenantId = db.Tenants.OrderBy(t => t.CreatedAtUtc).Select(t => t.Id).FirstOrDefault();
-                if (tenantId == Guid.Empty) return BadRequest("No tenant available for super admin.");
-            }
-            else
-            {
-                tenantId = db.TenantUsers
-                    .Where(tu => tu.UserId == user.Id)
-                    .OrderByDescending(tu => tu.CreatedAtUtc)
-                    .Select(tu => tu.TenantId)
-                    .FirstOrDefault();
-                if (tenantId == Guid.Empty) return Forbid();
-            }
-        }
+        var tenantId = await ResolveLoginTenantAsync(user, request.TenantSlug, ct);
+        if (tenantId == Guid.Empty)
+            return user.IsSuperAdmin
+                ? BadRequest("No tenant available for this account.")
+                : Forbid();
 
         if (UserRequiresAuthenticator(user))
         {
@@ -1142,6 +1123,60 @@ public class AuthController(
         if (value < min) value = min;
         if (value > max) value = max;
         return value;
+    }
+
+    private async Task<Guid> ResolveLoginTenantAsync(User user, string? requestedTenantSlug, CancellationToken ct)
+    {
+        if (tenancy.IsSet)
+        {
+            var hasAccess = await db.TenantUsers
+                .AnyAsync(tu => tu.UserId == user.Id && tu.TenantId == tenancy.TenantId, ct);
+            if (hasAccess || user.IsSuperAdmin)
+                return tenancy.TenantId;
+        }
+
+        var preferredSlug = (requestedTenantSlug ?? string.Empty).Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(preferredSlug))
+        {
+            var preferredMembershipTenantId = await db.TenantUsers
+                .Where(tu => tu.UserId == user.Id)
+                .Join(
+                    db.Tenants,
+                    tu => tu.TenantId,
+                    t => t.Id,
+                    (tu, t) => new { tu.TenantId, t.Slug })
+                .Where(x => x.Slug == preferredSlug)
+                .Select(x => x.TenantId)
+                .FirstOrDefaultAsync(ct);
+            if (preferredMembershipTenantId != Guid.Empty)
+                return preferredMembershipTenantId;
+        }
+
+        var latestMembershipTenantId = await db.TenantUsers
+            .Where(tu => tu.UserId == user.Id)
+            .OrderByDescending(tu => tu.CreatedAtUtc)
+            .Select(tu => tu.TenantId)
+            .FirstOrDefaultAsync(ct);
+        if (latestMembershipTenantId != Guid.Empty)
+            return latestMembershipTenantId;
+
+        if (!user.IsSuperAdmin)
+            return Guid.Empty;
+
+        if (!string.IsNullOrWhiteSpace(preferredSlug))
+        {
+            var explicitTenantId = await db.Tenants
+                .Where(t => t.Slug == preferredSlug)
+                .Select(t => t.Id)
+                .FirstOrDefaultAsync(ct);
+            if (explicitTenantId != Guid.Empty)
+                return explicitTenantId;
+        }
+
+        return await db.Tenants
+            .OrderBy(t => t.CreatedAtUtc)
+            .Select(t => t.Id)
+            .FirstOrDefaultAsync(ct);
     }
 
     private async Task<Guid> EnsureOwnerGroupForUserAsync(Guid userId, string projectName, CancellationToken ct)

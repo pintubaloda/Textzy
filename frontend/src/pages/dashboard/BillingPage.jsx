@@ -13,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import SupportContactCard from "@/components/support/SupportContactCard";
 import {
   CreditCard,
   Download,
@@ -39,6 +40,7 @@ import {
   getSession,
   getCompanySettings,
   getCurrentBillingPlan,
+  getSupportContext,
   verifyRazorpayPayment
 } from "@/lib/api";
 import { toast } from "sonner";
@@ -54,6 +56,7 @@ const BillingPage = () => {
   const [dunningStatus, setDunningStatus] = useState(null);
   const [paymentConfig, setPaymentConfig] = useState(null);
   const [company, setCompany] = useState(null);
+  const [supportContext, setSupportContext] = useState(null);
   const [payingCode, setPayingCode] = useState("");
   const session = useMemo(() => getSession() || {}, []);
   const isSuperAdmin = String(session?.role || "").toLowerCase() === "super_admin";
@@ -78,6 +81,7 @@ const BillingPage = () => {
         ]);
         const companyCfg = await getCompanySettings().catch(() => null);
         const paymentCfg = await getBillingPaymentConfig().catch(() => null);
+        const supportCfg = await getSupportContext().catch(() => null);
         setPlans(Array.isArray(p) ? p : []);
         setSub(c || null);
         setUsageValues(u?.values || {});
@@ -86,6 +90,7 @@ const BillingPage = () => {
         setDunningStatus(d || null);
         setCompany(companyCfg || null);
         setPaymentConfig(paymentCfg);
+        setSupportContext(supportCfg || null);
       } catch (e) {
         toast.error(e.message || "Failed to load billing");
       }
@@ -242,14 +247,6 @@ const BillingPage = () => {
     a.click();
     a.remove();
     window.URL.revokeObjectURL(url);
-  };
-
-  const openPaymentSetup = () => {
-    if (!isSuperAdmin) return;
-    try {
-      localStorage.setItem("textzy_owner_mode", "platform");
-    } catch {}
-    navigate("/dashboard/platform-settings?tab=payment-gateway");
   };
 
   const openCompanySettings = () => {
@@ -513,44 +510,15 @@ const BillingPage = () => {
         </CardContent>
       </Card>
 
-      {/* Payment Method & Invoices */}
+      {/* Support, Billing Address & Invoices */}
       <div className="grid lg:grid-cols-3 gap-6">
-        {/* Payment Method */}
-        <Card className="border-slate-200">
-          <CardHeader>
-            <CardTitle>Payment Method</CardTitle>
-            <CardDescription>Your default payment method</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="p-4 bg-slate-50 rounded-lg flex items-center gap-4">
-              <div className="w-12 h-8 bg-gradient-to-r from-blue-600 to-blue-800 rounded flex items-center justify-center text-white text-xs font-bold uppercase">
-                {isSuperAdmin ? (paymentConfig?.provider || "na").slice(0, 4) : "BILL"}
-              </div>
-              <div>
-                <p className="font-medium text-slate-900">
-                  {isSuperAdmin
-                    ? `${(paymentConfig?.provider || "Not configured").toUpperCase()}${paymentConfig?.razorpay?.keyId ? " | Key configured" : " | Key missing"}`
-                    : "Managed by platform owner"}
-                </p>
-                <p className="text-sm text-slate-500">
-                  {isSuperAdmin
-                    ? `Mode: ${(paymentConfig?.mode || "test").toUpperCase()}`
-                    : "Checkout is available, but gateway credentials remain hidden from tenant users."}
-                </p>
-              </div>
-            </div>
-            {isSuperAdmin ? (
-              <Button
-                variant="outline"
-                className="w-full"
-                data-testid="update-payment-btn"
-                onClick={openPaymentSetup}
-              >
-                Open Payment Setup
-              </Button>
-            ) : null}
-          </CardContent>
-        </Card>
+        <SupportContactCard
+          support={supportContext?.support}
+          project={supportContext?.project}
+          onCreateTicket={() => navigate("/dashboard/support")}
+          onOpenSupportDesk={() => navigate("/dashboard/support")}
+          compact
+        />
 
         {/* Billing Address */}
         <Card className="border-slate-200">

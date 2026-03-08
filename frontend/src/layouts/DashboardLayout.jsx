@@ -36,6 +36,7 @@ import {
   LogOut,
   User,
   HelpCircle,
+  LifeBuoy,
   Moon,
   Sun,
   UsersRound,
@@ -191,6 +192,7 @@ const DashboardLayout = () => {
       "/dashboard/integrations",
       "/dashboard/whatsapp-onboarding",
       "/dashboard/billing",
+      "/dashboard/support",
       "/dashboard/settings",
       "/dashboard/mobile-devices",
       "/dashboard/team",
@@ -198,6 +200,7 @@ const DashboardLayout = () => {
     const platformOnly = [
       "/dashboard/admin",
       "/dashboard/platform-purchases",
+      "/dashboard/platform-support",
       "/dashboard/platform-settings",
       "/dashboard/platform-branding",
     ];
@@ -313,6 +316,7 @@ const DashboardLayout = () => {
     canViewIntegrations ? { name: "Integrations", href: "/dashboard/integrations", icon: Plug } : null,
     canManageTeam ? { name: "Team", href: "/dashboard/team", icon: UsersRound } : null,
     canViewBilling ? { name: "Billing", href: "/dashboard/billing", icon: CreditCard } : null,
+    { name: "Support", href: "/dashboard/support", icon: LifeBuoy },
     canViewSettings ? { name: "Settings", href: "/dashboard/settings", icon: Settings } : null,
     canViewInbox ? { name: "Mobile Devices", href: "/dashboard/mobile-devices", icon: Smartphone } : null,
   ].filter(Boolean);
@@ -322,6 +326,7 @@ const DashboardLayout = () => {
     { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
     { name: "Admin", href: "/dashboard/admin", icon: Shield },
     { name: "Purchase Report", href: "/dashboard/platform-purchases", icon: ReceiptText },
+    { name: "Support Desk", href: "/dashboard/platform-support", icon: LifeBuoy },
     { name: "Security Report", href: "/dashboard/platform-security-report", icon: ShieldAlert },
     { name: "Branding", href: "/dashboard/platform-branding", icon: Palette },
   ];

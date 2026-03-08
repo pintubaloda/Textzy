@@ -176,7 +176,7 @@ export default function PlatformBrandingPage() {
             <Input value={form.supportEmail} onChange={(e) => update("supportEmail", e.target.value)} placeholder="support@domain.com" />
           </div>
           <div className="space-y-2">
-            <Label>Support Phone</Label>
+            <Label>Support WhatsApp No.</Label>
             <Input value={form.supportPhone} onChange={(e) => update("supportPhone", e.target.value)} placeholder="+91..." />
           </div>
           <div className="space-y-2 md:col-span-2">

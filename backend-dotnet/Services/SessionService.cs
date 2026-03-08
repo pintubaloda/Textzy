@@ -54,9 +54,39 @@ public class SessionService(ControlDbContext db, IHttpContextAccessor httpContex
             s.ExpiresAtUtc > now);
         if (session is null) return null;
         session.LastSeenAtUtc = now;
-        var ip = RequestMetadata.GetClientIp(httpContextAccessor.HttpContext);
+        var ip = NormalizeIp(RequestMetadata.GetClientIp(httpContextAccessor.HttpContext));
         if (!string.IsNullOrWhiteSpace(ip))
-            session.LastSeenIpAddress = ip;
+        {
+            var baselineIp = NormalizeIp(!string.IsNullOrWhiteSpace(session.CreatedIpAddress)
+                ? session.CreatedIpAddress
+                : session.LastSeenIpAddress);
+            if (string.IsNullOrWhiteSpace(baselineIp))
+            {
+                session.CreatedIpAddress = ip;
+                session.LastSeenIpAddress = ip;
+            }
+            else if (!string.Equals(ip, baselineIp, StringComparison.OrdinalIgnoreCase))
+            {
+                session.LastSeenIpAddress = ip;
+                session.RevokedAtUtc = now;
+                db.SecuritySignals.Add(new SecuritySignal
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = session.TenantId,
+                    SignalType = "session_ip_changed",
+                    Severity = "high",
+                    Status = "open",
+                    CountValue = 1,
+                    Details = $"Session {session.Id} revoked because IP changed from {baselineIp} to {ip} for user {session.UserId}."
+                });
+                db.SaveChanges();
+                return null;
+            }
+            else
+            {
+                session.LastSeenIpAddress = ip;
+            }
+        }
         var ua = RequestMetadata.GetUserAgent(httpContextAccessor.HttpContext);
         if (!string.IsNullOrWhiteSpace(ua))
         {
@@ -106,4 +136,7 @@ public class SessionService(ControlDbContext db, IHttpContextAccessor httpContex
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(opaqueToken));
         return Convert.ToHexString(bytes);
     }
+
+    private static string NormalizeIp(string? value)
+        => (value ?? string.Empty).Trim();
 }

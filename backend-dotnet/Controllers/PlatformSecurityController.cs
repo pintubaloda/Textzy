@@ -83,6 +83,7 @@ public class PlatformSecurityController(
                 lastSeenIpAddress = s.LastSeenIpAddress,
                 deviceLabel = s.DeviceLabel,
                 userAgent = s.UserAgent,
+                hasMembership = membership != null,
                 twoFactorVerifiedAtUtc = s.TwoFactorVerifiedAtUtc,
                 stepUpVerifiedAtUtc = s.StepUpVerifiedAtUtc
             })
@@ -106,10 +107,15 @@ public class PlatformSecurityController(
                     || string.Equals(x.role, "admin", StringComparison.OrdinalIgnoreCase);
                 var missingTwoFactor = !x.twoFactorVerifiedAtUtc.HasValue;
                 var ipDiversity = distinctIpCountByUser.TryGetValue(x.userId, out var ipCount) ? ipCount : 0;
-                var isSuspicious = string.IsNullOrWhiteSpace(x.ipAddress) || (isPrivileged && missingTwoFactor) || ipDiversity >= 3;
+                var missingMembership = !x.hasMembership;
+                var isSuspicious = string.IsNullOrWhiteSpace(x.ipAddress)
+                    || missingMembership
+                    || (isPrivileged && missingTwoFactor)
+                    || ipDiversity >= 3;
 
                 var suspiciousReasons = new List<string>();
                 if (string.IsNullOrWhiteSpace(x.ipAddress)) suspiciousReasons.Add("Missing source IP");
+                if (missingMembership) suspiciousReasons.Add("Session tenant is not assigned to this user");
                 if (isPrivileged && missingTwoFactor) suspiciousReasons.Add("Privileged session without 2FA verification");
                 if (ipDiversity >= 3) suspiciousReasons.Add($"User seen from {ipDiversity} IPs in filtered range");
 
@@ -131,6 +137,7 @@ public class PlatformSecurityController(
                     x.lastSeenIpAddress,
                     x.deviceLabel,
                     x.userAgent,
+                    x.hasMembership,
                     x.twoFactorVerifiedAtUtc,
                     x.stepUpVerifiedAtUtc,
                     isSuspicious,
@@ -243,7 +250,8 @@ public class PlatformSecurityController(
             },
             notes = new
             {
-                location = "IP address, user agent, and derived device label are captured. Lat/long is not collected."
+                location = "IP address, user agent, and derived device label are captured. Lat/long is not collected.",
+                sessionPolicy = "Sessions are pinned to their first captured IP. If a later request arrives from a different IP, the session is revoked."
             },
             loginHistory,
             sessionsByUser,

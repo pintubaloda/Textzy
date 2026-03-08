@@ -9,6 +9,14 @@ import { MessageSquare, Eye, EyeOff, ArrowRight, Download, ShieldCheck, Smartpho
 import { toast } from "sonner";
 import { authLogin, authRequestEmailOtp, authEmailOtpStatus, authVerifyEmailOtp, checkApiHealth, getLastTenantSlug, getPublicMobileDownloadInfo, initializeMe, verifyLoginTwoFactor } from "@/lib/api";
 
+const formatTwoFactorProvider = (value) => {
+  const normalized = String(value || "authenticator")
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .toLowerCase();
+  return normalized.replace(/\b\w/g, (match) => match.toUpperCase());
+};
+
 const LoginPage = () => {
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
@@ -318,30 +326,35 @@ const LoginPage = () => {
                             <div className="flex flex-wrap items-center gap-2">
                               <p className="font-semibold text-slate-900">Confirm sign-in</p>
                               <span className="rounded-full bg-white px-2 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-orange-600 shadow-sm">
-                                {String(twoFactor.provider || "authenticator").replace(/_/g, " ")}
+                                {formatTwoFactorProvider(twoFactor.provider)}
                               </span>
                             </div>
                             <p className="mt-1 text-sm text-slate-600">
-                              Open your authenticator app and enter the current 6-digit code to continue.
+                              Use the current 6-digit code from your authenticator app to finish signing in.
                             </p>
                             {twoFactor.expiresAtUtc ? (
                               <p className="mt-1 text-xs text-slate-500">
                                 Challenge expires at {new Date(twoFactor.expiresAtUtc).toLocaleTimeString()}
                               </p>
                             ) : null}
-                            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
-                              <div className="relative">
+                            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-stretch">
+                              <div className="relative flex-1">
                                 <Smartphone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                                 <Input
                                   inputMode="numeric"
                                   maxLength={6}
-                                  className="pl-10"
-                                  placeholder="Enter 6-digit code"
+                                  className="h-11 pl-10 pr-3 text-center text-base tracking-[0.32em] sm:text-left sm:tracking-[0.22em]"
+                                  placeholder="123456"
                                   value={twoFactor.code}
-                                  onChange={(e) => setTwoFactor((prev) => ({ ...prev, code: e.target.value }))}
+                                  onChange={(e) => setTwoFactor((prev) => ({ ...prev, code: e.target.value.replace(/\D/g, "").slice(0, 6) }))}
                                 />
                               </div>
-                              <Button type="button" onClick={verifyAuthenticatorLogin} disabled={twoFactor.busy} className="bg-orange-500 hover:bg-orange-600">
+                              <Button
+                                type="button"
+                                onClick={verifyAuthenticatorLogin}
+                                disabled={twoFactor.busy || twoFactor.code.trim().length !== 6}
+                                className="h-11 min-w-[180px] bg-orange-500 px-5 hover:bg-orange-600"
+                              >
                                 {twoFactor.busy ? "Verifying..." : "Verify & Continue"}
                               </Button>
                             </div>
