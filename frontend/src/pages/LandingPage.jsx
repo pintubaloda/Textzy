@@ -122,9 +122,11 @@ const LandingPage = () => {
           .filter((p) => p?.isActive !== false)
           .sort((a, b) => (a?.sortOrder || 0) - (b?.sortOrder || 0));
         setPricingPlans(activeRows.map((p) => ({
+          code: p.code,
           name: p.name,
           price: Number(p.priceMonthly || 0) <= 0 ? "Custom" : `₹${Number(p.priceMonthly || 0).toLocaleString()}`,
-          period: Number(p.priceMonthly || 0) <= 0 ? "" : "/month",
+          period: Number(p.priceMonthly || 0) <= 0 ? "" : String(p.pricingModel || "").toLowerCase() === "usage_pack" ? "/pack" : "/month",
+          taxLabel: String(p.taxMode || "exclusive").toLowerCase() === "inclusive" ? "incl. GST" : "+ GST",
           description: p.code === "starter" ? "Perfect for small businesses getting started" : p.code === "growth" ? "For growing businesses with higher volumes" : "For large organizations with custom needs",
           features: Array.isArray(p.features) && p.features.length > 0 ? p.features : [
             `${Number(p?.limits?.whatsappMessages || 0).toLocaleString()} WhatsApp messages`,
@@ -536,6 +538,7 @@ const LandingPage = () => {
                     <span className="text-4xl font-bold text-slate-900">{plan.price}</span>
                     <span className="text-slate-500">{plan.period}</span>
                   </div>
+                  <p className="mt-2 text-xs font-medium uppercase tracking-[0.16em] text-slate-500">{plan.taxLabel || "+ GST"}</p>
                   <CardDescription className="mt-2">{plan.description}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">

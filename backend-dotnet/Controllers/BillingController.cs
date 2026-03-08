@@ -477,7 +477,9 @@ public class BillingController(
             razorpay = new
             {
                 enabled = provider == "razorpay" && !string.IsNullOrWhiteSpace(keyId),
-                keyId = isPlatformOwner ? keyId : string.Empty
+                keyId = isPlatformOwner ? keyId : string.Empty,
+                checkoutKeyId = keyId,
+                platformManaged = !isPlatformOwner
             }
         });
     }
@@ -543,7 +545,7 @@ public class BillingController(
         if (!resp.IsSuccessStatusCode)
         {
             logger.LogWarning("Razorpay order create failed status={Status} body={Body}", (int)resp.StatusCode, redactor.RedactText(raw));
-            return BadRequest("Failed to create Razorpay order.");
+            return BadRequest(ExtractRazorpayErrorMessage(raw, "Failed to create Razorpay order."));
         }
 
         using var doc = JsonDocument.Parse(raw);
@@ -792,6 +794,28 @@ public class BillingController(
     {
         var normalized = (mode ?? string.Empty).Trim().ToLowerInvariant();
         return normalized == "live" ? "live" : "test";
+    }
+
+    private static string ExtractRazorpayErrorMessage(string raw, string fallback)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.TryGetProperty("error", out var err))
+            {
+                if (err.TryGetProperty("description", out var desc) && !string.IsNullOrWhiteSpace(desc.GetString()))
+                    return desc.GetString()!;
+                if (err.TryGetProperty("reason", out var reason) && !string.IsNullOrWhiteSpace(reason.GetString()))
+                    return reason.GetString()!;
+                if (err.TryGetProperty("code", out var code) && !string.IsNullOrWhiteSpace(code.GetString()))
+                    return $"Razorpay error: {code.GetString()}";
+            }
+        }
+        catch
+        {
+            // ignore parse failures
+        }
+        return fallback;
     }
 
     private static bool IsRazorpayKeyModeValid(string keyId, string mode)
@@ -1194,7 +1218,7 @@ public class BillingController(
         var safeReference = WebUtility.HtmlEncode(inv.ReferenceNo);
         var invoiceLabel = string.Equals(inv.InvoiceKind, "proforma_invoice", StringComparison.OrdinalIgnoreCase) ? "Proforma Invoice" : "Tax Invoice";
         var safeInvoiceLabel = WebUtility.HtmlEncode(invoiceLabel);
-        var safeTaxMode = WebUtility.HtmlEncode(string.Equals(inv.TaxMode, "inclusive", StringComparison.OrdinalIgnoreCase) ? "GST Included" : "GST Extra");
+        var safeTaxMode = WebUtility.HtmlEncode(string.Equals(inv.TaxMode, "inclusive", StringComparison.OrdinalIgnoreCase) ? "incl. GST" : "+ GST");
         return $$"""
             <!doctype html>
             <html lang="en">

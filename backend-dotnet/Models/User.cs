@@ -10,5 +10,8 @@ public class User
     public bool IsActive { get; set; } = true;
     public bool IsSuperAdmin { get; set; }
     public DateTime? EmailVerifiedAtUtc { get; set; }
+    public string AuthenticatorSecretEncrypted { get; set; } = string.Empty;
+    public string AuthenticatorProvider { get; set; } = string.Empty;
+    public DateTime? AuthenticatorEnabledAtUtc { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }

@@ -472,6 +472,7 @@ export default function PlatformOwnerDashboard() {
               { label: "WABA master", hint: "Meta app, tokens, onboarding", icon: Rocket, href: "/dashboard/platform-settings?tab=waba-master" },
               { label: "SMTP and email", hint: "Delivery, sender, reports", icon: Wifi, href: "/dashboard/platform-settings?tab=smtp-settings" },
               { label: "SMS gateway", hint: "Tata config and request logs", icon: ServerCog, href: "/dashboard/platform-settings?tab=sms-gateway" },
+              { label: "Integration catalog", hint: "Paid/free add-ons and security catalog", icon: Layers3, href: "/dashboard/platform-settings?tab=integration-catalog" },
               { label: "Billing plans", hint: "Commercial packaging and limits", icon: CreditCard, href: "/dashboard/platform-settings?tab=billing-plans" },
               { label: "Request logs", hint: "Audit, webhook, idempotency", icon: Database, href: "/dashboard/platform-settings?tab=request-logs" },
             ].map((item) => (

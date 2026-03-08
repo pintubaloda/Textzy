@@ -365,10 +365,16 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "IsActive" boolean NOT NULL,
             "IsSuperAdmin" boolean NOT NULL,
             "EmailVerifiedAtUtc" timestamp with time zone NULL,
+            "AuthenticatorSecretEncrypted" text NOT NULL DEFAULT '',
+            "AuthenticatorProvider" text NOT NULL DEFAULT '',
+            "AuthenticatorEnabledAtUtc" timestamp with time zone NULL,
             "CreatedAtUtc" timestamp with time zone NOT NULL
         );
         """);
     db.Database.ExecuteSqlRaw("""ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "EmailVerifiedAtUtc" timestamp with time zone NULL;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "AuthenticatorSecretEncrypted" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "AuthenticatorProvider" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "AuthenticatorEnabledAtUtc" timestamp with time zone NULL;""");
 
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_Users_Email" ON "Users" ("Email");""");
 

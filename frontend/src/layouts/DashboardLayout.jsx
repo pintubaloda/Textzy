@@ -724,6 +724,18 @@ const DashboardLayout = () => {
                   <span className="flex-1 text-sm">Payment Gateway Setup</span>
                 </Link>
                 <Link
+                  to="/dashboard/platform-settings?tab=integration-catalog"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "integration-catalog"
+                      ? "bg-orange-50 text-orange-600 font-medium"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Plug className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-sm">Integration Catalog</span>
+                </Link>
+                <Link
                   to="/dashboard/platform-settings?tab=webhook-logs"
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
                     location.pathname.startsWith("/dashboard/platform-settings") && currentPlatformTab === "webhook-logs"

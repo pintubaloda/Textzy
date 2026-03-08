@@ -1,37 +1,67 @@
-import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import {
-  Plug,
-  Key,
-  Webhook,
-  ShoppingCart,
+  BadgeCheck,
   CreditCard,
-  Mail,
-  Database,
-  Code,
-  Copy,
-  Eye,
-  EyeOff,
-  RefreshCw,
-  Clock3,
   ExternalLink,
-  Search,
+  Key,
+  LockKeyhole,
+  Plug,
+  QrCode,
+  RefreshCw,
+  Shield,
+  ShieldCheck,
+  Smartphone,
 } from "lucide-react";
 import { toast } from "sonner";
-import { getPlatformSettings, getSession, savePlatformSettings } from "@/lib/api";
+import {
+  disableAuthenticator,
+  getAuthenticatorStatus,
+  getIntegrationCatalog,
+  getPlatformSettings,
+  getSession,
+  savePlatformSettings,
+  setupAuthenticator,
+  verifyAuthenticator,
+} from "@/lib/api";
+
+const CATEGORY_META = {
+  all: { title: "All Integrations", hint: "Everything available to this tenant right now." },
+  security: { title: "Security", hint: "Protect account access with authenticator-based 2FA." },
+  payments: { title: "Payments", hint: "Billing, invoicing, and payment event connections." },
+  "e-commerce": { title: "E-commerce", hint: "Order and cart workflows from storefront platforms." },
+  automation: { title: "Automation", hint: "External workflow bridges and orchestration tools." },
+  crm: { title: "CRM", hint: "Customer sync and pipeline integrations." },
+  marketing: { title: "Marketing", hint: "Audience sync and campaign distribution tools." },
+  general: { title: "General", hint: "Platform utilities and shared services." },
+};
+
+const PROVIDER_LABEL = {
+  google_authenticator: "Google Authenticator",
+  microsoft_authenticator: "Microsoft Authenticator",
+};
+
+function priceLabel(item) {
+  if (String(item.pricingType || "free").toLowerCase() !== "paid") return "Free";
+  const amount = `₹${Number(item.price || 0).toLocaleString()}`;
+  const frequency = String(item.billingFrequency || "monthly").toLowerCase() === "one_time" ? "one-time" : "/month";
+  const tax = String(item.taxMode || "exclusive").toLowerCase() === "inclusive" ? " incl. GST" : " + GST";
+  return `${amount} ${frequency}${tax}`;
+}
+
+function categoryBadge(category) {
+  return CATEGORY_META[category]?.title || category;
+}
 
 const IntegrationsPage = () => {
-  const [showApiUsername, setShowApiUsername] = useState(false);
-  const [showApiPassword, setShowApiPassword] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [savingApiConfig, setSavingApiConfig] = useState(false);
+  const session = getSession();
+  const isSuperAdmin = String(session?.role || "").toLowerCase() === "super_admin";
   const [apiConfig, setApiConfig] = useState({
     enabled: false,
     apiUsername: "",
@@ -39,109 +69,69 @@ const IntegrationsPage = () => {
     apiKey: "",
     ipWhitelist: "",
   });
-  const session = getSession();
-  const isSuperAdmin = String(session?.role || "").toLowerCase() === "super_admin";
+  const [savingApiConfig, setSavingApiConfig] = useState(false);
+  const [catalog, setCatalog] = useState([]);
+  const [catalogBusy, setCatalogBusy] = useState(true);
+  const [authenticator, setAuthenticator] = useState({ enabled: false, provider: "", enrolledAtUtc: "" });
+  const [setupState, setSetupState] = useState({ provider: "", qrUrl: "", code: "", busy: false });
+  const [category, setCategory] = useState("all");
+  const [showApiUsername, setShowApiUsername] = useState(false);
+  const [showApiPassword, setShowApiPassword] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
 
-  const generateToken = (length = 32) => {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let out = "";
-    for (let i = 0; i < length; i += 1) {
-      out += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return out;
-  };
+  const categories = useMemo(() => {
+    const values = new Set(["all"]);
+    for (const item of catalog) values.add(String(item.category || "general").toLowerCase());
+    return Array.from(values);
+  }, [catalog]);
 
-  const regenerateApiUsername = () => {
-    setApiConfig((p) => ({ ...p, apiUsername: `tx_user_${generateToken(10)}` }));
-    toast.success("API username regenerated");
-  };
+  const visibleItems = useMemo(() => {
+    const rows = (catalog || []).filter((item) => item?.isVisible !== false);
+    if (category === "all") return rows;
+    return rows.filter((item) => String(item.category || "general").toLowerCase() === category);
+  }, [catalog, category]);
 
-  const regenerateApiPassword = () => {
-    setApiConfig((p) => ({ ...p, apiPassword: `tx_pw_${generateToken(32)}` }));
-    toast.success("API password regenerated");
-  };
-
-  const regenerateApiKey = () => {
-    setApiConfig((p) => ({ ...p, apiKey: `tx_live_sk_${generateToken(36)}` }));
-    toast.success("API key regenerated");
-  };
-
-  const integrations = [
-    {
-      name: "Shopify",
-      description: "Sync orders and send automated notifications",
-      icon: ShoppingCart,
-      status: "planned",
-      category: "e-commerce",
-    },
-    {
-      name: "WooCommerce",
-      description: "WordPress e-commerce integration",
-      icon: ShoppingCart,
-      status: "planned",
-      category: "e-commerce",
-    },
-    {
-      name: "Razorpay",
-      description: "Payment notifications and receipts",
-      icon: CreditCard,
-      status: "planned",
-      category: "payments",
-    },
-    {
-      name: "Stripe",
-      description: "Payment gateway integration",
-      icon: CreditCard,
-      status: "planned",
-      category: "payments",
-    },
-    {
-      name: "Mailchimp",
-      description: "Sync contacts and campaigns",
-      icon: Mail,
-      status: "planned",
-      category: "marketing",
-    },
-    {
-      name: "HubSpot",
-      description: "CRM and marketing automation",
-      icon: Database,
-      status: "planned",
-      category: "crm",
-    },
-    {
-      name: "Salesforce",
-      description: "Enterprise CRM integration",
-      icon: Database,
-      status: "planned",
-      category: "crm",
-    },
-    {
-      name: "Zapier",
-      description: "Connect with 5000+ apps",
-      icon: Plug,
-      status: "planned",
-      category: "automation",
-    },
-  ];
+  const kpis = useMemo(() => {
+    const rows = catalog || [];
+    return {
+      active: rows.filter((x) => x?.isActive !== false).length,
+      paid: rows.filter((x) => String(x?.pricingType || "").toLowerCase() === "paid").length,
+      security: rows.filter((x) => String(x?.category || "").toLowerCase() === "security").length,
+      enabledSecurity: authenticator?.enabled ? 1 : 0,
+    };
+  }, [catalog, authenticator]);
 
   useEffect(() => {
-    let active = true;
+    let alive = true;
     (async () => {
-      if (!isSuperAdmin) {
-        if (!active) return;
-        setApiConfig({
-          enabled: false,
-          apiUsername: "",
-          apiPassword: "",
-          apiKey: "",
-          ipWhitelist: "",
-        });
-        return;
+      try {
+        setCatalogBusy(true);
+        const [catalogRows, authStatus] = await Promise.all([
+          getIntegrationCatalog().catch(() => []),
+          getAuthenticatorStatus().catch(() => ({ enabled: false, provider: "", enrolledAtUtc: "" })),
+        ]);
+        if (!alive) return;
+        setCatalog(Array.isArray(catalogRows) ? catalogRows : []);
+        setAuthenticator(authStatus || { enabled: false, provider: "", enrolledAtUtc: "" });
+      } catch (e) {
+        if (!alive) return;
+        toast.error(e?.message || "Failed to load integrations");
+      } finally {
+        if (alive) setCatalogBusy(false);
       }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!isSuperAdmin) return;
       try {
         const res = await getPlatformSettings("api-integration");
-        if (!active) return;
+        if (!alive) return;
         const values = res?.values || {};
         setApiConfig({
           enabled: String(values.enabled || "false").toLowerCase() === "true",
@@ -151,47 +141,23 @@ const IntegrationsPage = () => {
           ipWhitelist: String(values.ipWhitelist || "").trim(),
         });
       } catch {
-        if (!active) return;
-        toast.error("Failed to load public API integration settings");
+        if (!alive) return;
       }
     })();
     return () => {
-      active = false;
+      alive = false;
     };
   }, [isSuperAdmin]);
 
-  const handleCopyApiKey = () => {
-    if (!apiConfig.apiKey) {
-      toast.error("API key is empty");
-      return;
-    }
-    navigator.clipboard.writeText(apiConfig.apiKey);
-    toast.success("API key copied to clipboard");
-  };
-
-  const handleCopyApiUsername = () => {
-    if (!apiConfig.apiUsername) {
-      toast.error("API username is empty");
-      return;
-    }
-    navigator.clipboard.writeText(apiConfig.apiUsername);
-    toast.success("API username copied");
-  };
-
-  const handleCopyApiPassword = () => {
-    if (!apiConfig.apiPassword) {
-      toast.error("API password is empty");
-      return;
-    }
-    navigator.clipboard.writeText(apiConfig.apiPassword);
-    toast.success("API password copied");
+  const regenerateToken = (prefix, length) => {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let out = prefix;
+    for (let i = 0; i < length; i += 1) out += chars.charAt(Math.floor(Math.random() * chars.length));
+    return out;
   };
 
   const saveApiIntegration = async () => {
-    if (!isSuperAdmin) {
-      toast.error("Public API credentials are managed by platform owner.");
-      return;
-    }
+    if (!isSuperAdmin) return toast.error("Public API credentials are managed by platform owner.");
     try {
       setSavingApiConfig(true);
       await savePlatformSettings("api-integration", {
@@ -209,298 +175,297 @@ const IntegrationsPage = () => {
     }
   };
 
-  const openApiDocs = () => {
-    window.open("/docs/api-integration.html", "_blank", "noopener,noreferrer");
+  const handleCopy = async (label, value) => {
+    if (!value) return toast.error(`${label} is empty`);
+    await navigator.clipboard.writeText(value);
+    toast.success(`${label} copied`);
   };
 
-  const openFullDocs = () => {
-    window.open("/docs/index.html", "_blank", "noopener,noreferrer");
+  const beginAuthenticatorSetup = async (provider) => {
+    try {
+      setSetupState((prev) => ({ ...prev, busy: true, provider, code: "" }));
+      const res = await setupAuthenticator(provider);
+      setSetupState({ provider, qrUrl: res?.qrUrl || "", code: "", busy: false });
+      toast.success(`${PROVIDER_LABEL[res?.provider || provider] || "Authenticator"} QR generated`);
+    } catch (e) {
+      setSetupState({ provider: "", qrUrl: "", code: "", busy: false });
+      toast.error(e?.message || "Failed to initialize authenticator");
+    }
+  };
+
+  const submitAuthenticatorCode = async () => {
+    try {
+      setSetupState((prev) => ({ ...prev, busy: true }));
+      const res = await verifyAuthenticator(setupState.code);
+      setAuthenticator(res || { enabled: true, provider: setupState.provider });
+      setSetupState({ provider: "", qrUrl: "", code: "", busy: false });
+      toast.success("Authenticator enabled");
+    } catch (e) {
+      setSetupState((prev) => ({ ...prev, busy: false }));
+      toast.error(e?.message || "Invalid authenticator code");
+    }
+  };
+
+  const removeAuthenticator = async () => {
+    try {
+      await disableAuthenticator();
+      setAuthenticator({ enabled: false, provider: "", enrolledAtUtc: "" });
+      setSetupState({ provider: "", qrUrl: "", code: "", busy: false });
+      toast.success("Authenticator disabled");
+    } catch (e) {
+      toast.error(e?.message || "Failed to disable authenticator");
+    }
   };
 
   return (
     <div className="space-y-6" data-testid="integrations-page">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-heading font-bold text-slate-900">Integrations</h1>
-          <p className="text-slate-600">Connect Textzy with your favorite tools</p>
+          <p className="text-slate-600">Platform-managed add-ons, security connectors, and public API access for project <strong>{session?.tenantSlug || "n/a"}</strong>.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline" className="rounded-full border-slate-200 px-3 py-1 text-slate-700">
+            Tenant slug: {session?.tenantSlug || "n/a"}
+          </Badge>
+          <Button variant="outline" onClick={() => window.open("/docs/api-integration.html", "_blank", "noopener,noreferrer")}>
+            View API Docs
+          </Button>
         </div>
       </div>
 
-      {/* API & Webhooks Section */}
-      <div className="grid md:grid-cols-2 gap-6">
-        {/* API Keys */}
-        <Card className="border-slate-200">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
-                  <Key className="w-5 h-5 text-orange-600" />
-                </div>
-                <div>
-                  <CardTitle className="text-lg">Public API Integration</CardTitle>
-                  <CardDescription>Configure simple URL API access (username/password/key + optional IP whitelist)</CardDescription>
-                </div>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {!isSuperAdmin ? (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                Public API credentials are managed by platform owner. Tenant users can use project slug and API documentation, but cannot view or edit platform credentials here.
-              </div>
-            ) : null}
-            <div className="flex items-center justify-between rounded-lg border border-slate-200 p-3">
+      <div className="grid gap-4 xl:grid-cols-4 md:grid-cols-2">
+        {[
+          { title: "Active Integrations", value: kpis.active, hint: "Currently visible and enabled", icon: Plug, tone: "bg-orange-50 text-orange-600" },
+          { title: "Paid Add-ons", value: kpis.paid, hint: "Commercial integrations with pricing", icon: CreditCard, tone: "bg-blue-50 text-blue-600" },
+          { title: "Security Options", value: kpis.security, hint: "Security category integrations", icon: ShieldCheck, tone: "bg-emerald-50 text-emerald-600" },
+          { title: "2FA Enabled", value: kpis.enabledSecurity, hint: authenticator?.enabled ? `Using ${PROVIDER_LABEL[authenticator.provider] || authenticator.provider}` : "No authenticator enrolled", icon: LockKeyhole, tone: "bg-violet-50 text-violet-600" },
+        ].map((item) => (
+          <Card key={item.title} className="border-slate-200 shadow-sm">
+            <CardContent className="flex items-start justify-between p-5">
               <div>
-                <Label className="text-sm font-medium">Enable Public API</Label>
-                <p className="text-xs text-slate-500">When disabled, `/api/public/messages/send` returns 403.</p>
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{item.title}</p>
+                <p className="mt-2 text-3xl font-bold text-slate-950">{item.value}</p>
+                <p className="mt-1 text-sm text-slate-500">{item.hint}</p>
               </div>
-              <Switch
-                checked={apiConfig.enabled}
-                onCheckedChange={(checked) => setApiConfig((p) => ({ ...p, enabled: checked }))}
-                data-testid="public-api-enabled-switch"
-                disabled={!isSuperAdmin}
-              />
-            </div>
-
-            <div className="rounded-lg border border-slate-200 p-3 bg-white">
-              <div className="text-xs font-semibold text-slate-700">Current Login Project</div>
-              <div className="mt-1 text-sm text-slate-900">{session.projectName || session.tenantSlug || "Not selected"}</div>
-              <div className="mt-2 text-xs text-slate-500">
-                Tenant Slug: <span className="font-mono text-slate-700">{session.tenantSlug || "-"}</span>
+              <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${item.tone}`}>
+                <item.icon className="h-5 w-5" />
               </div>
-            </div>
-
-            <div className="p-4 bg-slate-50 rounded-lg">
-              <div className="flex items-center justify-between mb-2">
-                <Label className="text-sm font-medium">API Credentials</Label>
-                <Badge className={apiConfig.enabled ? "bg-green-100 text-green-700 hover:bg-green-100" : "bg-amber-100 text-amber-700 hover:bg-amber-100"}>
-                  {apiConfig.enabled ? "Enabled" : "Disabled"}
-                </Badge>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3">
-                <div>
-                  <Label className="text-xs text-slate-600">Username</Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type={showApiUsername ? "text" : "password"}
-                      value={apiConfig.apiUsername}
-                      onChange={(e) => setApiConfig((p) => ({ ...p, apiUsername: e.target.value }))}
-                      placeholder="MONEYART"
-                      disabled={!isSuperAdmin}
-                    />
-                    <Button variant="ghost" size="icon" onClick={() => setShowApiUsername((v) => !v)} data-testid="toggle-api-username" disabled={!apiConfig.apiUsername}>
-                      {showApiUsername ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={handleCopyApiUsername} data-testid="copy-api-username" disabled={!apiConfig.apiUsername}>
-                      <Copy className="w-4 h-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={regenerateApiUsername} data-testid="regen-api-username" disabled={!isSuperAdmin}>
-                      <RefreshCw className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-                <div>
-                  <Label className="text-xs text-slate-600">Password</Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type={showApiPassword ? "text" : "password"}
-                      value={apiConfig.apiPassword}
-                      onChange={(e) => setApiConfig((p) => ({ ...p, apiPassword: e.target.value }))}
-                      placeholder="Enter API password"
-                      disabled={!isSuperAdmin}
-                    />
-                    <Button variant="ghost" size="icon" onClick={() => setShowApiPassword((v) => !v)} data-testid="toggle-api-password" disabled={!apiConfig.apiPassword}>
-                      {showApiPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={handleCopyApiPassword} data-testid="copy-api-password" disabled={!apiConfig.apiPassword}>
-                      <Copy className="w-4 h-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={regenerateApiPassword} data-testid="regen-api-password" disabled={!isSuperAdmin}>
-                      <RefreshCw className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-600">API Key</Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type={showApiKey ? "text" : "password"}
-                      value={apiConfig.apiKey}
-                      onChange={(e) => setApiConfig((p) => ({ ...p, apiKey: e.target.value }))}
-                      className="font-mono text-sm"
-                      placeholder="tx_live_sk_xxxxx"
-                      disabled={!isSuperAdmin}
-                    />
-                    <Button variant="ghost" size="icon" onClick={() => setShowApiKey(!showApiKey)} data-testid="toggle-api-key" disabled={!apiConfig.apiKey}>
-                      {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={handleCopyApiKey} data-testid="copy-api-key" disabled={!apiConfig.apiKey}>
-                      <Copy className="w-4 h-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={regenerateApiKey} data-testid="regen-api-key" disabled={!isSuperAdmin}>
-                      <RefreshCw className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-                <div>
-                  <Label className="text-xs text-slate-600">IP Whitelist (optional)</Label>
-                  <Textarea
-                    rows={2}
-                    value={apiConfig.ipWhitelist}
-                    onChange={(e) => setApiConfig((p) => ({ ...p, ipWhitelist: e.target.value }))}
-                    placeholder={"203.0.113.10\n203.0.113.0/24"}
-                    disabled={!isSuperAdmin}
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <Button variant="outline" className="gap-2" onClick={saveApiIntegration} disabled={savingApiConfig || !isSuperAdmin} data-testid="save-public-api-btn">
-                <RefreshCw className={`w-4 h-4 ${savingApiConfig ? "animate-spin" : ""}`} />
-                {savingApiConfig ? "Saving..." : isSuperAdmin ? "Save Settings" : "Managed by Platform"}
-              </Button>
-              <Button variant="outline" className="gap-2" data-testid="view-docs-btn" onClick={openApiDocs}>
-                <Code className="w-4 h-4" />
-                View API Docs
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Webhooks */}
-        <Card className="border-slate-200">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <Webhook className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <CardTitle className="text-lg">Webhooks</CardTitle>
-                  <CardDescription>Tenant-managed webhook UI is not live yet</CardDescription>
-                </div>
-              </div>
-              <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">Planned</Badge>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl bg-slate-200 flex items-center justify-center">
-                  <Clock3 className="w-5 h-5 text-slate-600" />
-                </div>
-                <div>
-                  <p className="font-medium text-slate-900">Webhook management is not wired for tenant dashboard yet.</p>
-                  <p className="text-sm text-slate-600 mt-1">
-                    Incoming provider callbacks are handled in backend. Tenant-facing create/edit webhook UI will be added only after those endpoints are fully exposed.
-                  </p>
-                </div>
-              </div>
-              <div className="text-xs text-slate-500">
-                Current recommendation: use API documentation for callback format and let platform owner manage provider-level webhook routing.
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      {/* Available Integrations */}
-      <Card className="border-slate-200">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Available Integrations</CardTitle>
-              <CardDescription>Connect with popular tools and services</CardDescription>
-            </div>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <Input placeholder="Search integrations..." className="pl-10 w-64" data-testid="search-integrations" />
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="all">
-            <TabsList className="mb-6">
-              <TabsTrigger value="all">All</TabsTrigger>
-              <TabsTrigger value="connected">Connected</TabsTrigger>
-              <TabsTrigger value="e-commerce">E-commerce</TabsTrigger>
-              <TabsTrigger value="payments">Payments</TabsTrigger>
-              <TabsTrigger value="crm">CRM</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="all">
-              <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {integrations.map((integration, index) => (
-                  <Card
-                    key={index}
-                    className="border-slate-200 transition-all hover:border-orange-200"
-                    data-testid={`integration-${integration.name.toLowerCase()}`}
-                  >
-                    <CardContent className="pt-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="w-12 h-12 bg-slate-100 rounded-lg flex items-center justify-center">
-                          <integration.icon className="w-6 h-6 text-slate-600" />
-                        </div>
-                        <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">
-                          Planned
-                        </Badge>
-                      </div>
-                      <h4 className="font-medium text-slate-900 mb-1">{integration.name}</h4>
-                      <p className="text-sm text-slate-500 mb-4">{integration.description}</p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        disabled
-                      >
-                        Coming Soon
-                      </Button>
-                    </CardContent>
-                  </Card>
+      <div className="grid gap-6 2xl:grid-cols-[1.4fr_1fr]">
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle>Integration Catalog</CardTitle>
+            <CardDescription>{CATEGORY_META[category]?.hint || "Platform-managed integrations available to this tenant."}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Tabs value={category} onValueChange={setCategory}>
+              <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 bg-transparent p-0">
+                {categories.map((item) => (
+                  <TabsTrigger key={item} value={item} className="rounded-full border border-slate-200 bg-white px-4 py-2 data-[state=active]:border-orange-200 data-[state=active]:bg-orange-50 data-[state=active]:text-orange-600">
+                    {categoryBadge(item)}
+                  </TabsTrigger>
                 ))}
-              </div>
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
+              </TabsList>
+              <TabsContent value={category} className="mt-4">
+                <div className="grid gap-4 xl:grid-cols-2">
+                  {visibleItems.map((item) => {
+                    const slug = String(item.slug || "");
+                    const isSecurity = String(item.category || "").toLowerCase() === "security";
+                    const isCurrentProvider = authenticator?.enabled && (
+                      (slug === "google-authenticator" && authenticator.provider === "google_authenticator") ||
+                      (slug === "microsoft-authenticator" && authenticator.provider === "microsoft_authenticator")
+                    );
+                    return (
+                      <Card key={slug} className="border-slate-200 shadow-sm">
+                        <CardContent className="p-5 space-y-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-start gap-3">
+                              <div className={`flex h-11 w-11 items-center justify-center rounded-2xl ${isSecurity ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-700"}`}>
+                                {isSecurity ? <Shield className="h-5 w-5" /> : <Plug className="h-5 w-5" />}
+                              </div>
+                              <div>
+                                <p className="font-semibold text-slate-950">{item.name}</p>
+                                <p className="mt-1 text-sm text-slate-500">{item.description}</p>
+                              </div>
+                            </div>
+                            <Badge variant={item.isActive ? "outline" : "secondary"} className={item.isActive ? "border-emerald-200 text-emerald-700" : ""}>
+                              {item.isActive ? "Active" : "Inactive"}
+                            </Badge>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">{categoryBadge(item.category)}</Badge>
+                            <Badge className={String(item.pricingType || "free") === "paid" ? "bg-orange-50 text-orange-700 hover:bg-orange-50" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-50"}>
+                              {priceLabel(item)}
+                            </Badge>
+                          </div>
 
-      {/* Code Example */}
-      <Card className="border-slate-200">
-        <CardHeader>
-          <CardTitle>Quick Start</CardTitle>
-          <CardDescription>Send your first message using the API</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="bg-slate-900 rounded-lg p-4 overflow-x-auto">
-            <pre className="text-sm text-slate-300">
-              <code>{`curl -X POST https://textzy-backend-production.up.railway.app/api/messages/send \\
-  -H "X-API-Key: YOUR_API_KEY" \\
-  -H "X-API-Secret: YOUR_API_SECRET" \\
-  -H "X-Tenant-Slug: moneyart" \\
-  -H "Idempotency-Key: your-unique-id-123" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "recipient": "919876543210",
-    "channel": "WhatsApp",
-    "body": "Hello from integration",
-    "useTemplate": false
-  }'`}</code>
-            </pre>
-          </div>
-          <div className="flex items-center justify-between mt-4">
-            <Button variant="outline" size="sm" className="gap-2">
-              <Copy className="w-4 h-4" />
-              Copy Code
-            </Button>
-            <Button variant="outline" size="sm" className="gap-2" onClick={openFullDocs}>
-              <ExternalLink className="w-4 h-4" />
-              Full Documentation
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+                          {isSecurity ? (
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                              {isCurrentProvider ? (
+                                <div className="space-y-3">
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <p className="font-medium text-slate-900">Authenticator enabled</p>
+                                      <p className="text-sm text-slate-500">{PROVIDER_LABEL[authenticator.provider] || authenticator.provider}</p>
+                                    </div>
+                                    <Badge className="bg-emerald-50 text-emerald-700 hover:bg-emerald-50">Enabled</Badge>
+                                  </div>
+                                  <Button variant="outline" className="w-full" onClick={removeAuthenticator}>Disable Authenticator</Button>
+                                </div>
+                              ) : setupState.provider === (slug === "google-authenticator" ? "google_authenticator" : "microsoft_authenticator") ? (
+                                <div className="space-y-4">
+                                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-4">
+                                    {setupState.qrUrl ? (
+                                      <img src={setupState.qrUrl} alt="Authenticator QR" className="mx-auto h-56 w-56 object-contain" />
+                                    ) : (
+                                      <div className="flex h-56 items-center justify-center"><QrCode className="h-10 w-10 text-slate-400" /></div>
+                                    )}
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Verify 6-digit code</Label>
+                                    <Input
+                                      inputMode="numeric"
+                                      maxLength={6}
+                                      placeholder="Enter authenticator code"
+                                      value={setupState.code}
+                                      onChange={(e) => setSetupState((prev) => ({ ...prev, code: e.target.value }))}
+                                    />
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button className="bg-orange-500 hover:bg-orange-600" disabled={setupState.busy} onClick={submitAuthenticatorCode}>Verify & Enable</Button>
+                                    <Button variant="outline" disabled={setupState.busy} onClick={() => setSetupState({ provider: "", qrUrl: "", code: "", busy: false })}>Cancel</Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="space-y-3">
+                                  <p className="text-sm text-slate-600">Scan a QR in {item.name} and verify the 6-digit code. Manual secret entry is not required.</p>
+                                  <Button className="bg-orange-500 hover:bg-orange-600" disabled={setupState.busy || item.isActive === false} onClick={() => beginAuthenticatorSetup(slug === "google-authenticator" ? "google_authenticator" : "microsoft_authenticator")}>
+                                    {setupState.busy ? "Preparing..." : `Set up ${item.name}`}
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                              <div>
+                                <p className="font-medium text-slate-900">{String(item.pricingType || "free") === "paid" ? "Commercial add-on" : "Included with platform"}</p>
+                                <p className="text-sm text-slate-500">
+                                  {String(item.pricingType || "free") === "paid"
+                                    ? `Commercialized by platform owner as ${String(item.billingFrequency || "monthly").replace("_", " ")} add-on.`
+                                    : "Activation and support are managed from the platform side."}
+                                </p>
+                              </div>
+                              <ExternalLink className="h-5 w-5 text-slate-400" />
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+                {!catalogBusy && visibleItems.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-300 p-10 text-center text-slate-500">No integrations available in this category.</div>
+                ) : null}
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
+
+        <div className="space-y-6">
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle>Security Summary</CardTitle>
+              <CardDescription>2FA enrollment and enforcement posture for this user session.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-slate-950">Authenticator status</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {authenticator?.enabled
+                        ? `${PROVIDER_LABEL[authenticator.provider] || authenticator.provider} is active for this account.`
+                        : "No authenticator is currently enabled."}
+                    </p>
+                  </div>
+                  {authenticator?.enabled ? <ShieldCheck className="h-5 w-5 text-emerald-600" /> : <Shield className="h-5 w-5 text-slate-400" />}
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">QR based onboarding</p>
+                  <p className="mt-2 font-semibold text-slate-950">Enabled</p>
+                  <p className="mt-1 text-sm text-slate-500">No manual secret display in the default flow.</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Provider support</p>
+                  <p className="mt-2 font-semibold text-slate-950">Google + Microsoft</p>
+                  <p className="mt-1 text-sm text-slate-500">Both apps can scan the generated TOTP QR.</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle>Public API Access</CardTitle>
+              <CardDescription>Simple URL-based API credentials managed at platform level.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {!isSuperAdmin ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                  Public API credentials are controlled by platform owner. You can use project slug <strong>{session?.tenantSlug || "n/a"}</strong> and the documented URL format once credentials are shared with you.
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
+                <div>
+                  <Label className="font-medium text-slate-900">Enable Public API</Label>
+                  <p className="mt-1 text-sm text-slate-500">When disabled, public send endpoints reject requests.</p>
+                </div>
+                <Switch checked={apiConfig.enabled} onCheckedChange={(checked) => setApiConfig((prev) => ({ ...prev, enabled: checked }))} disabled={!isSuperAdmin} />
+              </div>
+              <div className="grid gap-4">
+                {[
+                  { label: "API Username", key: "apiUsername", visible: showApiUsername, setVisible: setShowApiUsername, regenerate: () => setApiConfig((prev) => ({ ...prev, apiUsername: regenerateToken("tx_user_", 10) })) },
+                  { label: "API Password", key: "apiPassword", visible: showApiPassword, setVisible: setShowApiPassword, regenerate: () => setApiConfig((prev) => ({ ...prev, apiPassword: regenerateToken("tx_pw_", 32) })) },
+                  { label: "API Key", key: "apiKey", visible: showApiKey, setVisible: setShowApiKey, regenerate: () => setApiConfig((prev) => ({ ...prev, apiKey: regenerateToken("tx_live_sk_", 36) })) },
+                ].map((item) => (
+                  <div key={item.key} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>{item.label}</Label>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" disabled={!isSuperAdmin} onClick={item.regenerate}><RefreshCw className="mr-2 h-4 w-4" />Regenerate</Button>
+                        <Button size="sm" variant="outline" disabled={!apiConfig[item.key]} onClick={() => handleCopy(item.label, apiConfig[item.key])}><Key className="mr-2 h-4 w-4" />Copy</Button>
+                        <Button size="icon" variant="outline" onClick={() => item.setVisible((prev) => !prev)}>{item.visible ? <BadgeCheck className="h-4 w-4" /> : <Smartphone className="h-4 w-4" />}</Button>
+                      </div>
+                    </div>
+                    <Input
+                      type={item.visible ? "text" : "password"}
+                      value={apiConfig[item.key]}
+                      onChange={(e) => setApiConfig((prev) => ({ ...prev, [item.key]: e.target.value }))}
+                      disabled={!isSuperAdmin}
+                    />
+                  </div>
+                ))}
+                <div className="space-y-2">
+                  <Label>IP Whitelist (optional)</Label>
+                  <Input value={apiConfig.ipWhitelist} onChange={(e) => setApiConfig((prev) => ({ ...prev, ipWhitelist: e.target.value }))} disabled={!isSuperAdmin} placeholder="203.0.113.10, 198.51.100.0/24" />
+                </div>
+              </div>
+              {isSuperAdmin ? (
+                <Button className="w-full bg-orange-500 hover:bg-orange-600" disabled={savingApiConfig} onClick={saveApiIntegration}>
+                  {savingApiConfig ? "Saving..." : "Save Public API Settings"}
+                </Button>
+              ) : null}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 };

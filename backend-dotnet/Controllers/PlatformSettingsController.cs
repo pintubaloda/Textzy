@@ -451,6 +451,60 @@ public class PlatformSettingsController(
         }
     }
 
+    [HttpPost("payment-gateway/test")]
+    public async Task<IActionResult> TestPaymentGateway([FromBody] PaymentGatewayTestRequest? request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+
+        var values = await db.PlatformSettings
+            .Where(x => x.Scope == "payment-gateway")
+            .ToDictionaryAsync(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase, ct);
+
+        var provider = (Pick(values, "provider", request?.Provider, "razorpay") ?? string.Empty).Trim().ToLowerInvariant();
+        if (provider != "razorpay")
+            return BadRequest("Only Razorpay test is supported in this build.");
+
+        var mode = ((Pick(values, "mode", "test") ?? "test").Trim().ToLowerInvariant() == "live") ? "live" : "test";
+        var keyId = Pick(values, "keyId");
+        var keySecret = Pick(values, "keySecret");
+        if (string.IsNullOrWhiteSpace(keyId) || string.IsNullOrWhiteSpace(keySecret))
+            return BadRequest("Razorpay keyId/keySecret not configured.");
+        if ((mode == "live" && !keyId.StartsWith("rzp_live_", StringComparison.OrdinalIgnoreCase)) ||
+            (mode != "live" && !keyId.StartsWith("rzp_test_", StringComparison.OrdinalIgnoreCase)))
+            return BadRequest($"Razorpay keyId does not match configured mode '{mode}'.");
+
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+            var authBytes = Encoding.UTF8.GetBytes($"{keyId}:{keySecret}");
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+            using var resp = await client.GetAsync("https://api.razorpay.com/v1/payments?count=1", ct);
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var message = ExtractRazorpayErrorMessage(raw, $"Razorpay test failed ({(int)resp.StatusCode}).");
+                await audit.WriteAsync("platform.payment.test.failed", $"provider=razorpay; err={message}", ct);
+                return StatusCode(StatusCodes.Status502BadGateway, new { ok = false, provider = "razorpay", mode, message });
+            }
+
+            await audit.WriteAsync("platform.payment.test.success", $"provider=razorpay; mode={mode}", ct);
+            return Ok(new
+            {
+                ok = true,
+                provider = "razorpay",
+                mode,
+                message = "Razorpay credentials are valid.",
+                keyIdMasked = MaskKey(keyId)
+            });
+        }
+        catch (Exception ex)
+        {
+            await audit.WriteAsync("platform.payment.test.failed", $"provider=razorpay; err={ex.Message}", ct);
+            return StatusCode(StatusCodes.Status502BadGateway, new { ok = false, provider = "razorpay", mode, message = ex.Message });
+        }
+    }
+
     private static string Pick(Dictionary<string, string> values, string key, params string?[] fallbacks)
     {
         if (values.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
@@ -492,9 +546,44 @@ public class PlatformSettingsController(
         return lines;
     }
 
+    private static string ExtractRazorpayErrorMessage(string raw, string fallback)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.TryGetProperty("error", out var err))
+            {
+                if (err.TryGetProperty("description", out var desc) && !string.IsNullOrWhiteSpace(desc.GetString()))
+                    return desc.GetString()!;
+                if (err.TryGetProperty("reason", out var reason) && !string.IsNullOrWhiteSpace(reason.GetString()))
+                    return reason.GetString()!;
+                if (err.TryGetProperty("code", out var code) && !string.IsNullOrWhiteSpace(code.GetString()))
+                    return $"Razorpay error: {code.GetString()}";
+            }
+        }
+        catch
+        {
+            // ignored
+        }
+
+        return string.IsNullOrWhiteSpace(raw) ? fallback : fallback + " " + raw;
+    }
+
+    private static string MaskKey(string value)
+    {
+        var key = (value ?? string.Empty).Trim();
+        if (key.Length <= 8) return key;
+        return $"{key[..6]}...{key[^4..]}";
+    }
+
     public sealed class SmtpTestRequest
     {
         public string Email { get; set; } = string.Empty;
+    }
+
+    public sealed class PaymentGatewayTestRequest
+    {
+        public string Provider { get; set; } = "razorpay";
     }
 
     public sealed class SmtpDiagnoseRequest

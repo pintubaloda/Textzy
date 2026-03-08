@@ -649,6 +649,10 @@ export async function testPlatformSms(payload = {}) {
   return apiPost('/api/platform/settings/sms/test', payload || {})
 }
 
+export async function testPlatformPaymentGateway(payload = {}) {
+  return apiPost('/api/platform/settings/payment-gateway/test', payload || {})
+}
+
 export async function listSmsTemplates(status = '') {
   const q = status ? `?status=${encodeURIComponent(status)}` : ''
   return apiGet(`/api/sms/templates${q}`)
@@ -1093,6 +1097,34 @@ export async function createRazorpayOrder(planCode, billingCycle = 'monthly') {
 
 export async function verifyRazorpayPayment(payload) {
   return apiPost('/api/billing/razorpay/verify', payload)
+}
+
+export async function getIntegrationCatalog() {
+  return apiGet('/api/integrations/catalog')
+}
+
+export async function getPlatformIntegrationCatalog() {
+  return apiGet('/api/platform/integrations/catalog')
+}
+
+export async function savePlatformIntegrationCatalog(items = []) {
+  return apiPut('/api/platform/integrations/catalog', items)
+}
+
+export async function getAuthenticatorStatus() {
+  return apiGet('/api/security/authenticator')
+}
+
+export async function setupAuthenticator(provider) {
+  return apiPost('/api/security/authenticator/setup', { provider })
+}
+
+export async function verifyAuthenticator(code) {
+  return apiPost('/api/security/authenticator/verify', { code })
+}
+
+export async function disableAuthenticator() {
+  return apiDelete('/api/security/authenticator')
 }
 
 export async function downloadBillingInvoice(invoiceId) {

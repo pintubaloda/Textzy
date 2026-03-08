@@ -36,6 +36,7 @@ import {
   upsertPlatformSecurityControls,
   purgePlatformQueue,
   getPlatformCustomers,
+  getPlatformIntegrationCatalog,
   getPlatformIdempotencyDiagnostics,
   getPlatformWabaOnboardingSummary,
   cancelPlatformWabaRequest,
@@ -47,6 +48,8 @@ import {
   getWabaDebugTenantProbe,
   getWabaDebugWebhookHealth,
   exportPlatformSqlBackup,
+  savePlatformIntegrationCatalog,
+  testPlatformPaymentGateway,
   getSession
 } from "@/lib/api";
 
@@ -182,6 +185,7 @@ const PlatformSettingsPage = () => {
   const [logs, setLogs] = useState([]);
   const [logProvider, setLogProvider] = useState("");
   const [plans, setPlans] = useState([]);
+  const [integrationCatalog, setIntegrationCatalog] = useState([]);
   const [planForm, setPlanForm] = useState({
     id: "",
     code: "",
@@ -266,6 +270,8 @@ const PlatformSettingsPage = () => {
         ? "Request Logs"
         : tab === "billing-plans"
         ? "Billing Plans"
+        : tab === "integration-catalog"
+        ? "Integration Catalog"
         : tab === "smtp-settings"
         ? "SMTP Settings"
         : tab === "sms-gateway"
@@ -510,6 +516,10 @@ const PlatformSettingsPage = () => {
             const rows = await listPlatformBillingPlans();
             if (!active) return;
             setPlans(rows || []);
+          } else if (tab === "integration-catalog") {
+            const rows = await getPlatformIntegrationCatalog().catch(() => []);
+            if (!active) return;
+            setIntegrationCatalog(rows || []);
           } else if (tab === "request-logs") {
             const [customers, rows] = await Promise.all([
               getPlatformCustomers("").catch(() => []),
@@ -872,7 +882,17 @@ const PlatformSettingsPage = () => {
               }}>
                 Save
               </Button>
-              <Button variant="outline" onClick={() => toast.info("Payment gateway test initiated")}>
+              <Button variant="outline" onClick={async () => {
+                try {
+                  setLoading(true);
+                  const res = await testPlatformPaymentGateway({ provider: gateway });
+                  toast.success(res?.message || "Payment gateway connection is valid");
+                } catch (e) {
+                  toast.error(e?.message || "Payment gateway test failed");
+                } finally {
+                  setLoading(false);
+                }
+              }}>
                 Test Connection
               </Button>
             </div>
@@ -2965,6 +2985,120 @@ const PlatformSettingsPage = () => {
                   )}
                 </tbody>
               </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "integration-catalog" && (
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle>Integration Catalog</CardTitle>
+            <CardDescription>Set commercial status, pricing model, GST display, and visibility for integrations shown to every tenant.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-4">
+              {[
+                { label: "Visible", value: integrationCatalog.filter((x) => x?.isVisible !== false).length },
+                { label: "Active", value: integrationCatalog.filter((x) => x?.isActive !== false).length },
+                { label: "Paid", value: integrationCatalog.filter((x) => String(x?.pricingType || "").toLowerCase() === "paid").length },
+                { label: "Security", value: integrationCatalog.filter((x) => String(x?.category || "").toLowerCase() === "security").length },
+              ].map((item) => (
+                <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{item.label}</p>
+                  <p className="mt-2 text-3xl font-bold text-slate-950">{item.value}</p>
+                </div>
+              ))}
+            </div>
+            <div className="rounded-2xl border border-slate-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Integration</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Category</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Pricing</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Frequency</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Tax Label</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Status</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Visible</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {integrationCatalog.map((item, index) => (
+                    <tr key={item.slug || index} className="border-t border-slate-100">
+                      <td className="px-4 py-3 align-top">
+                        <div className="font-medium text-slate-900">{item.name}</div>
+                        <div className="text-xs text-slate-500">{item.description}</div>
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        <Input value={item.category || "general"} onChange={(e) => setIntegrationCatalog((prev) => prev.map((row, i) => i === index ? { ...row, category: e.target.value } : row))} />
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        <div className="grid gap-2">
+                          <Select value={item.pricingType || "free"} onValueChange={(value) => setIntegrationCatalog((prev) => prev.map((row, i) => i === index ? { ...row, pricingType: value } : row))}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="free">Free</SelectItem>
+                              <SelectItem value="paid">Paid</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Input type="number" min="0" step="0.01" value={item.price ?? 0} onChange={(e) => setIntegrationCatalog((prev) => prev.map((row, i) => i === index ? { ...row, price: Number(e.target.value || 0) } : row))} />
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        <Select value={item.billingFrequency || "monthly"} onValueChange={(value) => setIntegrationCatalog((prev) => prev.map((row, i) => i === index ? { ...row, billingFrequency: value } : row))}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="monthly">Monthly</SelectItem>
+                            <SelectItem value="one_time">One Time</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        <Select value={item.taxMode || "exclusive"} onValueChange={(value) => setIntegrationCatalog((prev) => prev.map((row, i) => i === index ? { ...row, taxMode: value } : row))}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="exclusive">+ GST</SelectItem>
+                            <SelectItem value="inclusive">incl. GST</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        <div className="flex items-center gap-2">
+                          <Switch checked={item.isActive !== false} onCheckedChange={(checked) => setIntegrationCatalog((prev) => prev.map((row, i) => i === index ? { ...row, isActive: checked } : row))} />
+                          <span className="text-xs text-slate-500">{item.isActive !== false ? "Active" : "Inactive"}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        <div className="flex items-center gap-2">
+                          <Switch checked={item.isVisible !== false} onCheckedChange={(checked) => setIntegrationCatalog((prev) => prev.map((row, i) => i === index ? { ...row, isVisible: checked } : row))} />
+                          <span className="text-xs text-slate-500">{item.isVisible !== false ? "Shown" : "Hidden"}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {integrationCatalog.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-6 text-center text-slate-500">No integration catalog entries found.</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-end">
+              <Button className="bg-orange-500 hover:bg-orange-600" onClick={async () => {
+                try {
+                  setLoading(true);
+                  await savePlatformIntegrationCatalog(integrationCatalog);
+                  toast.success("Integration catalog saved");
+                } catch (e) {
+                  toast.error(e?.message || "Failed to save integration catalog");
+                } finally {
+                  setLoading(false);
+                }
+              }}>
+                Save Integration Catalog
+              </Button>
             </div>
           </CardContent>
         </Card>

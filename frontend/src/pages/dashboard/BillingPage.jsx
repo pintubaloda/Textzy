@@ -187,14 +187,15 @@ const BillingPage = () => {
     setPayingCode(plan.code);
     try {
       const cfg = paymentConfig;
-      if (!cfg?.razorpay?.enabled || !cfg?.razorpay?.keyId) throw new Error("Razorpay is not configured.");
+      const checkoutKey = cfg?.razorpay?.checkoutKeyId || cfg?.razorpay?.keyId || "";
+      if (!cfg?.razorpay?.enabled || !checkoutKey) throw new Error("Razorpay is not configured.");
       const cycle = plan.pricingModel === "usage_pack" ? "usage_based" : "monthly";
       const order = await createRazorpayOrder(plan.code, cycle);
       await ensureRazorpayScript();
 
       await new Promise((resolve, reject) => {
         const rzp = new window.Razorpay({
-          key: order.keyId,
+          key: order.keyId || checkoutKey,
           amount: order.amount,
           currency: order.currency || "INR",
           order_id: order.orderId,
@@ -534,7 +535,7 @@ const BillingPage = () => {
                 <p className="text-sm text-slate-500">
                   {isSuperAdmin
                     ? `Mode: ${(paymentConfig?.mode || "test").toUpperCase()}`
-                    : "Payment gateway credentials are hidden from tenant users."}
+                    : "Checkout is available, but gateway credentials remain hidden from tenant users."}
                 </p>
               </div>
             </div>
