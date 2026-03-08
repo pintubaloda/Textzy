@@ -64,34 +64,13 @@ public class PlatformPurchasesController(
                 })
                 .First());
 
-        var latestAttemptQuery = db.BillingPaymentAttempts.AsNoTracking()
-            .GroupBy(x => new { x.TenantId, x.OrderId })
-            .Select(g => g
-                .OrderByDescending(x => x.PaidAtUtc ?? x.UpdatedAtUtc)
-                .Select(x => new LatestAttemptSql
-                {
-                    TenantId = x.TenantId,
-                    OrderId = x.OrderId,
-                    PlanId = x.PlanId,
-                    Currency = x.Currency
-                })
-                .First());
-
         var baseQuery =
             from invoice in db.BillingInvoices.AsNoTracking()
             join tenant in db.Tenants.AsNoTracking() on invoice.TenantId equals tenant.Id
             from profile in db.TenantCompanyProfiles.AsNoTracking().Where(x => x.TenantId == invoice.TenantId).DefaultIfEmpty()
-            from attempt in latestAttemptQuery.Where(x => x.TenantId == invoice.TenantId && x.OrderId == invoice.ReferenceNo).DefaultIfEmpty()
-            from subscription in db.TenantSubscriptions.AsNoTracking()
-                .Where(x => x.TenantId == invoice.TenantId && x.CreatedAtUtc <= (invoice.PaidAtUtc ?? invoice.IssuedAtUtc))
-                .OrderByDescending(x => x.CreatedAtUtc)
-                .Take(1)
-                .DefaultIfEmpty()
-            from attemptPlan in db.BillingPlans.AsNoTracking().Where(x => attempt != null && x.Id == attempt.PlanId).DefaultIfEmpty()
-            from subscriptionPlan in db.BillingPlans.AsNoTracking().Where(x => subscription != null && x.Id == subscription.PlanId).DefaultIfEmpty()
             from ownerMembership in ownerMembershipQuery.Where(x => x.TenantId == invoice.TenantId).DefaultIfEmpty()
             from owner in db.Users.AsNoTracking().Where(x => ownerMembership != null && x.Id == ownerMembership.UserId).DefaultIfEmpty()
-            select new PurchaseReportQueryRow
+            select new PurchaseInvoiceBaseRow
             {
                 InvoiceId = invoice.Id,
                 TenantId = invoice.TenantId,
@@ -116,31 +95,21 @@ public class PlatformPurchasesController(
                 GstNo = profile != null ? profile.Gstin : string.Empty,
                 PurchaseDateUtc = invoice.PaidAtUtc ?? invoice.IssuedAtUtc,
                 InvoiceDateUtc = invoice.IssuedAtUtc,
-                ServiceCode = attemptPlan != null && attemptPlan.Code != string.Empty
-                    ? attemptPlan.Code
-                    : subscriptionPlan != null
-                        ? subscriptionPlan.Code
-                        : string.Empty,
                 ServiceName = invoice.Description != string.Empty
                     ? invoice.Description
-                    : attemptPlan != null && attemptPlan.Name != string.Empty
-                    ? attemptPlan.Name
-                    : subscriptionPlan != null && subscriptionPlan.Name != string.Empty
-                        ? subscriptionPlan.Name
-                        : invoice.BillingCycle == "yearly"
-                            ? "Yearly Subscription"
-                            : invoice.BillingCycle == "monthly"
-                                ? "Monthly Subscription"
-                                : invoice.BillingCycle == "lifetime"
-                                    ? "Lifetime Subscription"
-                                    : invoice.BillingCycle == "usage_based"
-                                        ? "Usage Pack"
-                                        : "Platform Service",
+                    : invoice.BillingCycle == "yearly"
+                        ? "Yearly Subscription"
+                        : invoice.BillingCycle == "monthly"
+                            ? "Monthly Subscription"
+                            : invoice.BillingCycle == "lifetime"
+                                ? "Lifetime Subscription"
+                                : invoice.BillingCycle == "usage_based"
+                                    ? "Usage Pack"
+                                    : "Platform Service",
                 BillingCycle = invoice.BillingCycle,
                 Amount = invoice.Subtotal,
                 GstAmount = invoice.TaxAmount,
                 TotalAmount = invoice.Total,
-                Currency = attempt != null && attempt.Currency != string.Empty ? attempt.Currency : "INR",
                 ReferenceNo = invoice.ReferenceNo,
                 BillingEmail = profile != null ? profile.BillingEmail : string.Empty,
                 PaidAtUtc = invoice.PaidAtUtc,
@@ -173,23 +142,20 @@ public class PlatformPurchasesController(
                 (x.CompanyName ?? string.Empty).ToLower().Contains(normalizedQuery) ||
                 (x.GstNo ?? string.Empty).ToLower().Contains(normalizedQuery) ||
                 (x.ServiceName ?? string.Empty).ToLower().Contains(normalizedQuery) ||
-                (x.ServiceCode ?? string.Empty).ToLower().Contains(normalizedQuery) ||
                 (x.ReferenceNo ?? string.Empty).ToLower().Contains(normalizedQuery));
+        }
+
+        if (!string.IsNullOrWhiteSpace(normalizedService))
+        {
+            baseQuery = baseQuery.Where(x => (x.ServiceName ?? string.Empty).ToLower() == normalizedService);
         }
 
         var serviceOptions = await baseQuery
             .Where(x => x.ServiceName != string.Empty)
-            .Select(x => new { code = x.ServiceCode, name = x.ServiceName })
+            .Select(x => new { code = x.ServiceName, name = x.ServiceName })
             .Distinct()
             .OrderBy(x => x.name)
             .ToListAsync(ct);
-
-        if (!string.IsNullOrWhiteSpace(normalizedService))
-        {
-            baseQuery = baseQuery.Where(x =>
-                (x.ServiceCode ?? string.Empty).ToLower() == normalizedService ||
-                (x.ServiceName ?? string.Empty).ToLower() == normalizedService);
-        }
 
         var totalPurchases = await baseQuery.CountAsync(ct);
         var totalAmount = await baseQuery.Select(x => (decimal?)x.Amount).SumAsync(ct) ?? 0m;
@@ -202,12 +168,117 @@ public class PlatformPurchasesController(
         var safePage = Math.Min(requestedPage, totalPages);
         var skip = (safePage - 1) * safePageSize;
 
-        var rows = await baseQuery
+        var pageRows = await baseQuery
             .OrderByDescending(x => x.PurchaseDateUtc)
             .ThenByDescending(x => x.CreatedAtUtc)
             .Skip(skip)
             .Take(safePageSize)
             .ToListAsync(ct);
+
+        var tenantIds = pageRows.Select(x => x.TenantId).Distinct().ToList();
+        var references = pageRows
+            .Select(x => x.ReferenceNo)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var attemptRows = tenantIds.Count == 0 || references.Count == 0
+            ? new List<Models.BillingPaymentAttempt>()
+            : await db.BillingPaymentAttempts.AsNoTracking()
+                .Where(x => tenantIds.Contains(x.TenantId) && references.Contains(x.OrderId))
+                .OrderByDescending(x => x.PaidAtUtc ?? x.UpdatedAtUtc)
+                .ToListAsync(ct);
+        var latestAttempts = attemptRows
+            .GroupBy(x => new { x.TenantId, Key = x.OrderId ?? string.Empty })
+            .ToDictionary(
+                g => $"{g.Key.TenantId:D}|{g.Key.Key}",
+                g => g.First(),
+                StringComparer.OrdinalIgnoreCase);
+
+        var manualSubscriptionIds = pageRows
+            .Select(x => TryParseManualSubscriptionId(x.ReferenceNo))
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .Distinct()
+            .ToList();
+        var subscriptionRows = tenantIds.Count == 0
+            ? new List<Models.TenantSubscription>()
+            : await db.TenantSubscriptions.AsNoTracking()
+                .Where(x => tenantIds.Contains(x.TenantId))
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .ToListAsync(ct);
+        var subscriptionsByTenant = subscriptionRows
+            .GroupBy(x => x.TenantId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+        var subscriptionsById = manualSubscriptionIds.Count == 0
+            ? new Dictionary<Guid, Models.TenantSubscription>()
+            : subscriptionRows
+                .Where(x => manualSubscriptionIds.Contains(x.Id))
+                .ToDictionary(x => x.Id, x => x);
+
+        var planIds = attemptRows
+            .Where(x => x.PlanId != Guid.Empty)
+            .Select(x => x.PlanId)
+            .Concat(subscriptionRows.Where(x => x.PlanId != Guid.Empty).Select(x => x.PlanId))
+            .Distinct()
+            .ToList();
+        var plans = planIds.Count == 0
+            ? new Dictionary<Guid, Models.BillingPlan>()
+            : await db.BillingPlans.AsNoTracking()
+                .Where(x => planIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, ct);
+
+        var rows = pageRows.Select((row, idx) =>
+        {
+            latestAttempts.TryGetValue($"{row.TenantId:D}|{row.ReferenceNo}", out var attempt);
+
+            Models.TenantSubscription? subscription = null;
+            var manualSubscriptionId = TryParseManualSubscriptionId(row.ReferenceNo);
+            if (manualSubscriptionId.HasValue)
+            {
+                subscriptionsById.TryGetValue(manualSubscriptionId.Value, out subscription);
+            }
+            else if (subscriptionsByTenant.TryGetValue(row.TenantId, out var tenantSubscriptions))
+            {
+                subscription = tenantSubscriptions.FirstOrDefault(x => x.CreatedAtUtc <= row.PurchaseDateUtc);
+            }
+
+            Models.BillingPlan? plan = null;
+            if (attempt is not null && attempt.PlanId != Guid.Empty)
+                plans.TryGetValue(attempt.PlanId, out plan);
+            else if (subscription is not null && subscription.PlanId != Guid.Empty)
+                plans.TryGetValue(subscription.PlanId, out plan);
+
+            var serviceName = string.IsNullOrWhiteSpace(row.ServiceName)
+                ? ResolveServiceName(plan?.Name, row.BillingCycle)
+                : row.ServiceName;
+
+            return new
+            {
+                sNo = skip + idx + 1,
+                row.InvoiceId,
+                row.TenantId,
+                row.InvoiceNo,
+                row.InvoiceKind,
+                invoiceStatus = row.InvoiceStatus,
+                row.UserName,
+                row.UserEmail,
+                row.CompanyName,
+                gstNo = row.GstNo,
+                row.PurchaseDateUtc,
+                row.InvoiceDateUtc,
+                ServiceName = serviceName,
+                ServiceCode = plan?.Code ?? string.Empty,
+                row.BillingCycle,
+                row.Amount,
+                gstAmount = row.GstAmount,
+                row.TotalAmount,
+                Currency = string.IsNullOrWhiteSpace(attempt?.Currency) ? "INR" : attempt!.Currency.Trim().ToUpperInvariant(),
+                row.ReferenceNo,
+                row.BillingEmail,
+                row.PaidAtUtc,
+                row.CreatedAtUtc
+            };
+        }).ToList();
 
         return Ok(new
         {
@@ -227,32 +298,7 @@ public class PlatformPurchasesController(
             hasPreviousPage = safePage > 1,
             hasNextPage = safePage < totalPages,
             serviceOptions,
-            items = rows.Select((row, idx) => new
-            {
-                sNo = skip + idx + 1,
-                row.InvoiceId,
-                row.TenantId,
-                row.InvoiceNo,
-                row.InvoiceKind,
-                invoiceStatus = row.InvoiceStatus,
-                row.UserName,
-                row.UserEmail,
-                row.CompanyName,
-                gstNo = row.GstNo,
-                row.PurchaseDateUtc,
-                row.InvoiceDateUtc,
-                row.ServiceName,
-                row.ServiceCode,
-                row.BillingCycle,
-                row.Amount,
-                gstAmount = row.GstAmount,
-                row.TotalAmount,
-                row.Currency,
-                row.ReferenceNo,
-                row.BillingEmail,
-                row.PaidAtUtc,
-                row.CreatedAtUtc
-            })
+            items = rows
         });
     }
 
@@ -262,7 +308,7 @@ public class PlatformPurchasesController(
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
 
-        var invoice = await db.BillingInvoices.AsNoTracking().FirstOrDefaultAsync(x => x.Id == invoiceId, ct);
+        var invoice = await db.BillingInvoices.FirstOrDefaultAsync(x => x.Id == invoiceId, ct);
         if (invoice is null) return NotFound("Invoice not found.");
 
         var tenant = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == invoice.TenantId, ct);
@@ -270,7 +316,8 @@ public class PlatformPurchasesController(
         var companyName = string.IsNullOrWhiteSpace(profile?.CompanyName) ? (tenant?.Name ?? "Textzy Workspace") : profile!.CompanyName;
         var legalName = string.IsNullOrWhiteSpace(profile?.LegalName) ? companyName : profile!.LegalName;
         var branding = await GetPlatformBrandingAsync(ct);
-        var verificationUrl = BuildPublicInvoiceVerificationUrl(invoice.Id, invoice.IntegrityHash, branding.Website);
+        var integrityHash = await EnsureInvoiceIntegrityHashAsync(invoice, ct);
+        var verificationUrl = BuildPublicInvoiceVerificationUrl(invoice.Id, integrityHash, branding.Website);
         var qrCodeUrl = BuildQrCodeUrl(verificationUrl);
         var html = InvoiceDocumentRenderer.BuildInvoiceHtml(
             invoice,
@@ -390,6 +437,22 @@ public class PlatformPurchasesController(
         return (string.Empty, string.Empty);
     }
 
+    private async Task<string> EnsureInvoiceIntegrityHashAsync(Models.BillingInvoice invoice, CancellationToken ct)
+    {
+        var expected = InvoiceIntegrityHasher.Compute(invoice);
+        var legacyExpected = InvoiceIntegrityHasher.ComputeLegacy(invoice);
+        if (string.Equals(invoice.IntegrityHash, expected, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(invoice.IntegrityHash, legacyExpected, StringComparison.OrdinalIgnoreCase))
+        {
+            return invoice.IntegrityHash;
+        }
+
+        invoice.IntegrityAlgo = "SHA256";
+        invoice.IntegrityHash = expected;
+        await db.SaveChangesAsync(ct);
+        return expected;
+    }
+
     private static string ResolveServiceName(string? planName, string? billingCycle)
     {
         if (!string.IsNullOrWhiteSpace(planName)) return planName.Trim();
@@ -402,6 +465,16 @@ public class PlatformPurchasesController(
             "usage_based" => "Usage Pack",
             _ => "Platform Service"
         };
+    }
+
+    private static Guid? TryParseManualSubscriptionId(string? referenceNo)
+    {
+        var value = (referenceNo ?? string.Empty).Trim();
+        const string prefix = "manual-plan:";
+        if (!value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return Guid.TryParse(value[prefix.Length..], out var id) ? id : null;
     }
 
     private static string FormatCurrency(decimal amount, string currency)
@@ -682,21 +755,13 @@ public class PlatformPurchasesController(
         public string InvoiceFooter { get; init; } = string.Empty;
     }
 
-    private sealed class LatestAttemptSql
-    {
-        public Guid TenantId { get; init; }
-        public string OrderId { get; init; } = string.Empty;
-        public Guid PlanId { get; init; }
-        public string Currency { get; init; } = "INR";
-    }
-
     private sealed class OwnerSql
     {
         public Guid TenantId { get; init; }
         public Guid UserId { get; init; }
     }
 
-    private sealed class PurchaseReportQueryRow
+    private sealed class PurchaseInvoiceBaseRow
     {
         public Guid InvoiceId { get; init; }
         public Guid TenantId { get; init; }
@@ -710,12 +775,10 @@ public class PlatformPurchasesController(
         public DateTime PurchaseDateUtc { get; init; }
         public DateTime InvoiceDateUtc { get; init; }
         public string ServiceName { get; init; } = string.Empty;
-        public string ServiceCode { get; init; } = string.Empty;
         public string BillingCycle { get; init; } = string.Empty;
         public decimal Amount { get; init; }
         public decimal GstAmount { get; init; }
         public decimal TotalAmount { get; init; }
-        public string Currency { get; init; } = "INR";
         public string ReferenceNo { get; init; } = string.Empty;
         public string BillingEmail { get; init; } = string.Empty;
         public DateTime? PaidAtUtc { get; init; }

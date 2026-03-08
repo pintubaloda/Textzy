@@ -925,29 +925,7 @@ public class PlatformCustomersController(
         };
     }
 
-    private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice)
-    {
-        var canonical = string.Join("|",
-            invoice.InvoiceNo,
-            invoice.TenantId.ToString("D"),
-            invoice.InvoiceKind,
-            invoice.BillingCycle,
-            invoice.TaxMode,
-            invoice.ReferenceNo,
-            invoice.Description,
-            invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
-            invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
-            invoice.Subtotal.ToString("0.00"),
-            invoice.TaxAmount.ToString("0.00"),
-            invoice.Total.ToString("0.00"),
-            (invoice.PaidAtUtc ?? DateTime.MinValue).ToUniversalTime().ToString("O"),
-            invoice.Status,
-            invoice.IssuedAtUtc.ToUniversalTime().ToString("O"));
-
-        var bytes = Encoding.UTF8.GetBytes(canonical);
-        var hash = SHA256.HashData(bytes);
-        return Convert.ToHexString(hash).ToLowerInvariant();
-    }
+    private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice) => InvoiceIntegrityHasher.Compute(invoice);
 
     private static DateTime ResolvePeriodEndUtc(DateTime periodStartUtc, string cycle)
     {

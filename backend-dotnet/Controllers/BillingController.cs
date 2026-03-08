@@ -3,6 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
@@ -287,7 +288,8 @@ public class BillingController(
         var gstin = profile?.Gstin ?? string.Empty;
         var pan = profile?.Pan ?? string.Empty;
         var branding = await GetPlatformBrandingAsync(ct);
-        var verificationUrl = BuildPublicInvoiceVerificationUrl(inv.Id, inv.IntegrityHash, branding.Website);
+        var integrityHash = await EnsureInvoiceIntegrityHashAsync(inv, ct);
+        var verificationUrl = BuildPublicInvoiceVerificationUrl(inv.Id, integrityHash, branding.Website);
         var qrCodeUrl = BuildQrCodeUrl(verificationUrl);
         var html = InvoiceDocumentRenderer.BuildInvoiceHtml(
             inv,
@@ -347,6 +349,22 @@ public class BillingController(
             legacyExpectedHash = legacyExpected,
             valid
         });
+    }
+
+    private async Task<string> EnsureInvoiceIntegrityHashAsync(BillingInvoice invoice, CancellationToken ct)
+    {
+        var expected = ComputeInvoiceIntegrityHash(invoice);
+        var legacyExpected = ComputeInvoiceIntegrityHashLegacy(invoice);
+        if (string.Equals(invoice.IntegrityHash, expected, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(invoice.IntegrityHash, legacyExpected, StringComparison.OrdinalIgnoreCase))
+        {
+            return invoice.IntegrityHash;
+        }
+
+        invoice.IntegrityAlgo = "SHA256";
+        invoice.IntegrityHash = expected;
+        await db.SaveChangesAsync(ct);
+        return expected;
     }
 
     [HttpGet("invoices/download-all")]
@@ -558,7 +576,7 @@ public class BillingController(
         var amountPaise = (int)Math.Round(invoicePreview.Total * 100m, MidpointRounding.AwayFromZero);
         if (amountPaise <= 0) return BadRequest("Invalid plan amount.");
 
-        var receipt = $"txtz_{tenancy.TenantId:N}_{DateTime.UtcNow:yyyyMMddHHmmss}";
+        var receipt = BuildRazorpayReceipt("pln", tenancy.TenantId);
         var notes = new Dictionary<string, string>
         {
             ["tenantId"] = tenancy.TenantId.ToString(),
@@ -647,6 +665,128 @@ public class BillingController(
         });
     }
 
+    [HttpPost("razorpay/create-integration-order")]
+    public async Task<IActionResult> RazorpayCreateIntegrationOrder([FromBody] CreateIntegrationOrderRequest request, CancellationToken ct)
+    {
+        if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
+        if (!rbac.HasPermission(BillingWrite)) return Forbid();
+
+        var slug = (request.Slug ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(slug)) return BadRequest("slug is required.");
+
+        var item = await FindIntegrationCatalogItemAsync(slug, ct);
+        if (item is null || !item.IsVisible || !item.IsActive)
+            return NotFound("Integration not found.");
+        if (!string.Equals(item.PricingType, "paid", StringComparison.OrdinalIgnoreCase))
+            return BadRequest("This integration does not require paid checkout.");
+
+        var entitlementTokens = await ResolveTenantIntegrationEntitlementTokensAsync(ct);
+        if (IsIntegrationEntitled(item, entitlementTokens))
+            return BadRequest("This integration is already purchased for this tenant.");
+
+        var cfg = await ReadPaymentSettingsAsync(ct);
+        var provider = (cfg.TryGetValue("provider", out var p) ? p : "razorpay").Trim().ToLowerInvariant();
+        if (provider != "razorpay") return BadRequest("Configured payment provider is not Razorpay.");
+        var mode = NormalizeRazorpayMode(cfg.TryGetValue("mode", out var m) ? m : "test");
+        var keyId = cfg.TryGetValue("keyId", out var kid) ? kid : string.Empty;
+        var keySecret = cfg.TryGetValue("keySecret", out var ks) ? ks : string.Empty;
+        if (string.IsNullOrWhiteSpace(keyId) || string.IsNullOrWhiteSpace(keySecret))
+            return BadRequest("Razorpay keyId/keySecret not configured in platform settings.");
+        if (!IsRazorpayKeyModeValid(keyId, mode))
+            return BadRequest($"Razorpay keyId does not match configured mode '{mode}'.");
+
+        var (taxRate, isTaxExempt, isReverseCharge) = await ResolveTaxProfileAsync(tenancy.TenantId, ct);
+        var invoicePreview = ComputeInvoiceAmounts(item.Price, taxRate, item.TaxMode, isTaxExempt, isReverseCharge);
+        var amountPaise = (int)Math.Round(invoicePreview.Total * 100m, MidpointRounding.AwayFromZero);
+        if (amountPaise <= 0) return BadRequest("Invalid integration amount.");
+
+        var cycle = string.Equals(item.BillingFrequency, "one_time", StringComparison.OrdinalIgnoreCase) ? "one_time" : "monthly";
+        var receipt = BuildRazorpayReceipt("int", tenancy.TenantId);
+        var notes = new Dictionary<string, string>
+        {
+            ["tenantId"] = tenancy.TenantId.ToString(),
+            ["purchaseType"] = "integration",
+            ["integrationSlug"] = item.Slug,
+            ["integrationName"] = item.Name,
+            ["billingCycle"] = cycle,
+            ["taxMode"] = item.TaxMode,
+            ["mode"] = mode
+        };
+
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        var authBytes = Encoding.UTF8.GetBytes($"{keyId}:{keySecret}");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var payload = new
+        {
+            amount = amountPaise,
+            currency = string.IsNullOrWhiteSpace(item.Currency) ? "INR" : item.Currency.ToUpperInvariant(),
+            receipt,
+            notes
+        };
+        var json = JsonSerializer.Serialize(payload);
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var resp = await client.PostAsync("https://api.razorpay.com/v1/orders", content, ct);
+        var raw = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            logger.LogWarning("Razorpay integration order create failed status={Status} body={Body}", (int)resp.StatusCode, redactor.RedactText(raw));
+            return BadRequest(ExtractRazorpayErrorMessage(raw, "Failed to create Razorpay order."));
+        }
+
+        using var doc = JsonDocument.Parse(raw);
+        var orderId = doc.RootElement.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? string.Empty : string.Empty;
+        if (string.IsNullOrWhiteSpace(orderId)) return BadRequest("Razorpay did not return order id.");
+
+        var attempt = new BillingPaymentAttempt
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenancy.TenantId,
+            PlanId = Guid.Empty,
+            BillingCycle = cycle,
+            Provider = "razorpay",
+            OrderId = orderId,
+            Amount = invoicePreview.Total,
+            Currency = payload.currency,
+            Status = "created",
+            NotesJson = JsonSerializer.Serialize(notes),
+            RawResponse = raw,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+        db.BillingPaymentAttempts.Add(attempt);
+        await CreateOrUpdateIntegrationProformaInvoiceAsync(tenancy.TenantId, item, cycle, orderId, invoicePreview, ct);
+        await db.SaveChangesAsync(ct);
+        await TrySendBillingEventAsync(
+            tenancy.TenantId,
+            "Integration checkout initiated",
+            "A Razorpay order and proforma invoice were created for your add-on purchase.",
+            new Dictionary<string, string>
+            {
+                ["Integration"] = item.Name,
+                ["Billing Cycle"] = cycle,
+                ["Amount"] = FormatCurrency(invoicePreview.Total, payload.currency),
+                ["Order ID"] = orderId,
+                ["Mode"] = mode,
+                ["Invoice Type"] = "Proforma Invoice"
+            },
+            ct);
+
+        return Ok(new
+        {
+            provider = "razorpay",
+            mode,
+            keyId,
+            orderId,
+            amount = amountPaise,
+            currency = payload.currency,
+            integrationSlug = item.Slug,
+            integrationName = item.Name,
+            billingCycle = cycle,
+            tenantId = tenancy.TenantId
+        });
+    }
+
     [HttpPost("razorpay/verify")]
     public async Task<IActionResult> RazorpayVerify([FromBody] RazorpayVerifyRequest request, CancellationToken ct)
     {
@@ -672,7 +812,20 @@ public class BillingController(
         if (attempt is null) return NotFound("Payment attempt not found.");
 
         if (attempt.Status == "paid")
-            return Ok(new { verified = true, alreadyProcessed = true, planCode = request.PlanCode });
+        {
+            await ActivatePurchaseFromPaymentAsync(attempt, ct);
+            await db.SaveChangesAsync(ct);
+            var existingNotes = ParseAttemptNotes(attempt.NotesJson);
+            return Ok(new
+            {
+                verified = true,
+                alreadyProcessed = true,
+                planCode = request.PlanCode,
+                billingCycle = attempt.BillingCycle,
+                purchaseType = existingNotes.TryGetValue("purchaseType", out var existingPurchaseType) ? existingPurchaseType : "plan",
+                integrationSlug = existingNotes.TryGetValue("integrationSlug", out var existingIntegrationSlug) ? existingIntegrationSlug : string.Empty
+            });
+        }
 
         var valid = VerifyRazorpaySignature(request.RazorpayOrderId, request.RazorpayPaymentId, request.RazorpaySignature, keySecret);
         if (!valid)
@@ -732,7 +885,7 @@ public class BillingController(
         attempt.UpdatedAtUtc = DateTime.UtcNow;
         attempt.RawResponse = validation.raw ?? attempt.RawResponse;
 
-        await ActivateSubscriptionFromPaymentAsync(attempt, ct);
+        await ActivatePurchaseFromPaymentAsync(attempt, ct);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("billing.razorpay.verify.success", $"tenant={tenancy.TenantId}; order={attempt.OrderId}", ct);
         await TrySendBillingEventAsync(
@@ -747,7 +900,15 @@ public class BillingController(
                 ["Amount"] = FormatCurrency(attempt.Amount, attempt.Currency)
             },
             ct);
-        return Ok(new { verified = true, planCode = request.PlanCode, billingCycle = attempt.BillingCycle });
+        var purchaseNotes = ParseAttemptNotes(attempt.NotesJson);
+        return Ok(new
+        {
+            verified = true,
+            planCode = request.PlanCode,
+            billingCycle = attempt.BillingCycle,
+            purchaseType = purchaseNotes.TryGetValue("purchaseType", out var purchaseType) ? purchaseType : "plan",
+            integrationSlug = purchaseNotes.TryGetValue("integrationSlug", out var integrationSlug) ? integrationSlug : string.Empty
+        });
     }
 
     [HttpPost("cancel")]
@@ -805,6 +966,11 @@ public class BillingController(
     {
         public string PlanCode { get; set; } = string.Empty;
         public string BillingCycle { get; set; } = "monthly";
+    }
+
+    public sealed class CreateIntegrationOrderRequest
+    {
+        public string Slug { get; set; } = string.Empty;
     }
 
     public sealed class RazorpayVerifyRequest
@@ -928,6 +1094,52 @@ public class BillingController(
         existing.IntegrityHash = ComputeInvoiceIntegrityHash(existing);
     }
 
+    private async Task CreateOrUpdateIntegrationProformaInvoiceAsync(
+        Guid tenantId,
+        IntegrationCatalogController.IntegrationCatalogItem item,
+        string billingCycle,
+        string orderId,
+        InvoiceAmounts invoice,
+        CancellationToken ct)
+    {
+        var start = DateTime.UtcNow;
+        var periodStart = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var periodEnd = ResolveAddOnPeriodEndUtc(periodStart, billingCycle);
+        var invoiceNo = $"PI-ADD-{start:yyyyMMdd}-{orderId}";
+        var existing = await db.BillingInvoices.FirstOrDefaultAsync(x => x.TenantId == tenantId && x.InvoiceNo == invoiceNo, ct);
+        if (existing is null)
+        {
+            existing = new BillingInvoice
+            {
+                Id = Guid.NewGuid(),
+                InvoiceNo = invoiceNo,
+                TenantId = tenantId,
+                InvoiceKind = "proforma_invoice",
+                BillingCycle = billingCycle,
+                TaxMode = item.TaxMode,
+                ReferenceNo = orderId,
+                PeriodStartUtc = periodStart,
+                PeriodEndUtc = periodEnd,
+                Status = "issued",
+                PaidAtUtc = null,
+                PdfUrl = string.Empty,
+                IntegrityAlgo = "SHA256",
+                IssuedAtUtc = DateTime.UtcNow,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            db.BillingInvoices.Add(existing);
+        }
+
+        existing.Subtotal = invoice.Subtotal;
+        existing.TaxAmount = invoice.TaxAmount;
+        existing.Total = invoice.Total;
+        existing.TaxMode = item.TaxMode;
+        existing.BillingCycle = billingCycle;
+        existing.ReferenceNo = orderId;
+        existing.Description = $"{item.Name} purchase";
+        existing.IntegrityHash = ComputeInvoiceIntegrityHash(existing);
+    }
+
     private readonly record struct InvoiceAmounts(decimal Subtotal, decimal TaxAmount, decimal Total);
 
     private static InvoiceAmounts ComputeInvoiceAmounts(
@@ -986,52 +1198,143 @@ public class BillingController(
         }
     }
 
-    private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice)
+    private async Task<List<IntegrationCatalogController.IntegrationCatalogItem>> ReadIntegrationCatalogAsync(CancellationToken ct)
     {
-        var canonical = string.Join("|",
-            invoice.InvoiceNo,
-            invoice.TenantId.ToString("D"),
-            invoice.InvoiceKind,
-            invoice.BillingCycle,
-            invoice.TaxMode,
-            invoice.ReferenceNo,
-            invoice.Description,
-            invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
-            invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
-            invoice.Subtotal.ToString("0.00"),
-            invoice.TaxAmount.ToString("0.00"),
-            invoice.Total.ToString("0.00"),
-            (invoice.PaidAtUtc ?? DateTime.MinValue).ToUniversalTime().ToString("O"),
-            invoice.Status,
-            invoice.IssuedAtUtc.ToUniversalTime().ToString("O"));
-
-        var bytes = Encoding.UTF8.GetBytes(canonical);
-        var hash = SHA256.HashData(bytes);
-        return Convert.ToHexString(hash).ToLowerInvariant();
+        var row = await db.PlatformSettings.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Scope == "integration-catalog" && x.Key == "items", ct);
+        if (row is null) return DefaultIntegrationCatalog();
+        try
+        {
+            var json = crypto.Decrypt(row.ValueEncrypted);
+            return JsonSerializer.Deserialize<List<IntegrationCatalogController.IntegrationCatalogItem>>(json) ?? DefaultIntegrationCatalog();
+        }
+        catch
+        {
+            return DefaultIntegrationCatalog();
+        }
     }
 
-    private static string ComputeInvoiceIntegrityHashLegacy(BillingInvoice invoice)
+    private async Task<IntegrationCatalogController.IntegrationCatalogItem?> FindIntegrationCatalogItemAsync(string slug, CancellationToken ct)
     {
-        var canonical = string.Join("|",
-            invoice.InvoiceNo,
-            invoice.TenantId.ToString("D"),
-            invoice.InvoiceKind,
-            invoice.BillingCycle,
-            invoice.TaxMode,
-            invoice.ReferenceNo,
-            invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
-            invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
-            invoice.Subtotal.ToString("0.00"),
-            invoice.TaxAmount.ToString("0.00"),
-            invoice.Total.ToString("0.00"),
-            (invoice.PaidAtUtc ?? DateTime.MinValue).ToUniversalTime().ToString("O"),
-            invoice.Status,
-            invoice.IssuedAtUtc.ToUniversalTime().ToString("O"));
-
-        var bytes = Encoding.UTF8.GetBytes(canonical);
-        var hash = SHA256.HashData(bytes);
-        return Convert.ToHexString(hash).ToLowerInvariant();
+        var normalizedSlug = (slug ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedSlug)) return null;
+        var items = await ReadIntegrationCatalogAsync(ct);
+        return items.FirstOrDefault(x => string.Equals((x.Slug ?? string.Empty).Trim(), normalizedSlug, StringComparison.OrdinalIgnoreCase));
     }
+
+    private async Task<HashSet<string>> ResolveTenantIntegrationEntitlementTokensAsync(CancellationToken ct)
+    {
+        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var activeStatuses = new[] { "active", "trial", "trialing" };
+        var subscription = await db.TenantSubscriptions.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId && activeStatuses.Contains(x.Status))
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+
+        if (subscription is not null)
+        {
+            foreach (var token in ExpandIntegrationEntitlementTokens(subscription.BillingCycle))
+                tokens.Add(token);
+
+            var plan = await db.BillingPlans.AsNoTracking().FirstOrDefaultAsync(x => x.Id == subscription.PlanId, ct);
+            if (plan is not null)
+            {
+                foreach (var token in ExpandIntegrationEntitlementTokens(plan.Code))
+                    tokens.Add(token);
+                foreach (var token in ExpandIntegrationEntitlementTokens(plan.Name))
+                    tokens.Add(token);
+                foreach (var feature in ParseStringList(plan.FeaturesJson))
+                {
+                    foreach (var token in ExpandIntegrationEntitlementTokens(feature))
+                        tokens.Add(token);
+                }
+            }
+        }
+
+        var tenantFlags = await db.TenantFeatureFlags.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId && x.IsEnabled)
+            .Select(x => x.FeatureKey)
+            .ToListAsync(ct);
+        foreach (var featureKey in tenantFlags)
+        {
+            foreach (var token in ExpandIntegrationEntitlementTokens(featureKey))
+                tokens.Add(token);
+        }
+
+        return tokens;
+    }
+
+    private static bool IsIntegrationEntitled(IntegrationCatalogController.IntegrationCatalogItem item, HashSet<string> entitlementTokens)
+    {
+        if (entitlementTokens.Count == 0) return false;
+
+        var itemTokens = ExpandIntegrationEntitlementTokens(item.Slug)
+            .Concat(ExpandIntegrationEntitlementTokens(item.Name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (itemTokens.Any(entitlementTokens.Contains)) return true;
+
+        return itemTokens.Any(token =>
+            entitlementTokens.Contains($"integration:{token}") ||
+            entitlementTokens.Contains($"plugin:{token}") ||
+            entitlementTokens.Contains($"addon:{token}"));
+    }
+
+    private static IEnumerable<string> ExpandIntegrationEntitlementTokens(string? raw)
+    {
+        var original = (raw ?? string.Empty).Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(original))
+            yield return original;
+
+        var normalized = NormalizeIntegrationToken(raw);
+        if (string.IsNullOrWhiteSpace(normalized)) yield break;
+
+        yield return normalized;
+
+        if (normalized.Contains('-'))
+            yield return normalized.Replace("-", string.Empty, StringComparison.Ordinal);
+        if (normalized.Contains('_'))
+            yield return normalized.Replace("_", string.Empty, StringComparison.Ordinal);
+
+        if (normalized is "google-authenticator" or "googleauthenticator")
+            yield return "google_authenticator";
+        else if (normalized is "google_authenticator")
+        {
+            yield return "google-authenticator";
+            yield return "googleauthenticator";
+        }
+
+        if (normalized is "microsoft-authenticator" or "microsoftauthenticator")
+            yield return "microsoft_authenticator";
+        else if (normalized is "microsoft_authenticator")
+        {
+            yield return "microsoft-authenticator";
+            yield return "microsoftauthenticator";
+        }
+    }
+
+    private static string NormalizeIntegrationToken(string? raw)
+    {
+        var value = (raw ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        value = value.Replace("&", " and ", StringComparison.Ordinal);
+        value = Regex.Replace(value, @"[^a-z0-9]+", "-").Trim('-');
+        return value;
+    }
+
+    private static List<IntegrationCatalogController.IntegrationCatalogItem> DefaultIntegrationCatalog() =>
+    [
+        new() { Slug = "shopify", Name = "Shopify", Category = "e-commerce", Description = "Sync orders and automate status updates.", PricingType = "paid", BillingFrequency = "monthly", Price = 999m, Currency = "INR", TaxMode = "exclusive", IsActive = true, IsVisible = true, SortOrder = 1 },
+        new() { Slug = "woocommerce", Name = "WooCommerce", Category = "e-commerce", Description = "WordPress store messaging and order sync.", PricingType = "paid", BillingFrequency = "monthly", Price = 799m, Currency = "INR", TaxMode = "exclusive", IsActive = true, IsVisible = true, SortOrder = 2 },
+        new() { Slug = "razorpay", Name = "Razorpay", Category = "payments", Description = "Payment collection events and invoice updates.", PricingType = "free", BillingFrequency = "monthly", Price = 0m, Currency = "INR", TaxMode = "exclusive", IsActive = true, IsVisible = true, SortOrder = 3 },
+        new() { Slug = "zapier", Name = "Zapier", Category = "automation", Description = "Bridge Textzy with external tools.", PricingType = "paid", BillingFrequency = "monthly", Price = 1499m, Currency = "INR", TaxMode = "exclusive", IsActive = true, IsVisible = true, SortOrder = 4 },
+        new() { Slug = "google-authenticator", Name = "Google Authenticator", Category = "security", Description = "QR-based TOTP for secure account sign-in.", PricingType = "free", BillingFrequency = "monthly", Price = 0m, Currency = "INR", TaxMode = "exclusive", IsActive = true, IsVisible = true, SortOrder = 5 },
+        new() { Slug = "microsoft-authenticator", Name = "Microsoft Authenticator", Category = "security", Description = "QR-based TOTP enrollment for Microsoft Authenticator.", PricingType = "free", BillingFrequency = "monthly", Price = 0m, Currency = "INR", TaxMode = "exclusive", IsActive = true, IsVisible = true, SortOrder = 6 }
+    ];
+
+    private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice) => InvoiceIntegrityHasher.Compute(invoice);
+
+    private static string ComputeInvoiceIntegrityHashLegacy(BillingInvoice invoice) => InvoiceIntegrityHasher.ComputeLegacy(invoice);
 
     private static string? NormalizeBillingCycle(string? billingCycle)
     {
@@ -1130,6 +1433,19 @@ public class BillingController(
         return set;
     }
 
+    private async Task ActivatePurchaseFromPaymentAsync(BillingPaymentAttempt attempt, CancellationToken ct)
+    {
+        var notes = ParseAttemptNotes(attempt.NotesJson);
+        var purchaseType = notes.TryGetValue("purchaseType", out var type) ? type : "plan";
+        if (string.Equals(purchaseType, "integration", StringComparison.OrdinalIgnoreCase))
+        {
+            await ActivateIntegrationPurchaseAsync(attempt, notes, ct);
+            return;
+        }
+
+        await ActivateSubscriptionFromPaymentAsync(attempt, ct);
+    }
+
     private async Task ActivateSubscriptionFromPaymentAsync(BillingPaymentAttempt attempt, CancellationToken ct)
     {
         var plan = await db.BillingPlans.FirstOrDefaultAsync(x => x.Id == attempt.PlanId, ct);
@@ -1221,6 +1537,88 @@ public class BillingController(
         sub.UpdatedAtUtc = DateTime.UtcNow;
     }
 
+    private async Task ActivateIntegrationPurchaseAsync(BillingPaymentAttempt attempt, Dictionary<string, string> notes, CancellationToken ct)
+    {
+        var slug = notes.TryGetValue("integrationSlug", out var integrationSlug) ? integrationSlug.Trim().ToLowerInvariant() : string.Empty;
+        if (string.IsNullOrWhiteSpace(slug)) return;
+
+        var name = notes.TryGetValue("integrationName", out var integrationName) && !string.IsNullOrWhiteSpace(integrationName)
+            ? integrationName.Trim()
+            : slug;
+        var billingCycle = notes.TryGetValue("billingCycle", out var cycleValue) && !string.IsNullOrWhiteSpace(cycleValue)
+            ? cycleValue.Trim().ToLowerInvariant()
+            : "monthly";
+        var taxMode = notes.TryGetValue("taxMode", out var taxModeValue) && !string.IsNullOrWhiteSpace(taxModeValue)
+            ? taxModeValue.Trim().ToLowerInvariant()
+            : "exclusive";
+
+        var start = DateTime.UtcNow;
+        var periodStart = new DateTime(start.Year, start.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var periodEnd = ResolveAddOnPeriodEndUtc(periodStart, billingCycle);
+        var invoiceNo = $"INV-ADD-{start:yyyyMMdd}-{attempt.OrderId}";
+        var existingInvoice = await db.BillingInvoices
+            .FirstOrDefaultAsync(x => x.TenantId == attempt.TenantId && x.InvoiceNo == invoiceNo, ct);
+        if (existingInvoice is null)
+        {
+            var (taxRate, isTaxExempt, isReverseCharge) = await ResolveTaxProfileAsync(attempt.TenantId, ct);
+            var invoiceBreakdown = ComputeInvoiceAmounts(attempt.Amount, taxRate, taxMode, isTaxExempt, isReverseCharge, amountIsGross: true);
+            var invoice = new BillingInvoice
+            {
+                Id = Guid.NewGuid(),
+                InvoiceNo = invoiceNo,
+                TenantId = attempt.TenantId,
+                InvoiceKind = "tax_invoice",
+                BillingCycle = billingCycle,
+                TaxMode = taxMode,
+                ReferenceNo = attempt.OrderId,
+                Description = $"{name} purchase",
+                PeriodStartUtc = periodStart,
+                PeriodEndUtc = periodEnd,
+                Subtotal = invoiceBreakdown.Subtotal,
+                TaxAmount = invoiceBreakdown.TaxAmount,
+                Total = invoiceBreakdown.Total,
+                Status = "paid",
+                PaidAtUtc = attempt.PaidAtUtc ?? DateTime.UtcNow,
+                PdfUrl = string.Empty,
+                IntegrityAlgo = "SHA256",
+                IssuedAtUtc = DateTime.UtcNow,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            invoice.IntegrityHash = ComputeInvoiceIntegrityHash(invoice);
+            db.BillingInvoices.Add(invoice);
+            await TrySendBillingEventAsync(
+                attempt.TenantId,
+                "Integration invoice generated",
+                "A paid tax invoice has been generated for your integration purchase.",
+                new Dictionary<string, string>
+                {
+                    ["Invoice No"] = invoiceNo,
+                    ["Service"] = invoice.Description,
+                    ["Period"] = $"{periodStart:yyyy-MM-dd} to {periodEnd:yyyy-MM-dd}",
+                    ["Total"] = FormatCurrency(invoiceBreakdown.Total, attempt.Currency),
+                    ["Invoice Type"] = "Tax Invoice"
+                },
+                ct);
+        }
+
+        var featureKey = $"integration:{slug}";
+        var flag = await db.TenantFeatureFlags.FirstOrDefaultAsync(x => x.TenantId == attempt.TenantId && x.FeatureKey == featureKey, ct);
+        if (flag is null)
+        {
+            flag = new TenantFeatureFlag
+            {
+                Id = Guid.NewGuid(),
+                TenantId = attempt.TenantId,
+                FeatureKey = featureKey
+            };
+            db.TenantFeatureFlags.Add(flag);
+        }
+
+        flag.IsEnabled = true;
+        flag.UpdatedAtUtc = DateTime.UtcNow;
+        flag.UpdatedByUserId = auth.UserId;
+    }
+
     private async Task TrySendBillingEventAsync(Guid tenantId, string title, string description, Dictionary<string, string> details, CancellationToken ct)
     {
         try
@@ -1291,6 +1689,34 @@ public class BillingController(
             "usage_based" => "Usage pack purchase",
             _ => "Platform service purchase"
         };
+    }
+
+    private static string BuildRazorpayReceipt(string kind, Guid tenantId)
+    {
+        var safeKind = string.IsNullOrWhiteSpace(kind) ? "txn" : Regex.Replace(kind.Trim().ToLowerInvariant(), @"[^a-z0-9]", string.Empty);
+        if (safeKind.Length > 4) safeKind = safeKind[..4];
+        var tenant = tenantId.ToString("N")[..8];
+        var stamp = DateTime.UtcNow.ToString("yyMMddHHmmss");
+        return $"tz{safeKind}{tenant}{stamp}";
+    }
+
+    private static Dictionary<string, string> ParseAttemptNotes(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static DateTime ResolveAddOnPeriodEndUtc(DateTime periodStartUtc, string billingCycle)
+    {
+        return string.Equals(billingCycle, "one_time", StringComparison.OrdinalIgnoreCase)
+            ? periodStartUtc.AddYears(100).AddSeconds(-1)
+            : ResolvePeriodEndUtc(periodStartUtc, NormalizeBillingCycle(billingCycle) ?? "monthly");
     }
 
     private static string Csv(string value)

@@ -36,11 +36,14 @@ public class IntegrationCatalogController(
             {
                 var globallyActive = x.IsActive;
                 var entitled = globallyActive && IsEntitled(x, entitlementTokens);
+                var isPaid = string.Equals(x.PricingType, "paid", StringComparison.OrdinalIgnoreCase);
                 var activationStatus = !globallyActive
                     ? "unavailable"
                     : entitled
                         ? "active"
-                        : "available";
+                        : isPaid
+                            ? "not_purchased"
+                            : "available";
 
                 return new
                 {
@@ -56,9 +59,11 @@ public class IntegrationCatalogController(
                     isActive = entitled,
                     isVisible = x.IsVisible,
                     x.SortOrder,
+                    isPaid,
                     isGloballyActive = globallyActive,
                     isEntitled = entitled,
-                    activationStatus
+                    activationStatus,
+                    canRequestPurchase = globallyActive && isPaid && !entitled
                 };
             })
             .ToList();
@@ -198,15 +203,26 @@ public class IntegrationCatalogController(
         foreach (var token in ExpandEntitlementTokens(subscription.BillingCycle))
             tokens.Add(token);
 
-        if (plan is null) return tokens;
-
-        foreach (var token in ExpandEntitlementTokens(plan.Code))
-            tokens.Add(token);
-        foreach (var token in ExpandEntitlementTokens(plan.Name))
-            tokens.Add(token);
-        foreach (var feature in ParseStringList(plan.FeaturesJson))
+        if (plan is not null)
         {
-            foreach (var token in ExpandEntitlementTokens(feature))
+            foreach (var token in ExpandEntitlementTokens(plan.Code))
+                tokens.Add(token);
+            foreach (var token in ExpandEntitlementTokens(plan.Name))
+                tokens.Add(token);
+            foreach (var feature in ParseStringList(plan.FeaturesJson))
+            {
+                foreach (var token in ExpandEntitlementTokens(feature))
+                    tokens.Add(token);
+            }
+        }
+
+        var featureFlags = await db.TenantFeatureFlags.AsNoTracking()
+            .Where(x => x.TenantId == tenancy.TenantId && x.IsEnabled)
+            .Select(x => x.FeatureKey)
+            .ToListAsync(ct);
+        foreach (var featureKey in featureFlags)
+        {
+            foreach (var token in ExpandEntitlementTokens(featureKey))
                 tokens.Add(token);
         }
 
@@ -223,16 +239,18 @@ public class IntegrationCatalogController(
 
         if (itemTokens.Any(entitlementTokens.Contains)) return true;
 
-        return item.Category switch
-        {
-            "automation" => entitlementTokens.Contains("custom-integrations"),
-            "e-commerce" => entitlementTokens.Contains("custom-integrations"),
-            _ => false
-        };
+        return itemTokens.Any(token =>
+            entitlementTokens.Contains($"integration:{token}") ||
+            entitlementTokens.Contains($"plugin:{token}") ||
+            entitlementTokens.Contains($"addon:{token}"));
     }
 
     private static IEnumerable<string> ExpandEntitlementTokens(string? raw)
     {
+        var original = (raw ?? string.Empty).Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(original))
+            yield return original;
+
         var normalized = NormalizeToken(raw);
         if (string.IsNullOrWhiteSpace(normalized)) yield break;
 
@@ -259,8 +277,6 @@ public class IntegrationCatalogController(
             yield return "microsoftauthenticator";
         }
 
-        if (normalized.Contains("custom-integrations", StringComparison.Ordinal))
-            yield return "custom-integrations";
     }
 
     private static string NormalizeToken(string? raw)

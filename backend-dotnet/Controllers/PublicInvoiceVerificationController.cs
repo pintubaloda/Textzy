@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
@@ -38,16 +36,21 @@ public class PublicInvoiceVerificationController(
             Pan = profile?.Pan ?? string.Empty
         };
 
-        var expected = ComputeInvoiceIntegrityHash(invoice);
-        var legacyExpected = ComputeInvoiceIntegrityHashLegacy(invoice);
+        var expected = InvoiceIntegrityHasher.Compute(invoice);
+        var legacyExpected = InvoiceIntegrityHasher.ComputeLegacy(invoice);
         var storedHashValid = string.Equals(invoice.IntegrityHash, expected, StringComparison.OrdinalIgnoreCase) ||
                               string.Equals(invoice.IntegrityHash, legacyExpected, StringComparison.OrdinalIgnoreCase);
-        var requestHashValid = !string.IsNullOrWhiteSpace(hash) &&
-                               (string.Equals(hash, invoice.IntegrityHash, StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(hash, expected, StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(hash, legacyExpected, StringComparison.OrdinalIgnoreCase));
+        var requestMatchesStored = !string.IsNullOrWhiteSpace(hash) &&
+                                   string.Equals(hash, invoice.IntegrityHash, StringComparison.OrdinalIgnoreCase);
+        var requestHashValid = requestMatchesStored ||
+                               (!string.IsNullOrWhiteSpace(hash) &&
+                                (string.Equals(hash, expected, StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(hash, legacyExpected, StringComparison.OrdinalIgnoreCase)));
+        var legacyManualCompatibility = !storedHashValid &&
+                                        requestMatchesStored &&
+                                        invoice.ReferenceNo.StartsWith("manual-plan:", StringComparison.OrdinalIgnoreCase);
 
-        var valid = storedHashValid && requestHashValid;
+        var valid = requestHashValid && (storedHashValid || legacyManualCompatibility);
         var message = valid
             ? "This invoice is authentic and verified in real time."
             : "This invoice is invalid or the verification token does not match.";
@@ -82,47 +85,6 @@ public class PublicInvoiceVerificationController(
             Website = NormalizeBaseUrl(values.TryGetValue("website", out var website) ? website : string.Empty) ?? NormalizeBaseUrl(config["APP_BASE_URL"]) ?? string.Empty,
             InvoiceFooter = (values.TryGetValue("invoiceFooter", out var footer) ? footer : string.Empty).Trim()
         };
-    }
-
-    private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice)
-    {
-        var canonical = string.Join("|",
-            invoice.InvoiceNo,
-            invoice.TenantId.ToString("D"),
-            invoice.InvoiceKind,
-            invoice.BillingCycle,
-            invoice.TaxMode,
-            invoice.ReferenceNo,
-            invoice.Description,
-            invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
-            invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
-            invoice.Subtotal.ToString("0.00"),
-            invoice.TaxAmount.ToString("0.00"),
-            invoice.Total.ToString("0.00"),
-            (invoice.PaidAtUtc ?? DateTime.MinValue).ToUniversalTime().ToString("O"),
-            invoice.Status,
-            invoice.IssuedAtUtc.ToUniversalTime().ToString("O"));
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
-    }
-
-    private static string ComputeInvoiceIntegrityHashLegacy(BillingInvoice invoice)
-    {
-        var canonical = string.Join("|",
-            invoice.InvoiceNo,
-            invoice.TenantId.ToString("D"),
-            invoice.InvoiceKind,
-            invoice.BillingCycle,
-            invoice.TaxMode,
-            invoice.ReferenceNo,
-            invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
-            invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
-            invoice.Subtotal.ToString("0.00"),
-            invoice.TaxAmount.ToString("0.00"),
-            invoice.Total.ToString("0.00"),
-            (invoice.PaidAtUtc ?? DateTime.MinValue).ToUniversalTime().ToString("O"),
-            invoice.Status,
-            invoice.IssuedAtUtc.ToUniversalTime().ToString("O"));
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
     }
 
     private static string? NormalizeBaseUrl(string? raw)
