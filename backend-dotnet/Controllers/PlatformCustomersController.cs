@@ -21,63 +21,160 @@ public class PlatformCustomersController(
     private static readonly TimeSpan StepUpFreshWindow = TimeSpan.FromMinutes(10);
 
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] string q = "", CancellationToken ct = default)
+    public async Task<IActionResult> List(
+        [FromQuery] string q = "",
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        CancellationToken ct = default)
     {
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
 
-        var query = db.Tenants.AsQueryable();
         var search = (q ?? string.Empty).Trim().ToLowerInvariant();
+        var safePageSize = Math.Clamp(pageSize, 10, 200);
+        var requestedPage = Math.Max(1, page);
+
+        var tenantQuery = db.Tenants.AsNoTracking();
         if (!string.IsNullOrWhiteSpace(search))
         {
-            query = query.Where(t => t.Name.ToLower().Contains(search) || t.Slug.ToLower().Contains(search));
+            tenantQuery = tenantQuery.Where(t =>
+                t.Name.ToLower().Contains(search) ||
+                t.Slug.ToLower().Contains(search));
         }
 
-        var tenants = await query.OrderByDescending(t => t.CreatedAtUtc).ToListAsync(ct);
-        var tenantIds = tenants.Select(t => t.Id).ToList();
-
-        var users = await db.TenantUsers.Where(x => tenantIds.Contains(x.TenantId)).ToListAsync(ct);
-        var userIds = users.Select(x => x.UserId).Distinct().ToList();
-        var userMap = await db.Users.Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, ct);
-        var companyProfiles = await db.TenantCompanyProfiles.Where(x => tenantIds.Contains(x.TenantId)).ToDictionaryAsync(x => x.TenantId, ct);
-        var subs = await db.TenantSubscriptions.Where(s => tenantIds.Contains(s.TenantId)).ToListAsync(ct);
-        var plans = await db.BillingPlans.ToListAsync(ct);
-        var planMap = plans.ToDictionary(x => x.Id, x => x);
-        var invoices = await db.BillingInvoices.Where(i => tenantIds.Contains(i.TenantId)).ToListAsync(ct);
-
-        var result = tenants.Select(t =>
-        {
-            var members = users.Where(u => u.TenantId == t.Id).ToList();
-            var owner = members
-                .OrderBy(m => RolePriority(m.Role))
-                .Select(m => userMap.TryGetValue(m.UserId, out var u) ? u : null)
-                .FirstOrDefault(u => u is not null);
-            var sub = subs.Where(x => x.TenantId == t.Id).OrderByDescending(x => x.CreatedAtUtc).FirstOrDefault();
-            var plan = sub is not null && planMap.TryGetValue(sub.PlanId, out var p) ? p : null;
-            var inv = invoices.Where(i => i.TenantId == t.Id).ToList();
-            var revenue = inv.Sum(i => i.Total);
-            return new
+        var ownerMembershipQuery = db.TenantUsers.AsNoTracking()
+            .Select(x => new
             {
-                tenantId = t.Id,
-                tenantName = t.Name,
-                tenantSlug = t.Slug,
-                companyName = companyProfiles.TryGetValue(t.Id, out var company) ? company.CompanyName : t.Name,
-                ownerGroupId = t.OwnerGroupId,
-                createdAtUtc = t.CreatedAtUtc,
-                ownerName = owner?.FullName ?? owner?.Email ?? "-",
-                ownerEmail = owner?.Email ?? "-",
-                users = members.Count,
-                activeUsers = members.Count(m => userMap.TryGetValue(m.UserId, out var u) && u.IsActive),
-                planCode = plan?.Code ?? "",
-                planName = plan?.Name ?? "No Plan",
-                subscriptionStatus = sub?.Status ?? "none",
-                monthlyPrice = plan?.PriceMonthly ?? 0,
-                invoiceCount = inv.Count,
-                totalRevenue = revenue
-            };
-        });
+                x.TenantId,
+                x.UserId,
+                x.CreatedAtUtc,
+                RoleRank =
+                    (x.Role ?? string.Empty).ToLower() == "owner" ? 0 :
+                    (x.Role ?? string.Empty).ToLower() == "admin" ? 1 :
+                    (x.Role ?? string.Empty).ToLower() == "manager" ? 2 :
+                    (x.Role ?? string.Empty).ToLower() == "support" ? 3 :
+                    (x.Role ?? string.Empty).ToLower() == "marketing" ? 4 :
+                    (x.Role ?? string.Empty).ToLower() == "finance" ? 5 : 99
+            })
+            .GroupBy(x => x.TenantId)
+            .Select(g => g
+                .OrderBy(x => x.RoleRank)
+                .ThenBy(x => x.CreatedAtUtc)
+                .Select(x => new OwnerSqlRow
+                {
+                    TenantId = x.TenantId,
+                    UserId = x.UserId
+                })
+                .First());
 
-        return Ok(result);
+        var membershipAggQuery =
+            from membership in db.TenantUsers.AsNoTracking()
+            join user in db.Users.AsNoTracking() on membership.UserId equals user.Id into userJoin
+            from joinedUser in userJoin.DefaultIfEmpty()
+            group new { membership, joinedUser } by membership.TenantId into g
+            select new MembershipAggSqlRow
+            {
+                TenantId = g.Key,
+                Users = g.Select(x => x.membership.UserId).Distinct().Count(),
+                ActiveUsers = g.Where(x => x.joinedUser != null && x.joinedUser.IsActive)
+                    .Select(x => x.membership.UserId)
+                    .Distinct()
+                    .Count()
+            };
+
+        var invoiceAggQuery = db.BillingInvoices.AsNoTracking()
+            .GroupBy(x => x.TenantId)
+            .Select(g => new InvoiceAggSqlRow
+            {
+                TenantId = g.Key,
+                InvoiceCount = g.Count(),
+                TotalRevenue = g.Sum(x => x.Total)
+            });
+
+        var latestSubscriptionQuery = db.TenantSubscriptions.AsNoTracking()
+            .GroupBy(x => x.TenantId)
+            .Select(g => g
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .Select(x => new SubscriptionSqlRow
+                {
+                    TenantId = x.TenantId,
+                    PlanId = x.PlanId,
+                    Status = x.Status
+                })
+                .First());
+
+        var baseQuery =
+            from tenant in tenantQuery
+            from profile in db.TenantCompanyProfiles.AsNoTracking().Where(x => x.TenantId == tenant.Id).DefaultIfEmpty()
+            from ownerMembership in ownerMembershipQuery.Where(x => x.TenantId == tenant.Id).DefaultIfEmpty()
+            from owner in db.Users.AsNoTracking().Where(x => ownerMembership != null && x.Id == ownerMembership.UserId).DefaultIfEmpty()
+            from membershipAgg in membershipAggQuery.Where(x => x.TenantId == tenant.Id).DefaultIfEmpty()
+            from invoiceAgg in invoiceAggQuery.Where(x => x.TenantId == tenant.Id).DefaultIfEmpty()
+            from subscription in latestSubscriptionQuery.Where(x => x.TenantId == tenant.Id).DefaultIfEmpty()
+            from plan in db.BillingPlans.AsNoTracking().Where(x => subscription != null && x.Id == subscription.PlanId).DefaultIfEmpty()
+            select new PlatformCustomerListRow
+            {
+                TenantId = tenant.Id,
+                TenantName = tenant.Name,
+                TenantSlug = tenant.Slug,
+                CompanyName = profile != null && profile.CompanyName != string.Empty ? profile.CompanyName : tenant.Name,
+                OwnerGroupId = tenant.OwnerGroupId,
+                CreatedAtUtc = tenant.CreatedAtUtc,
+                OwnerName = owner != null && owner.FullName != string.Empty
+                    ? owner.FullName
+                    : owner != null
+                        ? owner.Email
+                        : "-",
+                OwnerEmail = owner != null ? owner.Email : "-",
+                Users = membershipAgg != null ? membershipAgg.Users : 0,
+                ActiveUsers = membershipAgg != null ? membershipAgg.ActiveUsers : 0,
+                PlanCode = plan != null ? plan.Code : string.Empty,
+                PlanName = plan != null && plan.Name != string.Empty ? plan.Name : "No Plan",
+                SubscriptionStatus = subscription != null ? subscription.Status : "none",
+                MonthlyPrice = plan != null ? plan.PriceMonthly : 0m,
+                InvoiceCount = invoiceAgg != null ? invoiceAgg.InvoiceCount : 0,
+                TotalRevenue = invoiceAgg != null ? invoiceAgg.TotalRevenue : 0m
+            };
+
+        var totalCount = await baseQuery.CountAsync(ct);
+        var totalPages = Math.Max(1, (int)Math.Ceiling(totalCount / (double)safePageSize));
+        var safePage = Math.Min(requestedPage, totalPages);
+        var skip = (safePage - 1) * safePageSize;
+
+        var rows = await baseQuery
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Skip(skip)
+            .Take(safePageSize)
+            .ToListAsync(ct);
+
+        return Ok(new
+        {
+            page = safePage,
+            pageSize = safePageSize,
+            totalCount,
+            totalPages,
+            hasPreviousPage = safePage > 1,
+            hasNextPage = safePage < totalPages,
+            items = rows.Select(x => new
+            {
+                tenantId = x.TenantId,
+                tenantName = x.TenantName,
+                tenantSlug = x.TenantSlug,
+                companyName = x.CompanyName,
+                ownerGroupId = x.OwnerGroupId,
+                createdAtUtc = x.CreatedAtUtc,
+                ownerName = x.OwnerName,
+                ownerEmail = x.OwnerEmail,
+                users = x.Users,
+                activeUsers = x.ActiveUsers,
+                planCode = x.PlanCode,
+                planName = x.PlanName,
+                subscriptionStatus = x.SubscriptionStatus,
+                monthlyPrice = x.MonthlyPrice,
+                invoiceCount = x.InvoiceCount,
+                totalRevenue = x.TotalRevenue
+            })
+        });
     }
 
     [HttpGet("users")]
@@ -675,6 +772,53 @@ public class PlatformCustomersController(
             "finance" => 5,
             _ => 99
         };
+    }
+
+    private sealed class OwnerSqlRow
+    {
+        public Guid TenantId { get; init; }
+        public Guid UserId { get; init; }
+    }
+
+    private sealed class MembershipAggSqlRow
+    {
+        public Guid TenantId { get; init; }
+        public int Users { get; init; }
+        public int ActiveUsers { get; init; }
+    }
+
+    private sealed class InvoiceAggSqlRow
+    {
+        public Guid TenantId { get; init; }
+        public int InvoiceCount { get; init; }
+        public decimal TotalRevenue { get; init; }
+    }
+
+    private sealed class SubscriptionSqlRow
+    {
+        public Guid TenantId { get; init; }
+        public Guid PlanId { get; init; }
+        public string Status { get; init; } = string.Empty;
+    }
+
+    private sealed class PlatformCustomerListRow
+    {
+        public Guid TenantId { get; init; }
+        public string TenantName { get; init; } = string.Empty;
+        public string TenantSlug { get; init; } = string.Empty;
+        public string CompanyName { get; init; } = string.Empty;
+        public Guid? OwnerGroupId { get; init; }
+        public DateTime CreatedAtUtc { get; init; }
+        public string OwnerName { get; init; } = string.Empty;
+        public string OwnerEmail { get; init; } = string.Empty;
+        public int Users { get; init; }
+        public int ActiveUsers { get; init; }
+        public string PlanCode { get; init; } = string.Empty;
+        public string PlanName { get; init; } = string.Empty;
+        public string SubscriptionStatus { get; init; } = string.Empty;
+        public decimal MonthlyPrice { get; init; }
+        public int InvoiceCount { get; init; }
+        public decimal TotalRevenue { get; init; }
     }
 
     private static List<string> ParseStringList(string json)

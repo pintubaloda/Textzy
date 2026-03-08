@@ -2,48 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CreditCard, Eye, Filter, Mail, Pencil, RefreshCcw, ReceiptText, Search, Wallet } from "lucide-react";
+import { ChevronLeft, ChevronRight, CreditCard, Eye, Filter, Mail, RefreshCcw, ReceiptText, Search, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import {
   getPlatformPurchaseReport,
   sendPlatformPurchaseInvoice,
-  updatePlatformPurchaseInvoice,
   viewPlatformPurchaseInvoice,
 } from "@/lib/api";
 
-const toDateInput = (value) => {
-  if (!value) return "";
-  try {
-    return new Date(value).toISOString().slice(0, 10);
-  } catch {
-    return "";
-  }
-};
-
-const toDateTimeInput = (value) => {
-  if (!value) return "";
-  try {
-    const date = new Date(value);
-    date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
-    return date.toISOString().slice(0, 16);
-  } catch {
-    return "";
-  }
-};
-
-const dateToUtcStart = (value) => {
-  if (!value) return "";
-  return new Date(`${value}T00:00:00`).toISOString();
-};
-
-const dateToUtcEnd = (value) => {
-  if (!value) return "";
-  return new Date(`${value}T23:59:59`).toISOString();
-};
+const dateToUtcStart = (value) => (value ? new Date(`${value}T00:00:00`).toISOString() : "");
+const dateToUtcEnd = (value) => (value ? new Date(`${value}T23:59:59`).toISOString() : "");
 
 const money = (value, currency = "INR") => {
   const code = String(currency || "INR").toUpperCase();
@@ -113,24 +84,25 @@ export default function PlatformPurchaseReportPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sendingInvoiceId, setSendingInvoiceId] = useState("");
-  const [savingInvoiceId, setSavingInvoiceId] = useState("");
-  const [report, setReport] = useState({ summary: {}, serviceOptions: [], items: [] });
+  const [report, setReport] = useState({
+    summary: {},
+    serviceOptions: [],
+    items: [],
+    page: 1,
+    pageSize: 50,
+    totalCount: 0,
+    totalPages: 1,
+    hasPreviousPage: false,
+    hasNextPage: false,
+  });
   const [filters, setFilters] = useState({
     fromDate: defaultFrom,
     toDate: defaultTo,
     service: "",
     status: "all",
     q: "",
-    take: 1000,
-  });
-  const [sendDialog, setSendDialog] = useState({ open: false, row: null, email: "" });
-  const [editDialog, setEditDialog] = useState({
-    open: false,
-    row: null,
-    status: "issued",
-    referenceNo: "",
-    issuedAtUtc: "",
-    paidAtUtc: "",
+    page: 1,
+    pageSize: 50,
   });
 
   const load = async (activeFilters = filters) => {
@@ -145,9 +117,20 @@ export default function PlatformPurchaseReportPage() {
         service: activeFilters.service,
         status: activeFilters.status === "all" ? "" : activeFilters.status,
         q: activeFilters.q,
-        take: activeFilters.take,
+        page: activeFilters.page,
+        pageSize: activeFilters.pageSize,
       });
-      setReport(data || { summary: {}, serviceOptions: [], items: [] });
+      setReport(data || {
+        summary: {},
+        serviceOptions: [],
+        items: [],
+        page: 1,
+        pageSize: activeFilters.pageSize,
+        totalCount: 0,
+        totalPages: 1,
+        hasPreviousPage: false,
+        hasNextPage: false,
+      });
     } catch (error) {
       toast.error(error?.message || "Failed to load purchase report");
     } finally {
@@ -164,6 +147,22 @@ export default function PlatformPurchaseReportPage() {
   const rows = useMemo(() => (Array.isArray(report?.items) ? report.items : []), [report]);
   const summary = report?.summary || {};
   const serviceOptions = useMemo(() => (Array.isArray(report?.serviceOptions) ? report.serviceOptions : []), [report]);
+
+  const applyFilters = async (patch = {}) => {
+    const next = { ...filters, ...patch, page: patch.page ?? 1 };
+    setFilters(next);
+    await load(next);
+  };
+
+  const applyQuickRange = async (days) => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - days);
+    await applyFilters({
+      fromDate: start.toISOString().slice(0, 10),
+      toDate: end.toISOString().slice(0, 10),
+    });
+  };
 
   const handleViewInvoice = async (row) => {
     try {
@@ -184,68 +183,21 @@ export default function PlatformPurchaseReportPage() {
     }
   };
 
-  const openSendDialog = (row) => {
-    setSendDialog({
-      open: true,
-      row,
-      email: row?.billingEmail || row?.userEmail || "",
-    });
-  };
-
-  const submitSendInvoice = async () => {
-    if (!sendDialog.row?.invoiceId) return;
+  const handleResendInvoice = async (row) => {
     try {
-      setSendingInvoiceId(sendDialog.row.invoiceId);
-      await sendPlatformPurchaseInvoice(sendDialog.row.invoiceId, { email: sendDialog.email });
-      toast.success("Invoice email sent.");
-      setSendDialog({ open: false, row: null, email: "" });
+      setSendingInvoiceId(row.invoiceId);
+      await sendPlatformPurchaseInvoice(row.invoiceId);
+      toast.success("Invoice resent to the stored billing recipient.");
     } catch (error) {
-      toast.error(error?.message || "Failed to send invoice");
+      toast.error(error?.message || "Failed to resend invoice");
     } finally {
       setSendingInvoiceId("");
     }
   };
 
-  const openEditDialog = (row) => {
-    setEditDialog({
-      open: true,
-      row,
-      status: row?.invoiceStatus || "issued",
-      referenceNo: row?.referenceNo || "",
-      issuedAtUtc: toDateTimeInput(row?.invoiceDateUtc),
-      paidAtUtc: toDateTimeInput(row?.paidAtUtc),
-    });
-  };
-
-  const submitInvoiceEdit = async () => {
-    if (!editDialog.row?.invoiceId) return;
-    try {
-      setSavingInvoiceId(editDialog.row.invoiceId);
-      await updatePlatformPurchaseInvoice(editDialog.row.invoiceId, {
-        status: editDialog.status,
-        referenceNo: editDialog.referenceNo,
-        issuedAtUtc: editDialog.issuedAtUtc ? new Date(editDialog.issuedAtUtc).toISOString() : null,
-        paidAtUtc: editDialog.paidAtUtc ? new Date(editDialog.paidAtUtc).toISOString() : null,
-      });
-      toast.success("Invoice updated.");
-      setEditDialog({ open: false, row: null, status: "issued", referenceNo: "", issuedAtUtc: "", paidAtUtc: "" });
-      await load(filters);
-    } catch (error) {
-      toast.error(error?.message || "Failed to update invoice");
-    } finally {
-      setSavingInvoiceId("");
-    }
-  };
-
-  const applyQuickRange = async (days) => {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - days);
-    const next = {
-      ...filters,
-      fromDate: start.toISOString().slice(0, 10),
-      toDate: end.toISOString().slice(0, 10),
-    };
+  const changePage = async (nextPage) => {
+    const page = Math.max(1, nextPage);
+    const next = { ...filters, page };
     setFilters(next);
     await load(next);
   };
@@ -260,7 +212,7 @@ export default function PlatformPurchaseReportPage() {
             </Badge>
             <h1 className="mt-4 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">Purchase report across every billed customer account</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 md:text-base">
-              Review invoice-backed purchases with owner name, company, GST number, service, amount, GST, invoice date, and action controls from one reporting surface.
+              Review invoice-backed purchases with owner name, company, GST number, service, amount, GST, invoice date, and invoice actions from one reporting surface.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -279,9 +231,9 @@ export default function PlatformPurchaseReportPage() {
       </section>
 
       <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
-        <SummaryCard title="Purchases" value={Number(summary.totalPurchases || 0).toLocaleString()} hint="Invoice-backed purchase rows" icon={ReceiptText} tone="blue" />
+        <SummaryCard title="Purchases" value={Number(summary.totalPurchases || 0).toLocaleString()} hint="Filtered invoice-backed purchase rows" icon={ReceiptText} tone="blue" />
         <SummaryCard title="Net Amount" value={money(summary.totalAmount || 0)} hint="Subtotal before GST" icon={Wallet} tone="orange" />
-        <SummaryCard title="GST" value={money(summary.totalGst || 0)} hint="Tax collected over the filter window" icon={CreditCard} tone="emerald" />
+        <SummaryCard title="GST" value={money(summary.totalGst || 0)} hint="Tax collected over the current filter window" icon={CreditCard} tone="emerald" />
         <SummaryCard title="Invoice Value" value={money(summary.totalInvoiceValue || 0)} hint={`${Number(summary.uniqueCustomers || 0).toLocaleString()} customers across ${Number(summary.services || 0).toLocaleString()} services`} icon={Filter} tone="violet" />
       </div>
 
@@ -291,7 +243,7 @@ export default function PlatformPurchaseReportPage() {
             <Filter className="h-5 w-5 text-blue-600" />
             Filters
           </CardTitle>
-          <CardDescription>Filter by date range and purchased service. Search stays available for company, user, GST number, invoice number, and reference.</CardDescription>
+          <CardDescription>Date and service filters are applied in SQL now, with paged results instead of the previous full-memory report load.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
@@ -329,7 +281,19 @@ export default function PlatformPurchaseReportPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2 xl:col-span-2">
+            <div className="space-y-2">
+              <Label>Rows Per Page</Label>
+              <Select value={String(filters.pageSize)} onValueChange={(value) => setFilters((prev) => ({ ...prev, pageSize: Number(value) }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                  <SelectItem value="200">200</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
               <Label>Search</Label>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -337,22 +301,22 @@ export default function PlatformPurchaseReportPage() {
                   value={filters.q}
                   onChange={(event) => setFilters((prev) => ({ ...prev, q: event.target.value }))}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") load(filters);
+                    if (event.key === "Enter") applyFilters();
                   }}
                   className="pl-9"
-                  placeholder="User, company, GST, invoice, reference"
+                  placeholder="User, company, GST, invoice"
                 />
               </div>
             </div>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={() => load(filters)} disabled={refreshing || loading}>
+            <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={() => applyFilters()} disabled={refreshing || loading}>
               Apply Filters
             </Button>
             <Button
               variant="outline"
               onClick={() => {
-                const reset = { fromDate: defaultFrom, toDate: defaultTo, service: "", status: "all", q: "", take: 1000 };
+                const reset = { fromDate: defaultFrom, toDate: defaultTo, service: "", status: "all", q: "", page: 1, pageSize: 50 };
                 setFilters(reset);
                 load(reset);
               }}
@@ -368,17 +332,19 @@ export default function PlatformPurchaseReportPage() {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <CardTitle>Purchase ledger</CardTitle>
-              <CardDescription>Professional owner view of invoice-backed purchases with billing actions on each row.</CardDescription>
+              <CardDescription>Paged owner view of invoice-backed purchases with direct invoice view and resend actions.</CardDescription>
             </div>
             <div className="text-sm text-slate-500">
-              {loading ? "Loading report..." : `${rows.length.toLocaleString()} of ${Number(summary.totalPurchases || 0).toLocaleString()} rows shown`}
+              {loading
+                ? "Loading report..."
+                : `Page ${Number(report.page || 1).toLocaleString()} of ${Number(report.totalPages || 1).toLocaleString()} • ${Number(report.totalCount || 0).toLocaleString()} rows`}
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1480px] text-sm">
+              <table className="w-full min-w-[1360px] text-sm">
                 <thead className="bg-slate-50">
                   <tr>
                     {["S.No", "User", "Company", "GST No", "Purchase Date", "Service", "Amount", "GST", "Invoice Date", "Invoice", "Actions"].map((header) => (
@@ -419,13 +385,15 @@ export default function PlatformPurchaseReportPage() {
                             <Eye className="h-4 w-4" />
                             View
                           </Button>
-                          <Button variant="outline" size="sm" className="gap-1" onClick={() => openSendDialog(row)}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1"
+                            onClick={() => handleResendInvoice(row)}
+                            disabled={sendingInvoiceId === row.invoiceId}
+                          >
                             <Mail className="h-4 w-4" />
-                            Send
-                          </Button>
-                          <Button variant="outline" size="sm" className="gap-1" onClick={() => openEditDialog(row)}>
-                            <Pencil className="h-4 w-4" />
-                            Edit
+                            {sendingInvoiceId === row.invoiceId ? "Sending..." : "Resend"}
                           </Button>
                         </div>
                       </td>
@@ -442,83 +410,24 @@ export default function PlatformPurchaseReportPage() {
               </table>
             </div>
           </div>
-        </CardContent>
-      </Card>
 
-      <Dialog open={sendDialog.open} onOpenChange={(open) => setSendDialog((prev) => ({ ...prev, open }))}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Send Invoice</DialogTitle>
-            <DialogDescription>Deliver the selected invoice notification to the billing recipient or an override email address.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm font-semibold text-slate-900">{sendDialog.row?.invoiceNo || "-"}</p>
-              <p className="mt-1 text-sm text-slate-500">{sendDialog.row?.companyName || "-"}</p>
-            </div>
-            <div className="space-y-2">
-              <Label>Email Address</Label>
-              <Input value={sendDialog.email} onChange={(event) => setSendDialog((prev) => ({ ...prev, email: event.target.value }))} placeholder="billing@company.com" />
-            </div>
-            <div className="flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setSendDialog({ open: false, row: null, email: "" })}>Cancel</Button>
-              <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={submitSendInvoice} disabled={sendingInvoiceId === sendDialog.row?.invoiceId}>
-                {sendingInvoiceId === sendDialog.row?.invoiceId ? "Sending..." : "Send Invoice"}
+          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 md:flex-row md:items-center md:justify-between">
+            <p className="text-sm text-slate-600">
+              Showing page {Number(report.page || 1).toLocaleString()} of {Number(report.totalPages || 1).toLocaleString()} with {Number(report.totalCount || 0).toLocaleString()} total rows.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => changePage((report.page || 1) - 1)} disabled={!report.hasPreviousPage || refreshing}>
+                <ChevronLeft className="mr-1 h-4 w-4" />
+                Previous
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => changePage((report.page || 1) + 1)} disabled={!report.hasNextPage || refreshing}>
+                Next
+                <ChevronRight className="ml-1 h-4 w-4" />
               </Button>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={editDialog.open} onOpenChange={(open) => setEditDialog((prev) => ({ ...prev, open }))}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Edit Invoice</DialogTitle>
-            <DialogDescription>Adjust invoice metadata from the platform owner console without leaving the purchase report.</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Status</Label>
-              <Select value={editDialog.status} onValueChange={(value) => setEditDialog((prev) => ({ ...prev, status: value }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="issued">Issued</SelectItem>
-                  <SelectItem value="paid">Paid</SelectItem>
-                  <SelectItem value="refunded">Refunded</SelectItem>
-                  <SelectItem value="cancelled">Cancelled</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Reference No</Label>
-              <Input value={editDialog.referenceNo} onChange={(event) => setEditDialog((prev) => ({ ...prev, referenceNo: event.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label>Issued At</Label>
-              <Input type="datetime-local" value={editDialog.issuedAtUtc} onChange={(event) => setEditDialog((prev) => ({ ...prev, issuedAtUtc: event.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label>Paid At</Label>
-              <Input type="datetime-local" value={editDialog.paidAtUtc} onChange={(event) => setEditDialog((prev) => ({ ...prev, paidAtUtc: event.target.value }))} />
-            </div>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-900">{editDialog.row?.serviceName || "-"}</p>
-            <p className="mt-1 text-sm text-slate-500">{editDialog.row?.invoiceNo || "-"}</p>
-          </div>
-          <div className="flex justify-end gap-3">
-            <Button
-              variant="outline"
-              onClick={() => setEditDialog({ open: false, row: null, status: "issued", referenceNo: "", issuedAtUtc: "", paidAtUtc: "" })}
-            >
-              Cancel
-            </Button>
-            <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={submitInvoiceEdit} disabled={savingInvoiceId === editDialog.row?.invoiceId}>
-              {savingInvoiceId === editDialog.row?.invoiceId ? "Saving..." : "Save Changes"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+        </CardContent>
+      </Card>
     </div>
   );
 }

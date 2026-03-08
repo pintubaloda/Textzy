@@ -421,6 +421,7 @@ public class PaymentWebhookController(
                 BillingCycle = normalizedCycle,
                 TaxMode = plan.TaxMode,
                 ReferenceNo = attempt.OrderId,
+                Description = ResolveInvoiceDescription(plan.Name, normalizedCycle, plan.PricingModel),
                 PeriodStartUtc = periodStart,
                 PeriodEndUtc = periodEnd,
                 Subtotal = invoiceBreakdown.Subtotal,
@@ -442,6 +443,7 @@ public class PaymentWebhookController(
                 new Dictionary<string, string>
                 {
                     ["Invoice No"] = invoiceNo,
+                    ["Service"] = invoice.Description,
                     ["Subtotal"] = $"{invoiceBreakdown.Subtotal:0.00} {attempt.Currency}",
                     ["Tax"] = $"{invoiceBreakdown.TaxAmount:0.00} {attempt.Currency}",
                     ["Tax Rate"] = $"{taxRate:0.##}%",
@@ -493,6 +495,31 @@ public class PaymentWebhookController(
         return (Math.Clamp(profile.TaxRatePercent, 0m, 100m), profile.IsTaxExempt, profile.IsReverseCharge);
     }
 
+    private static string ResolveInvoiceDescription(string? planName, string? billingCycle, string? pricingModel)
+    {
+        var name = (planName ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            if (string.Equals(pricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
+                return $"{name} purchase";
+
+            if (name.Contains("authenticator", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("integration", StringComparison.OrdinalIgnoreCase))
+                return $"{name} purchase";
+
+            return $"{name} plan purchase";
+        }
+
+        return (billingCycle ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "yearly" => "Yearly subscription purchase",
+            "monthly" => "Monthly subscription purchase",
+            "lifetime" => "Lifetime plan purchase",
+            "usage_based" => "Usage pack purchase",
+            _ => "Platform service purchase"
+        };
+    }
+
     private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice)
     {
         var canonical = string.Join("|",
@@ -502,6 +529,7 @@ public class PaymentWebhookController(
             invoice.BillingCycle,
             invoice.TaxMode,
             invoice.ReferenceNo,
+            invoice.Description,
             invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
             invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
             invoice.Subtotal.ToString("0.00"),

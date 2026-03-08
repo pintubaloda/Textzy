@@ -3,7 +3,6 @@ using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Textzy.Api.Data;
-using Textzy.Api.Models;
 using Textzy.Api.Services;
 using static Textzy.Api.Services.PermissionCatalog;
 
@@ -16,7 +15,9 @@ public class PlatformPurchasesController(
     AuthContext auth,
     RbacService rbac,
     AuditLogService audit,
-    EmailService emailService) : ControllerBase
+    EmailService emailService,
+    SecretCryptoService crypto,
+    IConfiguration config) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Report(
@@ -25,200 +26,217 @@ public class PlatformPurchasesController(
         [FromQuery] string service = "",
         [FromQuery] string q = "",
         [FromQuery] string status = "",
-        [FromQuery] int take = 250,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
     {
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
 
-        var safeTake = Math.Clamp(take, 1, 1000);
         var normalizedService = (service ?? string.Empty).Trim().ToLowerInvariant();
         var normalizedQuery = (q ?? string.Empty).Trim().ToLowerInvariant();
         var normalizedStatus = (status ?? string.Empty).Trim().ToLowerInvariant();
+        var requestedPage = Math.Max(1, page);
+        var safePageSize = Math.Clamp(pageSize, 10, 200);
 
-        var invoiceQuery = db.BillingInvoices.AsNoTracking().AsQueryable();
+        var ownerMembershipQuery = db.TenantUsers.AsNoTracking()
+            .Select(x => new
+            {
+                x.TenantId,
+                x.UserId,
+                x.CreatedAtUtc,
+                RoleRank =
+                    (x.Role ?? string.Empty).ToLower() == "owner" ? 0 :
+                    (x.Role ?? string.Empty).ToLower() == "admin" ? 1 :
+                    (x.Role ?? string.Empty).ToLower() == "manager" ? 2 :
+                    (x.Role ?? string.Empty).ToLower() == "support" ? 3 :
+                    (x.Role ?? string.Empty).ToLower() == "marketing" ? 4 :
+                    (x.Role ?? string.Empty).ToLower() == "finance" ? 5 : 99
+            })
+            .GroupBy(x => x.TenantId)
+            .Select(g => g
+                .OrderBy(x => x.RoleRank)
+                .ThenBy(x => x.CreatedAtUtc)
+                .Select(x => new OwnerSql
+                {
+                    TenantId = x.TenantId,
+                    UserId = x.UserId
+                })
+                .First());
+
+        var latestAttemptQuery = db.BillingPaymentAttempts.AsNoTracking()
+            .GroupBy(x => new { x.TenantId, x.OrderId })
+            .Select(g => g
+                .OrderByDescending(x => x.PaidAtUtc ?? x.UpdatedAtUtc)
+                .Select(x => new LatestAttemptSql
+                {
+                    TenantId = x.TenantId,
+                    OrderId = x.OrderId,
+                    PlanId = x.PlanId,
+                    Currency = x.Currency
+                })
+                .First());
+
+        var latestSubscriptionQuery = db.TenantSubscriptions.AsNoTracking()
+            .GroupBy(x => x.TenantId)
+            .Select(g => g
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .Select(x => new LatestSubscriptionSql
+                {
+                    TenantId = x.TenantId,
+                    PlanId = x.PlanId
+                })
+                .First());
+
+        var baseQuery =
+            from invoice in db.BillingInvoices.AsNoTracking()
+            join tenant in db.Tenants.AsNoTracking() on invoice.TenantId equals tenant.Id
+            from profile in db.TenantCompanyProfiles.AsNoTracking().Where(x => x.TenantId == invoice.TenantId).DefaultIfEmpty()
+            from attempt in latestAttemptQuery.Where(x => x.TenantId == invoice.TenantId && x.OrderId == invoice.ReferenceNo).DefaultIfEmpty()
+            from subscription in latestSubscriptionQuery.Where(x => x.TenantId == invoice.TenantId).DefaultIfEmpty()
+            from attemptPlan in db.BillingPlans.AsNoTracking().Where(x => attempt != null && x.Id == attempt.PlanId).DefaultIfEmpty()
+            from subscriptionPlan in db.BillingPlans.AsNoTracking().Where(x => subscription != null && x.Id == subscription.PlanId).DefaultIfEmpty()
+            from ownerMembership in ownerMembershipQuery.Where(x => x.TenantId == invoice.TenantId).DefaultIfEmpty()
+            from owner in db.Users.AsNoTracking().Where(x => ownerMembership != null && x.Id == ownerMembership.UserId).DefaultIfEmpty()
+            select new PurchaseReportQueryRow
+            {
+                InvoiceId = invoice.Id,
+                TenantId = invoice.TenantId,
+                InvoiceNo = invoice.InvoiceNo,
+                InvoiceKind = invoice.InvoiceKind,
+                InvoiceStatus = invoice.Status,
+                UserName = owner != null && owner.FullName != string.Empty
+                    ? owner.FullName
+                    : owner != null
+                        ? owner.Email
+                        : profile != null && profile.BillingEmail != string.Empty
+                            ? profile.BillingEmail
+                            : "-",
+                UserEmail = owner != null
+                    ? owner.Email
+                    : profile != null
+                        ? profile.BillingEmail
+                        : string.Empty,
+                CompanyName = profile != null && profile.CompanyName != string.Empty
+                    ? profile.CompanyName
+                    : tenant.Name,
+                GstNo = profile != null ? profile.Gstin : string.Empty,
+                PurchaseDateUtc = invoice.PaidAtUtc ?? invoice.IssuedAtUtc,
+                InvoiceDateUtc = invoice.IssuedAtUtc,
+                ServiceCode = attemptPlan != null && attemptPlan.Code != string.Empty
+                    ? attemptPlan.Code
+                    : subscriptionPlan != null
+                        ? subscriptionPlan.Code
+                        : string.Empty,
+                ServiceName = invoice.Description != string.Empty
+                    ? invoice.Description
+                    : attemptPlan != null && attemptPlan.Name != string.Empty
+                    ? attemptPlan.Name
+                    : subscriptionPlan != null && subscriptionPlan.Name != string.Empty
+                        ? subscriptionPlan.Name
+                        : invoice.BillingCycle == "yearly"
+                            ? "Yearly Subscription"
+                            : invoice.BillingCycle == "monthly"
+                                ? "Monthly Subscription"
+                                : invoice.BillingCycle == "lifetime"
+                                    ? "Lifetime Subscription"
+                                    : invoice.BillingCycle == "usage_based"
+                                        ? "Usage Pack"
+                                        : "Platform Service",
+                BillingCycle = invoice.BillingCycle,
+                Amount = invoice.Subtotal,
+                GstAmount = invoice.TaxAmount,
+                TotalAmount = invoice.Total,
+                Currency = attempt != null && attempt.Currency != string.Empty ? attempt.Currency : "INR",
+                ReferenceNo = invoice.ReferenceNo,
+                BillingEmail = profile != null ? profile.BillingEmail : string.Empty,
+                PaidAtUtc = invoice.PaidAtUtc,
+                CreatedAtUtc = invoice.CreatedAtUtc
+            };
+
         if (fromUtc.HasValue)
         {
             var start = DateTime.SpecifyKind(fromUtc.Value, DateTimeKind.Utc);
-            invoiceQuery = invoiceQuery.Where(x => (x.PaidAtUtc ?? x.IssuedAtUtc) >= start);
+            baseQuery = baseQuery.Where(x => x.PurchaseDateUtc >= start);
         }
 
         if (toUtc.HasValue)
         {
             var end = DateTime.SpecifyKind(toUtc.Value, DateTimeKind.Utc);
-            invoiceQuery = invoiceQuery.Where(x => (x.PaidAtUtc ?? x.IssuedAtUtc) <= end);
+            baseQuery = baseQuery.Where(x => x.PurchaseDateUtc <= end);
         }
 
-        var invoices = await invoiceQuery
-            .OrderByDescending(x => x.PaidAtUtc ?? x.IssuedAtUtc)
-            .ToListAsync(ct);
-
-        var tenantIds = invoices.Select(x => x.TenantId).Distinct().ToList();
-        var referenceNos = invoices
-            .Select(x => (x.ReferenceNo ?? string.Empty).Trim())
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        var tenants = await db.Tenants.AsNoTracking()
-            .Where(x => tenantIds.Contains(x.Id))
-            .ToDictionaryAsync(x => x.Id, ct);
-        var profiles = await db.TenantCompanyProfiles.AsNoTracking()
-            .Where(x => tenantIds.Contains(x.TenantId))
-            .ToDictionaryAsync(x => x.TenantId, ct);
-        var attempts = await db.BillingPaymentAttempts.AsNoTracking()
-            .Where(x => referenceNos.Contains(x.OrderId))
-            .ToListAsync(ct);
-        var subscriptions = await db.TenantSubscriptions.AsNoTracking()
-            .Where(x => tenantIds.Contains(x.TenantId))
-            .ToListAsync(ct);
-        var memberships = await db.TenantUsers.AsNoTracking()
-            .Where(x => tenantIds.Contains(x.TenantId))
-            .ToListAsync(ct);
-        var userIds = memberships.Select(x => x.UserId).Distinct().ToList();
-        var users = await db.Users.AsNoTracking()
-            .Where(x => userIds.Contains(x.Id))
-            .ToDictionaryAsync(x => x.Id, ct);
-
-        var planIds = attempts.Select(x => x.PlanId)
-            .Concat(subscriptions.Select(x => x.PlanId))
-            .Distinct()
-            .ToList();
-        var plans = await db.BillingPlans.AsNoTracking()
-            .Where(x => planIds.Contains(x.Id))
-            .ToDictionaryAsync(x => x.Id, ct);
-
-        var attemptByOrderId = attempts
-            .GroupBy(x => x.OrderId, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                g => g.Key,
-                g => g.OrderByDescending(x => x.PaidAtUtc ?? x.UpdatedAtUtc).First(),
-                StringComparer.OrdinalIgnoreCase);
-
-        var latestSubscriptionByTenant = subscriptions
-            .GroupBy(x => x.TenantId)
-            .ToDictionary(
-                g => g.Key,
-                g => g.OrderByDescending(x => x.CreatedAtUtc).First());
-
-        var ownerByTenant = memberships
-            .GroupBy(x => x.TenantId)
-            .ToDictionary(
-                g => g.Key,
-                g =>
-                {
-                    var membership = g.OrderBy(x => RolePriority(x.Role)).ThenBy(x => x.CreatedAtUtc).FirstOrDefault();
-                    if (membership is null) return (User?)null;
-                    return users.TryGetValue(membership.UserId, out var user) ? user : (User?)null;
-                });
-
-        var rows = invoices.Select((invoice, index) =>
+        if (!string.IsNullOrWhiteSpace(normalizedStatus))
         {
-            tenants.TryGetValue(invoice.TenantId, out var tenant);
-            profiles.TryGetValue(invoice.TenantId, out var profile);
-            ownerByTenant.TryGetValue(invoice.TenantId, out var owner);
-            attemptByOrderId.TryGetValue((invoice.ReferenceNo ?? string.Empty).Trim(), out var attempt);
+            baseQuery = baseQuery.Where(x => (x.InvoiceStatus ?? string.Empty).ToLower() == normalizedStatus);
+        }
 
-            BillingPlan? plan = null;
-            if (attempt is not null && plans.TryGetValue(attempt.PlanId, out var attemptPlan))
-                plan = attemptPlan;
-            else if (latestSubscriptionByTenant.TryGetValue(invoice.TenantId, out var sub) && plans.TryGetValue(sub.PlanId, out var subPlan))
-                plan = subPlan;
-
-            var companyName = !string.IsNullOrWhiteSpace(profile?.CompanyName)
-                ? profile.CompanyName
-                : tenant?.Name ?? "Unknown Company";
-            var userName = !string.IsNullOrWhiteSpace(owner?.FullName)
-                ? owner.FullName
-                : owner?.Email ?? (profile?.BillingEmail ?? "-");
-            var userEmail = owner?.Email ?? profile?.BillingEmail ?? string.Empty;
-            var serviceName = ResolveServiceName(plan, invoice);
-            var serviceCode = (plan?.Code ?? string.Empty).Trim();
-            var purchaseDateUtc = invoice.PaidAtUtc ?? invoice.IssuedAtUtc;
-            var currency = string.IsNullOrWhiteSpace(attempt?.Currency) ? "INR" : attempt!.Currency.Trim().ToUpperInvariant();
-
-            return new PurchaseReportRow(
-                Index: index + 1,
-                InvoiceId: invoice.Id,
-                TenantId: invoice.TenantId,
-                InvoiceNo: invoice.InvoiceNo,
-                InvoiceKind: invoice.InvoiceKind,
-                InvoiceStatus: invoice.Status,
-                UserName: userName,
-                UserEmail: userEmail,
-                CompanyName: companyName,
-                GstNo: profile?.Gstin ?? string.Empty,
-                PurchaseDateUtc: purchaseDateUtc,
-                InvoiceDateUtc: invoice.IssuedAtUtc,
-                ServiceName: serviceName,
-                ServiceCode: serviceCode,
-                BillingCycle: invoice.BillingCycle,
-                Amount: invoice.Subtotal,
-                GstAmount: invoice.TaxAmount,
-                TotalAmount: invoice.Total,
-                Currency: currency,
-                ReferenceNo: invoice.ReferenceNo ?? string.Empty,
-                BillingEmail: profile?.BillingEmail ?? string.Empty,
-                PaidAtUtc: invoice.PaidAtUtc,
-                CreatedAtUtc: invoice.CreatedAtUtc);
-        });
-
-        var filtered = rows.Where(row =>
+        if (!string.IsNullOrWhiteSpace(normalizedQuery))
         {
-            if (!string.IsNullOrWhiteSpace(normalizedService))
-            {
-                var matchesService = string.Equals((row.ServiceCode ?? string.Empty).Trim(), normalizedService, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals((row.ServiceName ?? string.Empty).Trim(), normalizedService, StringComparison.OrdinalIgnoreCase);
-                if (!matchesService) return false;
-            }
+            baseQuery = baseQuery.Where(x =>
+                (x.InvoiceNo ?? string.Empty).ToLower().Contains(normalizedQuery) ||
+                (x.UserName ?? string.Empty).ToLower().Contains(normalizedQuery) ||
+                (x.UserEmail ?? string.Empty).ToLower().Contains(normalizedQuery) ||
+                (x.CompanyName ?? string.Empty).ToLower().Contains(normalizedQuery) ||
+                (x.GstNo ?? string.Empty).ToLower().Contains(normalizedQuery) ||
+                (x.ServiceName ?? string.Empty).ToLower().Contains(normalizedQuery) ||
+                (x.ServiceCode ?? string.Empty).ToLower().Contains(normalizedQuery) ||
+                (x.ReferenceNo ?? string.Empty).ToLower().Contains(normalizedQuery));
+        }
 
-            if (!string.IsNullOrWhiteSpace(normalizedStatus) &&
-                !string.Equals((row.InvoiceStatus ?? string.Empty).Trim(), normalizedStatus, StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            if (!string.IsNullOrWhiteSpace(normalizedQuery))
-            {
-                var haystack = string.Join(" ",
-                    row.InvoiceNo,
-                    row.UserName,
-                    row.UserEmail,
-                    row.CompanyName,
-                    row.GstNo,
-                    row.ServiceName,
-                    row.ServiceCode,
-                    row.ReferenceNo).ToLowerInvariant();
-                if (!haystack.Contains(normalizedQuery)) return false;
-            }
-
-            return true;
-        }).ToList();
-
-        var serviceOptions = filtered
+        var serviceOptions = await baseQuery
+            .Where(x => x.ServiceName != string.Empty)
             .Select(x => new { code = x.ServiceCode, name = x.ServiceName })
-            .Where(x => !string.IsNullOrWhiteSpace(x.name))
             .Distinct()
             .OrderBy(x => x.name)
-            .ToList();
+            .ToListAsync(ct);
 
-        var summary = new
+        if (!string.IsNullOrWhiteSpace(normalizedService))
         {
-            totalPurchases = filtered.Count(),
-            totalAmount = filtered.Sum(x => x.Amount),
-            totalGst = filtered.Sum(x => x.GstAmount),
-            totalInvoiceValue = filtered.Sum(x => x.TotalAmount),
-            uniqueCustomers = filtered.Select(x => x.TenantId).Distinct().Count(),
-            services = filtered.Select(x => x.ServiceName).Distinct(StringComparer.OrdinalIgnoreCase).Count()
-        };
+            baseQuery = baseQuery.Where(x =>
+                (x.ServiceCode ?? string.Empty).ToLower() == normalizedService ||
+                (x.ServiceName ?? string.Empty).ToLower() == normalizedService);
+        }
+
+        var totalPurchases = await baseQuery.CountAsync(ct);
+        var totalAmount = await baseQuery.Select(x => (decimal?)x.Amount).SumAsync(ct) ?? 0m;
+        var totalGst = await baseQuery.Select(x => (decimal?)x.GstAmount).SumAsync(ct) ?? 0m;
+        var totalInvoiceValue = await baseQuery.Select(x => (decimal?)x.TotalAmount).SumAsync(ct) ?? 0m;
+        var uniqueCustomers = await baseQuery.Select(x => x.TenantId).Distinct().CountAsync(ct);
+        var services = await baseQuery.Select(x => x.ServiceName).Distinct().CountAsync(ct);
+
+        var totalPages = Math.Max(1, (int)Math.Ceiling(totalPurchases / (double)safePageSize));
+        var safePage = Math.Min(requestedPage, totalPages);
+        var skip = (safePage - 1) * safePageSize;
+
+        var rows = await baseQuery
+            .OrderByDescending(x => x.PurchaseDateUtc)
+            .ThenByDescending(x => x.CreatedAtUtc)
+            .Skip(skip)
+            .Take(safePageSize)
+            .ToListAsync(ct);
 
         return Ok(new
         {
-            summary,
-            serviceOptions,
-            items = filtered.Take(safeTake).Select((row, idx) => new
+            summary = new
             {
-                sNo = idx + 1,
+                totalPurchases,
+                totalAmount,
+                totalGst,
+                totalInvoiceValue,
+                uniqueCustomers,
+                services
+            },
+            page = safePage,
+            pageSize = safePageSize,
+            totalCount = totalPurchases,
+            totalPages,
+            hasPreviousPage = safePage > 1,
+            hasNextPage = safePage < totalPages,
+            serviceOptions,
+            items = rows.Select((row, idx) => new
+            {
+                sNo = skip + idx + 1,
                 row.InvoiceId,
                 row.TenantId,
                 row.InvoiceNo,
@@ -258,14 +276,39 @@ public class PlatformPurchasesController(
         var profile = await db.TenantCompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == invoice.TenantId, ct);
         var companyName = string.IsNullOrWhiteSpace(profile?.CompanyName) ? (tenant?.Name ?? "Textzy Workspace") : profile!.CompanyName;
         var legalName = string.IsNullOrWhiteSpace(profile?.LegalName) ? companyName : profile!.LegalName;
-        var html = BuildInvoiceHtml(
+        var branding = await GetPlatformBrandingAsync(ct);
+        var verificationUrl = BuildPublicInvoiceVerificationUrl(invoice.Id, invoice.IntegrityHash, branding.Website);
+        var qrCodeUrl = BuildQrCodeUrl(verificationUrl);
+        var html = InvoiceDocumentRenderer.BuildInvoiceHtml(
             invoice,
-            companyName,
-            legalName,
-            profile?.BillingEmail ?? string.Empty,
-            profile?.Address ?? string.Empty,
-            profile?.Gstin ?? string.Empty,
-            profile?.Pan ?? string.Empty);
+            new InvoiceSellerProfile
+            {
+                PlatformName = branding.PlatformName,
+                LogoUrl = branding.LogoUrl,
+                LegalName = branding.LegalName,
+                Address = branding.Address,
+                Gstin = branding.Gstin,
+                Pan = branding.Pan,
+                Cin = branding.Cin,
+                BillingEmail = branding.BillingEmail,
+                BillingPhone = branding.BillingPhone,
+                Website = branding.Website,
+                InvoiceFooter = branding.InvoiceFooter
+            },
+            new InvoiceBuyerProfile
+            {
+                CompanyName = companyName,
+                LegalName = legalName,
+                BillingEmail = profile?.BillingEmail ?? string.Empty,
+                Address = profile?.Address ?? string.Empty,
+                Gstin = profile?.Gstin ?? string.Empty,
+                Pan = profile?.Pan ?? string.Empty
+            },
+            profile?.TaxRatePercent ?? 18m,
+            profile?.IsTaxExempt ?? false,
+            profile?.IsReverseCharge ?? false,
+            verificationUrl,
+            qrCodeUrl);
 
         return File(
             Encoding.UTF8.GetBytes(html),
@@ -274,7 +317,7 @@ public class PlatformPurchasesController(
     }
 
     [HttpPost("{invoiceId:guid}/send")]
-    public async Task<IActionResult> SendInvoice(Guid invoiceId, [FromBody] SendInvoiceRequest? request, CancellationToken ct = default)
+    public async Task<IActionResult> SendInvoice(Guid invoiceId, CancellationToken ct = default)
     {
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
@@ -284,7 +327,7 @@ public class PlatformPurchasesController(
 
         var tenant = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == invoice.TenantId, ct);
         var profile = await db.TenantCompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == invoice.TenantId, ct);
-        var recipient = await ResolveBillingRecipientAsync(invoice.TenantId, request?.Email, ct);
+        var recipient = await ResolveBillingRecipientAsync(invoice.TenantId, ct);
         if (string.IsNullOrWhiteSpace(recipient.email))
             return BadRequest("Billing recipient email is not configured.");
 
@@ -295,7 +338,9 @@ public class PlatformPurchasesController(
         var plan = attempt is null
             ? null
             : await db.BillingPlans.AsNoTracking().FirstOrDefaultAsync(x => x.Id == attempt.PlanId, ct);
-        var serviceName = ResolveServiceName(plan, invoice);
+        var serviceName = string.IsNullOrWhiteSpace(invoice.Description)
+            ? ResolveServiceName(plan?.Name, invoice.BillingCycle)
+            : invoice.Description.Trim();
         var currency = string.IsNullOrWhiteSpace(attempt?.Currency) ? "INR" : attempt!.Currency.Trim().ToUpperInvariant();
         var companyName = string.IsNullOrWhiteSpace(profile?.CompanyName) ? (tenant?.Name ?? "Textzy Workspace") : profile!.CompanyName;
 
@@ -304,7 +349,7 @@ public class PlatformPurchasesController(
             recipient.name,
             companyName,
             $"Invoice {invoice.InvoiceNo}",
-            "Your billing invoice is ready for review.",
+            "Your billing invoice has been resent for review.",
             new Dictionary<string, string>
             {
                 ["Invoice No"] = invoice.InvoiceNo,
@@ -317,69 +362,31 @@ public class PlatformPurchasesController(
             },
             ct);
 
-        await audit.WriteAsync("platform.purchase.invoice.sent", $"invoice={invoiceId}; tenant={invoice.TenantId}; email={recipient.email}", ct);
-        return Ok(new { sent = true, recipient = recipient.email, invoiceId });
+        await audit.WriteAsync("platform.purchase.invoice.resent", $"invoice={invoiceId}; tenant={invoice.TenantId}; email={recipient.email}", ct);
+        return Ok(new { sent = true, invoiceId });
     }
 
-    [HttpPut("{invoiceId:guid}")]
-    public async Task<IActionResult> UpdateInvoice(Guid invoiceId, [FromBody] UpdateInvoiceRequest request, CancellationToken ct = default)
+    private async Task<(string email, string name)> ResolveBillingRecipientAsync(Guid tenantId, CancellationToken ct)
     {
-        if (!auth.IsAuthenticated) return Unauthorized();
-        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
-
-        var invoice = await db.BillingInvoices.FirstOrDefaultAsync(x => x.Id == invoiceId, ct);
-        if (invoice is null) return NotFound("Invoice not found.");
-
-        if (!string.IsNullOrWhiteSpace(request.Status))
-        {
-            var normalizedStatus = request.Status.Trim().ToLowerInvariant();
-            if (normalizedStatus is not ("issued" or "paid" or "refunded" or "cancelled"))
-                return BadRequest("status must be issued, paid, refunded, or cancelled.");
-            invoice.Status = normalizedStatus;
-        }
-        invoice.ReferenceNo = string.IsNullOrWhiteSpace(request.ReferenceNo) ? invoice.ReferenceNo : request.ReferenceNo.Trim();
-        if (request.IssuedAtUtc.HasValue)
-            invoice.IssuedAtUtc = DateTime.SpecifyKind(request.IssuedAtUtc.Value, DateTimeKind.Utc);
-        invoice.PaidAtUtc = request.PaidAtUtc.HasValue
-            ? DateTime.SpecifyKind(request.PaidAtUtc.Value, DateTimeKind.Utc)
-            : null;
-        invoice.IntegrityHash = ComputeInvoiceIntegrityHash(invoice);
-
-        await db.SaveChangesAsync(ct);
-        await audit.WriteAsync("platform.purchase.invoice.updated", $"invoice={invoiceId}; status={invoice.Status}; reference={invoice.ReferenceNo}", ct);
-
-        return Ok(new
-        {
-            invoice.Id,
-            invoice.InvoiceNo,
-            invoice.Status,
-            invoice.ReferenceNo,
-            invoice.IssuedAtUtc,
-            invoice.PaidAtUtc,
-            invoice.IntegrityHash
-        });
-    }
-
-    private async Task<(string email, string name)> ResolveBillingRecipientAsync(Guid tenantId, string? overrideEmail, CancellationToken ct)
-    {
-        var trimmedOverride = (overrideEmail ?? string.Empty).Trim();
-        if (!string.IsNullOrWhiteSpace(trimmedOverride))
-            return (trimmedOverride, trimmedOverride);
-
         var profile = await db.TenantCompanyProfiles.AsNoTracking().FirstOrDefaultAsync(x => x.TenantId == tenantId, ct);
         if (!string.IsNullOrWhiteSpace(profile?.BillingEmail))
             return (profile.BillingEmail.Trim(), string.IsNullOrWhiteSpace(profile.CompanyName) ? profile.BillingEmail.Trim() : profile.CompanyName);
 
-        var ownerMemberships = await db.TenantUsers.AsNoTracking()
+        var ownerMembership = await db.TenantUsers.AsNoTracking()
             .Where(x => x.TenantId == tenantId)
-            .ToListAsync(ct);
-        var ownerMembership = ownerMemberships
-            .OrderBy(x => RolePriority(x.Role))
+            .OrderBy(x =>
+                (x.Role ?? string.Empty).ToLower() == "owner" ? 0 :
+                (x.Role ?? string.Empty).ToLower() == "admin" ? 1 :
+                (x.Role ?? string.Empty).ToLower() == "manager" ? 2 :
+                (x.Role ?? string.Empty).ToLower() == "support" ? 3 :
+                (x.Role ?? string.Empty).ToLower() == "marketing" ? 4 :
+                (x.Role ?? string.Empty).ToLower() == "finance" ? 5 : 99)
             .ThenBy(x => x.CreatedAtUtc)
-            .FirstOrDefault();
-        if (ownerMembership is not null)
+            .Select(x => (Guid?)x.UserId)
+            .FirstOrDefaultAsync(ct);
+        if (ownerMembership.HasValue)
         {
-            var owner = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == ownerMembership.UserId, ct);
+            var owner = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == ownerMembership.Value, ct);
             if (!string.IsNullOrWhiteSpace(owner?.Email))
                 return (owner.Email.Trim(), string.IsNullOrWhiteSpace(owner.FullName) ? owner.Email.Trim() : owner.FullName);
         }
@@ -390,10 +397,10 @@ public class PlatformPurchasesController(
         return (string.Empty, string.Empty);
     }
 
-    private static string ResolveServiceName(BillingPlan? plan, BillingInvoice invoice)
+    private static string ResolveServiceName(string? planName, string? billingCycle)
     {
-        if (!string.IsNullOrWhiteSpace(plan?.Name)) return plan.Name.Trim();
-        var cycle = string.IsNullOrWhiteSpace(invoice.BillingCycle) ? "purchase" : invoice.BillingCycle.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(planName)) return planName.Trim();
+        var cycle = (billingCycle ?? string.Empty).Trim().ToLowerInvariant();
         return cycle switch
         {
             "yearly" => "Yearly Subscription",
@@ -404,30 +411,121 @@ public class PlatformPurchasesController(
         };
     }
 
-    private static int RolePriority(string role)
-    {
-        var normalized = (role ?? string.Empty).Trim().ToLowerInvariant();
-        return normalized switch
-        {
-            "owner" => 0,
-            "admin" => 1,
-            "manager" => 2,
-            "support" => 3,
-            "marketing" => 4,
-            "finance" => 5,
-            _ => 99
-        };
-    }
-
     private static string FormatCurrency(decimal amount, string currency)
     {
         var code = string.IsNullOrWhiteSpace(currency) ? "INR" : currency.Trim().ToUpperInvariant();
         return $"{(code == "INR" ? "INR " : code + " ")}{amount:0.00}";
     }
 
-    private static string BuildInvoiceHtml(BillingInvoice invoice, string companyName, string legalName, string billingEmail, string billingAddress, string gstin, string pan)
+    private async Task<PlatformBrandingSnapshot> GetPlatformBrandingAsync(CancellationToken ct)
+    {
+        var rows = await db.PlatformSettings
+            .AsNoTracking()
+            .Where(x => x.Scope == "platform-branding")
+            .ToListAsync(ct);
+
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+            values[row.Key] = crypto.Decrypt(row.ValueEncrypted);
+
+        var platformName = (values.TryGetValue("platformName", out var pn) ? pn : "Textzy").Trim();
+        var legalName = (values.TryGetValue("legalName", out var ln) ? ln : platformName).Trim();
+        return new PlatformBrandingSnapshot
+        {
+            PlatformName = string.IsNullOrWhiteSpace(platformName) ? "Textzy" : platformName,
+            LogoUrl = ResolveLogoUrl(values.TryGetValue("logoUrl", out var logoUrl) ? logoUrl : string.Empty),
+            LegalName = string.IsNullOrWhiteSpace(legalName) ? (string.IsNullOrWhiteSpace(platformName) ? "Textzy" : platformName) : legalName,
+            Gstin = (values.TryGetValue("gstin", out var gst) ? gst : string.Empty).Trim(),
+            Pan = (values.TryGetValue("pan", out var sellerPan) ? sellerPan : string.Empty).Trim(),
+            Cin = (values.TryGetValue("cin", out var cin) ? cin : string.Empty).Trim(),
+            BillingEmail = (values.TryGetValue("billingEmail", out var email) ? email : string.Empty).Trim(),
+            BillingPhone = (values.TryGetValue("billingPhone", out var phone) ? phone : string.Empty).Trim(),
+            Website = (values.TryGetValue("website", out var website) ? website : string.Empty).Trim(),
+            Address = (values.TryGetValue("address", out var address) ? address : string.Empty).Trim(),
+            InvoiceFooter = (values.TryGetValue("invoiceFooter", out var footer) ? footer : string.Empty).Trim()
+        };
+    }
+
+    private string BuildPublicInvoiceVerificationUrl(Guid invoiceId, string integrityHash, string? brandingWebsite)
+    {
+        var baseUrl = NormalizeBaseUrl(config["PUBLIC_API_BASE_URL"])
+            ?? NormalizeBaseUrl(config["API_BASE_URL"])
+            ?? $"{Request.Scheme}://{Request.Host}";
+        return $"{baseUrl}/api/public/invoices/verify?invoiceId={Uri.EscapeDataString(invoiceId.ToString())}&hash={Uri.EscapeDataString(integrityHash ?? string.Empty)}";
+    }
+
+    private static string BuildQrCodeUrl(string verificationUrl)
+        => $"https://api.qrserver.com/v1/create-qr-code/?size=180x180&ecc=M&data={Uri.EscapeDataString(verificationUrl ?? string.Empty)}";
+
+    private static string? NormalizeBaseUrl(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var value = raw.Trim();
+        if (!value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            value = $"https://{value}";
+        }
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return null;
+        if (string.IsNullOrWhiteSpace(uri.Host)) return null;
+
+        var builder = new UriBuilder(uri)
+        {
+            Path = string.Empty,
+            Query = string.Empty,
+            Fragment = string.Empty
+        };
+        return builder.Uri.ToString().TrimEnd('/');
+    }
+
+    private static string ResolveLogoUrl(string? configuredUrl)
+    {
+        var explicitUrl = (configuredUrl ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(explicitUrl))
+            return explicitUrl;
+
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "Assets", "textzy-landing-logo.svg"),
+            Path.Combine(Directory.GetCurrentDirectory(), "Assets", "textzy-landing-logo.svg"),
+            Path.Combine(AppContext.BaseDirectory, "Assets", "textzy-logo-full.png"),
+            Path.Combine(Directory.GetCurrentDirectory(), "Assets", "textzy-logo-full.png")
+        };
+
+        foreach (var path in candidates)
+        {
+            if (!System.IO.File.Exists(path)) continue;
+            var mime = path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase) ? "image/svg+xml" : "image/png";
+            return $"data:{mime};base64,{Convert.ToBase64String(System.IO.File.ReadAllBytes(path))}";
+        }
+
+        return string.Empty;
+    }
+
+    private static string BuildInvoiceHtml(
+        Models.BillingInvoice invoice,
+        string companyName,
+        string legalName,
+        string billingEmail,
+        string billingAddress,
+        string gstin,
+        string pan,
+        PlatformBrandingSnapshot branding,
+        decimal taxRatePercent,
+        bool isTaxExempt,
+        bool isReverseCharge)
     {
         var safeInvoiceNo = WebUtility.HtmlEncode(invoice.InvoiceNo);
+        var safePlatformName = WebUtility.HtmlEncode(branding.PlatformName);
+        var safeSellerLegalName = WebUtility.HtmlEncode(branding.LegalName);
+        var safeSellerGstin = WebUtility.HtmlEncode(branding.Gstin);
+        var safeSellerPan = WebUtility.HtmlEncode(branding.Pan);
+        var safeSellerEmail = WebUtility.HtmlEncode(branding.BillingEmail);
+        var safeSellerPhone = WebUtility.HtmlEncode(branding.BillingPhone);
+        var safeSellerWebsite = WebUtility.HtmlEncode(branding.Website);
+        var safeSellerAddress = WebUtility.HtmlEncode(branding.Address);
+        var safeFooter = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(branding.InvoiceFooter) ? "This is a system-generated GST invoice." : branding.InvoiceFooter);
         var safeCompany = WebUtility.HtmlEncode(companyName);
         var safeLegalName = WebUtility.HtmlEncode(legalName);
         var safeEmail = WebUtility.HtmlEncode(billingEmail);
@@ -435,9 +533,22 @@ public class PlatformPurchasesController(
         var safeGstin = WebUtility.HtmlEncode(gstin);
         var safePan = WebUtility.HtmlEncode(pan);
         var safeReference = WebUtility.HtmlEncode(invoice.ReferenceNo);
+        var safeDescription = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(invoice.Description) ? "Platform service purchase" : invoice.Description);
         var invoiceLabel = string.Equals(invoice.InvoiceKind, "proforma_invoice", StringComparison.OrdinalIgnoreCase) ? "Proforma Invoice" : "Tax Invoice";
         var safeInvoiceLabel = WebUtility.HtmlEncode(invoiceLabel);
-        var safeTaxMode = WebUtility.HtmlEncode(string.Equals(invoice.TaxMode, "inclusive", StringComparison.OrdinalIgnoreCase) ? "incl. GST" : "+ GST");
+        var supplyLabel = isReverseCharge
+            ? "Reverse charge"
+            : isTaxExempt
+                ? "GST exempt"
+                : $"{Math.Clamp(taxRatePercent, 0m, 100m):0.##}% GST";
+        var taxLineLabel = isReverseCharge
+            ? "GST payable under reverse charge"
+            : isTaxExempt
+                ? "GST"
+                : $"GST @ {Math.Clamp(taxRatePercent, 0m, 100m):0.##}%";
+        var safeSupplyLabel = WebUtility.HtmlEncode(supplyLabel);
+        var safeTaxLineLabel = WebUtility.HtmlEncode(taxLineLabel);
+        var safeBillingCycle = WebUtility.HtmlEncode((invoice.BillingCycle ?? string.Empty).Replace("_", " "));
         return $$"""
             <!doctype html>
             <html lang="en">
@@ -445,136 +556,183 @@ public class PlatformPurchasesController(
               <meta charset="utf-8" />
               <title>{{safeInvoiceNo}}</title>
               <style>
-                body { font-family: Segoe UI, Arial, sans-serif; margin: 24px; color: #0f172a; }
-                .header { display:flex; justify-content:space-between; margin-bottom:16px; gap:16px; }
-                .brand { font-size:24px; font-weight:700; color:#f97316; }
-                .muted { color:#64748b; font-size:13px; }
-                .pill { display:inline-block; padding:6px 12px; border-radius:999px; background:#fff7ed; color:#c2410c; font-size:12px; font-weight:700; }
+                body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #f8fafc; color: #0f172a; }
+                .page { max-width: 1040px; margin: 24px auto; background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06); }
+                .band { height: 10px; background: linear-gradient(90deg, #ea580c 0%, #fb923c 100%); }
+                .wrap { padding: 28px 32px; }
+                .header { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; }
+                .brand { font-size:28px; font-weight:800; color:#c2410c; letter-spacing:0.02em; }
+                .label { display:inline-flex; padding:8px 14px; border-radius:999px; background:#fff7ed; color:#c2410c; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; }
+                .muted { color:#64748b; font-size:13px; line-height:1.55; }
+                .title { margin-top:10px; font-size:14px; font-weight:700; color:#0f172a; text-transform:uppercase; letter-spacing:0.08em; }
+                .meta { margin-top:14px; display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px 24px; font-size:14px; }
+                .meta .key { color:#64748b; }
+                .section { margin-top:24px; }
+                .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+                .panel { border:1px solid #e2e8f0; background:#f8fafc; border-radius:18px; padding:18px; min-height:170px; }
+                .panel h3 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:0.08em; color:#475569; }
+                .panel strong { display:block; font-size:18px; margin-bottom:4px; color:#0f172a; }
                 table { width:100%; border-collapse:collapse; margin-top:18px; }
-                th, td { border:1px solid #e2e8f0; padding:10px; text-align:left; }
-                th { background:#f8fafc; }
+                th, td { border:1px solid #cbd5e1; padding:12px 14px; text-align:left; vertical-align:top; }
+                th { background:#eff6ff; font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:#334155; }
                 .right { text-align:right; }
+                .summary td { background:#fff7ed; font-weight:600; }
+                .total td { background:#0f172a; color:#ffffff; font-size:16px; font-weight:700; }
+                .foot { margin-top:18px; display:flex; justify-content:space-between; gap:24px; font-size:12px; color:#64748b; }
               </style>
             </head>
             <body>
-              <div class="header">
-                <div>
-                  <div class="brand">Textzy</div>
-                  <p class="muted">Platform billing document</p>
-                </div>
-                <div style="text-align:right;">
-                  <span class="pill">{{safeInvoiceLabel}}</span>
-                  <p class="muted" style="margin-top:12px;">Invoice No: <strong>{{safeInvoiceNo}}</strong></p>
-                  <p class="muted">Reference: <strong>{{safeReference}}</strong></p>
-                  <p class="muted">Issued: <strong>{{invoice.IssuedAtUtc:yyyy-MM-dd}}</strong></p>
+              <div class="page">
+                <div class="band"></div>
+                <div class="wrap">
+                  <div class="header">
+                    <div>
+                      <div class="brand">{{safePlatformName}}</div>
+                      <div class="title">{{safeInvoiceLabel}}</div>
+                      <div class="muted">{{safeSellerLegalName}}</div>
+                    </div>
+                    <div class="right">
+                      <div class="label">{{safeInvoiceLabel}}</div>
+                      <div class="meta" style="margin-top:16px;">
+                        <div><span class="key">Invoice No</span><br /><strong style="display:inline; font-size:16px;">{{safeInvoiceNo}}</strong></div>
+                        <div><span class="key">Invoice Date</span><br />{{invoice.IssuedAtUtc:yyyy-MM-dd}}</div>
+                        <div><span class="key">Status</span><br />{{invoice.Status}}</div>
+                        <div><span class="key">Paid Date</span><br />{{(invoice.PaidAtUtc ?? invoice.IssuedAtUtc):yyyy-MM-dd}}</div>
+                        <div><span class="key">Reference</span><br />{{(string.IsNullOrWhiteSpace(invoice.ReferenceNo) ? "-" : safeReference)}}</div>
+                        <div><span class="key">Supply Type</span><br />{{safeSupplyLabel}}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="section grid">
+                    <div class="panel">
+                      <h3>Supplier</h3>
+                      <strong>{{safeSellerLegalName}}</strong>
+                      <div class="muted">{{safeSellerAddress}}</div>
+                      <div class="muted">GSTIN: {{(string.IsNullOrWhiteSpace(branding.Gstin) ? "-" : safeSellerGstin)}}</div>
+                      <div class="muted">PAN: {{(string.IsNullOrWhiteSpace(branding.Pan) ? "-" : safeSellerPan)}}</div>
+                      <div class="muted">Email: {{(string.IsNullOrWhiteSpace(branding.BillingEmail) ? "-" : safeSellerEmail)}}</div>
+                      <div class="muted">Phone: {{(string.IsNullOrWhiteSpace(branding.BillingPhone) ? "-" : safeSellerPhone)}}</div>
+                      <div class="muted">Website: {{(string.IsNullOrWhiteSpace(branding.Website) ? "-" : safeSellerWebsite)}}</div>
+                    </div>
+                    <div class="panel">
+                      <h3>Bill To</h3>
+                      <strong>{{safeCompany}}</strong>
+                      <div class="muted">{{safeLegalName}}</div>
+                      <div class="muted">{{safeAddress}}</div>
+                      <div class="muted">GSTIN: {{(string.IsNullOrWhiteSpace(gstin) ? "-" : safeGstin)}}</div>
+                      <div class="muted">PAN: {{(string.IsNullOrWhiteSpace(pan) ? "-" : safePan)}}</div>
+                      <div class="muted">Billing Email: {{(string.IsNullOrWhiteSpace(billingEmail) ? "-" : safeEmail)}}</div>
+                      <div class="muted">Service Period: {{invoice.PeriodStartUtc:yyyy-MM-dd}} to {{invoice.PeriodEndUtc:yyyy-MM-dd}}</div>
+                      <div class="muted">Billing Cycle: {{safeBillingCycle}}</div>
+                    </div>
+                  </div>
+                  <div class="section">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style="width:72px;">S. No.</th>
+                          <th>Description of Service</th>
+                          <th style="width:140px;">HSN/SAC</th>
+                          <th style="width:160px;" class="right">Taxable Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>1</td>
+                          <td>
+                            <strong style="display:block; font-size:15px; margin:0; color:#0f172a;">{{safeDescription}}</strong>
+                            <span class="muted">Reference: {{(string.IsNullOrWhiteSpace(invoice.ReferenceNo) ? "-" : safeReference)}} | Cycle: {{safeBillingCycle}}</span>
+                          </td>
+                          <td>998314</td>
+                          <td class="right">{{invoice.Subtotal:0.00}}</td>
+                        </tr>
+                        <tr class="summary">
+                          <td colspan="3">{{safeTaxLineLabel}}</td>
+                          <td class="right">{{invoice.TaxAmount:0.00}}</td>
+                        </tr>
+                        <tr class="total">
+                          <td colspan="3">Invoice Total</td>
+                          <td class="right">{{invoice.Total:0.00}}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="foot">
+                    <div>
+                      <div><strong>Notes</strong></div>
+                      <div>{{safeFooter}}</div>
+                    </div>
+                    <div class="right">
+                      <div><strong>System generated document</strong></div>
+                      <div>Integrity: {{invoice.IntegrityAlgo}} / {{invoice.IntegrityHash}}</div>
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              <table>
-                <tr>
-                  <th>Bill To</th>
-                  <th>Invoice Summary</th>
-                </tr>
-                <tr>
-                  <td>
-                    <strong>{{safeCompany}}</strong><br />
-                    {{safeLegalName}}<br />
-                    {{safeAddress}}<br />
-                    GSTIN: {{safeGstin}}<br />
-                    PAN: {{safePan}}<br />
-                    {{safeEmail}}
-                  </td>
-                  <td>
-                    Type: {{safeInvoiceLabel}}<br />
-                    Billing cycle: {{WebUtility.HtmlEncode(invoice.BillingCycle)}}<br />
-                    Tax mode: {{safeTaxMode}}<br />
-                    Status: {{WebUtility.HtmlEncode(invoice.Status)}}<br />
-                    Paid at: {{(invoice.PaidAtUtc?.ToString("yyyy-MM-dd") ?? "-")}}
-                  </td>
-                </tr>
-              </table>
-
-              <table>
-                <tr>
-                  <th>Description</th>
-                  <th class="right">Amount</th>
-                </tr>
-                <tr>
-                  <td>Platform subscription / purchase</td>
-                  <td class="right">{{invoice.Subtotal:0.00}}</td>
-                </tr>
-                <tr>
-                  <td>GST</td>
-                  <td class="right">{{invoice.TaxAmount:0.00}}</td>
-                </tr>
-                <tr>
-                  <th>Total</th>
-                  <th class="right">{{invoice.Total:0.00}}</th>
-                </tr>
-              </table>
             </body>
             </html>
             """;
     }
 
-    private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice)
+    private sealed class PlatformBrandingSnapshot
     {
-        var basis = string.Join("|",
-            invoice.InvoiceNo,
-            invoice.TenantId.ToString("D"),
-            invoice.InvoiceKind,
-            invoice.BillingCycle,
-            invoice.TaxMode,
-            invoice.ReferenceNo,
-            invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
-            invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
-            invoice.Subtotal.ToString("0.00"),
-            invoice.TaxAmount.ToString("0.00"),
-            invoice.Total.ToString("0.00"),
-            (invoice.PaidAtUtc ?? DateTime.MinValue).ToUniversalTime().ToString("O"),
-            invoice.Status,
-            invoice.IssuedAtUtc.ToUniversalTime().ToString("O"));
-
-        var bytes = Encoding.UTF8.GetBytes(basis);
-        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
-        return hash;
+        public string PlatformName { get; init; } = "Textzy";
+        public string LogoUrl { get; init; } = string.Empty;
+        public string LegalName { get; init; } = "Textzy";
+        public string Gstin { get; init; } = string.Empty;
+        public string Pan { get; init; } = string.Empty;
+        public string Cin { get; init; } = string.Empty;
+        public string BillingEmail { get; init; } = string.Empty;
+        public string BillingPhone { get; init; } = string.Empty;
+        public string Website { get; init; } = string.Empty;
+        public string Address { get; init; } = string.Empty;
+        public string InvoiceFooter { get; init; } = string.Empty;
     }
 
-    private sealed record PurchaseReportRow(
-        int Index,
-        Guid InvoiceId,
-        Guid TenantId,
-        string InvoiceNo,
-        string InvoiceKind,
-        string InvoiceStatus,
-        string UserName,
-        string UserEmail,
-        string CompanyName,
-        string GstNo,
-        DateTime PurchaseDateUtc,
-        DateTime InvoiceDateUtc,
-        string ServiceName,
-        string ServiceCode,
-        string BillingCycle,
-        decimal Amount,
-        decimal GstAmount,
-        decimal TotalAmount,
-        string Currency,
-        string ReferenceNo,
-        string BillingEmail,
-        DateTime? PaidAtUtc,
-        DateTime CreatedAtUtc);
-
-    public sealed class SendInvoiceRequest
+    private sealed class LatestAttemptSql
     {
-        public string Email { get; set; } = string.Empty;
+        public Guid TenantId { get; init; }
+        public string OrderId { get; init; } = string.Empty;
+        public Guid PlanId { get; init; }
+        public string Currency { get; init; } = "INR";
     }
 
-    public sealed class UpdateInvoiceRequest
+    private sealed class LatestSubscriptionSql
     {
-        public string Status { get; set; } = string.Empty;
-        public string ReferenceNo { get; set; } = string.Empty;
-        public DateTime? IssuedAtUtc { get; set; }
-        public DateTime? PaidAtUtc { get; set; }
+        public Guid TenantId { get; init; }
+        public Guid PlanId { get; init; }
+    }
+
+    private sealed class OwnerSql
+    {
+        public Guid TenantId { get; init; }
+        public Guid UserId { get; init; }
+    }
+
+    private sealed class PurchaseReportQueryRow
+    {
+        public Guid InvoiceId { get; init; }
+        public Guid TenantId { get; init; }
+        public string InvoiceNo { get; init; } = string.Empty;
+        public string InvoiceKind { get; init; } = string.Empty;
+        public string InvoiceStatus { get; init; } = string.Empty;
+        public string UserName { get; init; } = string.Empty;
+        public string UserEmail { get; init; } = string.Empty;
+        public string CompanyName { get; init; } = string.Empty;
+        public string GstNo { get; init; } = string.Empty;
+        public DateTime PurchaseDateUtc { get; init; }
+        public DateTime InvoiceDateUtc { get; init; }
+        public string ServiceName { get; init; } = string.Empty;
+        public string ServiceCode { get; init; } = string.Empty;
+        public string BillingCycle { get; init; } = string.Empty;
+        public decimal Amount { get; init; }
+        public decimal GstAmount { get; init; }
+        public decimal TotalAmount { get; init; }
+        public string Currency { get; init; } = "INR";
+        public string ReferenceNo { get; init; } = string.Empty;
+        public string BillingEmail { get; init; } = string.Empty;
+        public DateTime? PaidAtUtc { get; init; }
+        public DateTime CreatedAtUtc { get; init; }
     }
 }
+

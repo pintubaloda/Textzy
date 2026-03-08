@@ -632,6 +632,7 @@ const BillingPage = () => {
               <TableRow>
                 <TableHead>Invoice</TableHead>
                 <TableHead>Date</TableHead>
+                <TableHead>Service</TableHead>
                 <TableHead>Amount</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -642,6 +643,7 @@ const BillingPage = () => {
                 <TableRow key={invoice.id || invoice.invoiceNo}>
                   <TableCell className="font-medium">{invoice.invoiceNo || invoice.id}</TableCell>
                   <TableCell className="text-slate-600">{invoice.createdAtUtc ? new Date(invoice.createdAtUtc).toLocaleDateString() : "-"}</TableCell>
+                  <TableCell className="text-slate-600">{invoice.description || invoice.billingCycle || "-"}</TableCell>
                   <TableCell className="text-slate-900">â‚¹{Number(invoice.total || 0).toLocaleString()}</TableCell>
                   <TableCell>
                     <Badge className="bg-green-100 text-green-700 hover:bg-green-100">

@@ -1145,7 +1145,8 @@ export async function updatePlatformBillingPlan(id, payload) {
 export async function getPlatformCustomers(q = '') {
   const qs = new URLSearchParams()
   if (q) qs.set('q', q)
-  return apiGet(`/api/platform/customers${qs.toString() ? `?${qs.toString()}` : ''}`)
+  const data = await apiGet(`/api/platform/customers${qs.toString() ? `?${qs.toString()}` : ''}`)
+  return Array.isArray(data) ? data : (data?.items || [])
 }
 
 export async function getPlatformUsers(q = '') {
@@ -1211,7 +1212,8 @@ export async function getPlatformPurchaseReport(filters = {}) {
   if (filters.service) qs.set('service', filters.service)
   if (filters.q) qs.set('q', filters.q)
   if (filters.status) qs.set('status', filters.status)
-  if (filters.take) qs.set('take', String(filters.take))
+  if (filters.page) qs.set('page', String(filters.page))
+  if (filters.pageSize) qs.set('pageSize', String(filters.pageSize))
   return apiGet(`/api/platform/purchases${qs.toString() ? `?${qs.toString()}` : ''}`)
 }
 
@@ -1219,12 +1221,8 @@ export async function viewPlatformPurchaseInvoice(invoiceId) {
   return apiGetBlob(`/api/platform/purchases/${encodeURIComponent(invoiceId)}/view`)
 }
 
-export async function sendPlatformPurchaseInvoice(invoiceId, payload = {}) {
-  return apiPost(`/api/platform/purchases/${encodeURIComponent(invoiceId)}/send`, payload)
-}
-
-export async function updatePlatformPurchaseInvoice(invoiceId, payload = {}) {
-  return apiPut(`/api/platform/purchases/${encodeURIComponent(invoiceId)}`, payload)
+export async function sendPlatformPurchaseInvoice(invoiceId) {
+  return apiPost(`/api/platform/purchases/${encodeURIComponent(invoiceId)}/send`, {})
 }
 
 export async function archivePlatformBillingPlan(id) {

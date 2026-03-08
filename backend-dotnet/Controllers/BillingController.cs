@@ -239,7 +239,12 @@ public class BillingController(
     {
         if (!auth.IsAuthenticated || !tenancy.IsSet) return Unauthorized();
         if (!rbac.HasPermission(BillingRead)) return Forbid();
-        var rows = await db.BillingInvoices.Where(x => x.TenantId == tenancy.TenantId).OrderByDescending(x => x.CreatedAtUtc).Take(50).ToListAsync(ct);
+        var rows = await db.BillingInvoices
+            .Where(x => x.TenantId == tenancy.TenantId)
+            .OrderByDescending(x => x.PaidAtUtc ?? x.IssuedAtUtc)
+            .ThenByDescending(x => x.CreatedAtUtc)
+            .Take(200)
+            .ToListAsync(ct);
         return Ok(rows.Select(x => new
         {
             x.Id,
@@ -248,6 +253,7 @@ public class BillingController(
             x.BillingCycle,
             x.TaxMode,
             x.ReferenceNo,
+            x.Description,
             x.PeriodStartUtc,
             x.PeriodEndUtc,
             x.Subtotal,
@@ -280,8 +286,39 @@ public class BillingController(
         var billingAddress = profile?.Address ?? string.Empty;
         var gstin = profile?.Gstin ?? string.Empty;
         var pan = profile?.Pan ?? string.Empty;
-
-        var html = BuildInvoiceHtml(inv, companyName, legalName, billingEmail, billingAddress, gstin, pan);
+        var branding = await GetPlatformBrandingAsync(ct);
+        var verificationUrl = BuildPublicInvoiceVerificationUrl(inv.Id, inv.IntegrityHash, branding.Website);
+        var qrCodeUrl = BuildQrCodeUrl(verificationUrl);
+        var html = InvoiceDocumentRenderer.BuildInvoiceHtml(
+            inv,
+            new InvoiceSellerProfile
+            {
+                PlatformName = branding.PlatformName,
+                LogoUrl = branding.LogoUrl,
+                LegalName = branding.LegalName,
+                Address = branding.Address,
+                Gstin = branding.Gstin,
+                Pan = branding.Pan,
+                Cin = branding.Cin,
+                BillingEmail = branding.BillingEmail,
+                BillingPhone = branding.BillingPhone,
+                Website = branding.Website,
+                InvoiceFooter = branding.InvoiceFooter
+            },
+            new InvoiceBuyerProfile
+            {
+                CompanyName = companyName,
+                LegalName = legalName,
+                BillingEmail = billingEmail,
+                Address = billingAddress,
+                Gstin = gstin,
+                Pan = pan
+            },
+            profile?.TaxRatePercent ?? 18m,
+            profile?.IsTaxExempt ?? false,
+            profile?.IsReverseCharge ?? false,
+            verificationUrl,
+            qrCodeUrl);
         var bytes = Encoding.UTF8.GetBytes(html);
         var filename = $"{(string.IsNullOrWhiteSpace(inv.InvoiceNo) ? inv.Id.ToString("N") : inv.InvoiceNo)}.html";
         return File(bytes, "text/html; charset=utf-8", filename);
@@ -297,7 +334,9 @@ public class BillingController(
         if (inv is null) return NotFound("Invoice not found.");
 
         var expected = ComputeInvoiceIntegrityHash(inv);
-        var valid = string.Equals(expected, inv.IntegrityHash, StringComparison.OrdinalIgnoreCase);
+        var legacyExpected = ComputeInvoiceIntegrityHashLegacy(inv);
+        var valid = string.Equals(expected, inv.IntegrityHash, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(legacyExpected, inv.IntegrityHash, StringComparison.OrdinalIgnoreCase);
         return Ok(new
         {
             invoiceId = inv.Id,
@@ -305,6 +344,7 @@ public class BillingController(
             integrityAlgo = inv.IntegrityAlgo,
             integrityHash = inv.IntegrityHash,
             expectedHash = expected,
+            legacyExpectedHash = legacyExpected,
             valid
         });
     }
@@ -321,11 +361,12 @@ public class BillingController(
             .ToListAsync(ct);
 
         var sb = new StringBuilder();
-        sb.AppendLine("InvoiceNo,PeriodStartUtc,PeriodEndUtc,Subtotal,TaxAmount,Total,Status,PaidAtUtc,CreatedAtUtc");
+        sb.AppendLine("InvoiceNo,Description,PeriodStartUtc,PeriodEndUtc,Subtotal,TaxAmount,Total,Status,PaidAtUtc,CreatedAtUtc");
         foreach (var x in rows)
         {
             sb.AppendLine(string.Join(",",
                 Csv(x.InvoiceNo),
+                Csv(x.Description),
                 Csv(x.PeriodStartUtc.ToString("O")),
                 Csv(x.PeriodEndUtc.ToString("O")),
                 Csv(x.Subtotal.ToString("0.00")),
@@ -883,6 +924,7 @@ public class BillingController(
         existing.TaxMode = plan.TaxMode;
         existing.BillingCycle = billingCycle;
         existing.ReferenceNo = orderId;
+        existing.Description = ResolveInvoiceDescription(plan.Name, billingCycle, plan.PricingModel);
         existing.IntegrityHash = ComputeInvoiceIntegrityHash(existing);
     }
 
@@ -945,6 +987,30 @@ public class BillingController(
     }
 
     private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice)
+    {
+        var canonical = string.Join("|",
+            invoice.InvoiceNo,
+            invoice.TenantId.ToString("D"),
+            invoice.InvoiceKind,
+            invoice.BillingCycle,
+            invoice.TaxMode,
+            invoice.ReferenceNo,
+            invoice.Description,
+            invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
+            invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
+            invoice.Subtotal.ToString("0.00"),
+            invoice.TaxAmount.ToString("0.00"),
+            invoice.Total.ToString("0.00"),
+            (invoice.PaidAtUtc ?? DateTime.MinValue).ToUniversalTime().ToString("O"),
+            invoice.Status,
+            invoice.IssuedAtUtc.ToUniversalTime().ToString("O"));
+
+        var bytes = Encoding.UTF8.GetBytes(canonical);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string ComputeInvoiceIntegrityHashLegacy(BillingInvoice invoice)
     {
         var canonical = string.Join("|",
             invoice.InvoiceNo,
@@ -1089,6 +1155,7 @@ public class BillingController(
                 BillingCycle = billingCycle,
                 TaxMode = plan.TaxMode,
                 ReferenceNo = attempt.OrderId,
+                Description = ResolveInvoiceDescription(plan.Name, billingCycle, plan.PricingModel),
                 PeriodStartUtc = periodStart,
                 PeriodEndUtc = periodEnd,
                 Subtotal = invoiceBreakdown.Subtotal,
@@ -1110,6 +1177,7 @@ public class BillingController(
                 new Dictionary<string, string>
                 {
                     ["Invoice No"] = invoiceNo,
+                    ["Service"] = invoice.Description,
                     ["Period"] = $"{periodStart:yyyy-MM-dd} to {periodEnd:yyyy-MM-dd}",
                     ["Subtotal"] = FormatCurrency(invoiceBreakdown.Subtotal, attempt.Currency),
                     ["Tax"] = FormatCurrency(invoiceBreakdown.TaxAmount, attempt.Currency),
@@ -1200,15 +1268,146 @@ public class BillingController(
         return $"{(code == "INR" ? "INR " : code + " ")}{amount:0.00}";
     }
 
+    private static string ResolveInvoiceDescription(string? planName, string? billingCycle, string? pricingModel)
+    {
+        var name = (planName ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            if (string.Equals(pricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
+                return $"{name} purchase";
+
+            if (name.Contains("authenticator", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("integration", StringComparison.OrdinalIgnoreCase))
+                return $"{name} purchase";
+
+            return $"{name} plan purchase";
+        }
+
+        return (billingCycle ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "yearly" => "Yearly subscription purchase",
+            "monthly" => "Monthly subscription purchase",
+            "lifetime" => "Lifetime plan purchase",
+            "usage_based" => "Usage pack purchase",
+            _ => "Platform service purchase"
+        };
+    }
+
     private static string Csv(string value)
     {
         var v = (value ?? string.Empty).Replace("\"", "\"\"");
         return $"\"{v}\"";
     }
 
-    private static string BuildInvoiceHtml(BillingInvoice inv, string companyName, string legalName, string billingEmail, string billingAddress, string gstin, string pan)
+    private async Task<PlatformBrandingSnapshot> GetPlatformBrandingAsync(CancellationToken ct)
+    {
+        var rows = await db.PlatformSettings
+            .AsNoTracking()
+            .Where(x => x.Scope == "platform-branding")
+            .ToListAsync(ct);
+
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+            values[row.Key] = crypto.Decrypt(row.ValueEncrypted);
+
+        var platformName = (values.TryGetValue("platformName", out var pn) ? pn : "Textzy").Trim();
+        var legalName = (values.TryGetValue("legalName", out var ln) ? ln : platformName).Trim();
+        return new PlatformBrandingSnapshot
+        {
+            PlatformName = string.IsNullOrWhiteSpace(platformName) ? "Textzy" : platformName,
+            LogoUrl = ResolveLogoUrl(values.TryGetValue("logoUrl", out var logoUrl) ? logoUrl : string.Empty),
+            LegalName = string.IsNullOrWhiteSpace(legalName) ? (string.IsNullOrWhiteSpace(platformName) ? "Textzy" : platformName) : legalName,
+            Gstin = (values.TryGetValue("gstin", out var gst) ? gst : string.Empty).Trim(),
+            Pan = (values.TryGetValue("pan", out var sellerPan) ? sellerPan : string.Empty).Trim(),
+            Cin = (values.TryGetValue("cin", out var cin) ? cin : string.Empty).Trim(),
+            BillingEmail = (values.TryGetValue("billingEmail", out var email) ? email : string.Empty).Trim(),
+            BillingPhone = (values.TryGetValue("billingPhone", out var phone) ? phone : string.Empty).Trim(),
+            Website = (values.TryGetValue("website", out var website) ? website : string.Empty).Trim(),
+            Address = (values.TryGetValue("address", out var address) ? address : string.Empty).Trim(),
+            InvoiceFooter = (values.TryGetValue("invoiceFooter", out var footer) ? footer : string.Empty).Trim()
+        };
+    }
+
+    private string BuildPublicInvoiceVerificationUrl(Guid invoiceId, string integrityHash, string? brandingWebsite)
+    {
+        var baseUrl = NormalizeBaseUrl(config["PUBLIC_API_BASE_URL"])
+            ?? NormalizeBaseUrl(config["API_BASE_URL"])
+            ?? $"{Request.Scheme}://{Request.Host}";
+        return $"{baseUrl}/api/public/invoices/verify?invoiceId={Uri.EscapeDataString(invoiceId.ToString())}&hash={Uri.EscapeDataString(integrityHash ?? string.Empty)}";
+    }
+
+    private static string BuildQrCodeUrl(string verificationUrl)
+        => $"https://api.qrserver.com/v1/create-qr-code/?size=180x180&ecc=M&data={Uri.EscapeDataString(verificationUrl ?? string.Empty)}";
+
+    private static string? NormalizeBaseUrl(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var value = raw.Trim();
+        if (!value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            value = $"https://{value}";
+        }
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return null;
+        if (string.IsNullOrWhiteSpace(uri.Host)) return null;
+
+        var builder = new UriBuilder(uri)
+        {
+            Path = string.Empty,
+            Query = string.Empty,
+            Fragment = string.Empty
+        };
+        return builder.Uri.ToString().TrimEnd('/');
+    }
+
+    private static string ResolveLogoUrl(string? configuredUrl)
+    {
+        var explicitUrl = (configuredUrl ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(explicitUrl))
+            return explicitUrl;
+
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "Assets", "textzy-landing-logo.svg"),
+            Path.Combine(Directory.GetCurrentDirectory(), "Assets", "textzy-landing-logo.svg"),
+            Path.Combine(AppContext.BaseDirectory, "Assets", "textzy-logo-full.png"),
+            Path.Combine(Directory.GetCurrentDirectory(), "Assets", "textzy-logo-full.png")
+        };
+
+        foreach (var path in candidates)
+        {
+            if (!System.IO.File.Exists(path)) continue;
+            var mime = path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase) ? "image/svg+xml" : "image/png";
+            return $"data:{mime};base64,{Convert.ToBase64String(System.IO.File.ReadAllBytes(path))}";
+        }
+
+        return string.Empty;
+    }
+
+    private static string BuildInvoiceHtml(
+        BillingInvoice inv,
+        string companyName,
+        string legalName,
+        string billingEmail,
+        string billingAddress,
+        string gstin,
+        string pan,
+        PlatformBrandingSnapshot branding,
+        decimal taxRatePercent,
+        bool isTaxExempt,
+        bool isReverseCharge)
     {
         var safeInvoiceNo = WebUtility.HtmlEncode(inv.InvoiceNo);
+        var safePlatformName = WebUtility.HtmlEncode(branding.PlatformName);
+        var safeSellerLegalName = WebUtility.HtmlEncode(branding.LegalName);
+        var safeSellerGstin = WebUtility.HtmlEncode(branding.Gstin);
+        var safeSellerPan = WebUtility.HtmlEncode(branding.Pan);
+        var safeSellerEmail = WebUtility.HtmlEncode(branding.BillingEmail);
+        var safeSellerPhone = WebUtility.HtmlEncode(branding.BillingPhone);
+        var safeSellerWebsite = WebUtility.HtmlEncode(branding.Website);
+        var safeSellerAddress = WebUtility.HtmlEncode(branding.Address);
+        var safeFooter = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(branding.InvoiceFooter) ? "This is a system-generated GST invoice." : branding.InvoiceFooter);
         var safeCompany = WebUtility.HtmlEncode(companyName);
         var safeLegalName = WebUtility.HtmlEncode(legalName);
         var safeEmail = WebUtility.HtmlEncode(billingEmail);
@@ -1216,9 +1415,22 @@ public class BillingController(
         var safeGstin = WebUtility.HtmlEncode(gstin);
         var safePan = WebUtility.HtmlEncode(pan);
         var safeReference = WebUtility.HtmlEncode(inv.ReferenceNo);
+        var safeDescription = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(inv.Description) ? "Platform service purchase" : inv.Description);
         var invoiceLabel = string.Equals(inv.InvoiceKind, "proforma_invoice", StringComparison.OrdinalIgnoreCase) ? "Proforma Invoice" : "Tax Invoice";
         var safeInvoiceLabel = WebUtility.HtmlEncode(invoiceLabel);
-        var safeTaxMode = WebUtility.HtmlEncode(string.Equals(inv.TaxMode, "inclusive", StringComparison.OrdinalIgnoreCase) ? "incl. GST" : "+ GST");
+        var supplyLabel = isReverseCharge
+            ? "Reverse charge"
+            : isTaxExempt
+                ? "GST exempt"
+                : $"{Math.Clamp(taxRatePercent, 0m, 100m):0.##}% GST";
+        var taxLineLabel = isReverseCharge
+            ? "GST payable under reverse charge"
+            : isTaxExempt
+                ? "GST"
+                : $"GST @ {Math.Clamp(taxRatePercent, 0m, 100m):0.##}%";
+        var safeSupplyLabel = WebUtility.HtmlEncode(supplyLabel);
+        var safeTaxLineLabel = WebUtility.HtmlEncode(taxLineLabel);
+        var safeBillingCycle = WebUtility.HtmlEncode((inv.BillingCycle ?? string.Empty).Replace("_", " "));
         return $$"""
             <!doctype html>
             <html lang="en">
@@ -1226,46 +1438,137 @@ public class BillingController(
               <meta charset="utf-8" />
               <title>{{safeInvoiceNo}}</title>
               <style>
-                body { font-family: Segoe UI, Arial, sans-serif; margin: 24px; color: #0f172a; }
-                .header { display:flex; justify-content:space-between; margin-bottom:16px; }
-                .brand { font-size:24px; font-weight:700; color:#f97316; }
-                .muted { color:#64748b; font-size:13px; }
+                body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #f8fafc; color: #0f172a; }
+                .page { max-width: 1040px; margin: 24px auto; background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06); }
+                .band { height: 10px; background: linear-gradient(90deg, #ea580c 0%, #fb923c 100%); }
+                .wrap { padding: 28px 32px; }
+                .header { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; }
+                .brand { font-size:28px; font-weight:800; color:#c2410c; letter-spacing:0.02em; }
+                .label { display:inline-flex; padding:8px 14px; border-radius:999px; background:#fff7ed; color:#c2410c; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; }
+                .muted { color:#64748b; font-size:13px; line-height:1.55; }
+                .title { margin-top:10px; font-size:14px; font-weight:700; color:#0f172a; text-transform:uppercase; letter-spacing:0.08em; }
+                .meta { margin-top:14px; display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px 24px; font-size:14px; }
+                .meta .key { color:#64748b; }
+                .section { margin-top:24px; }
+                .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+                .panel { border:1px solid #e2e8f0; background:#f8fafc; border-radius:18px; padding:18px; min-height:170px; }
+                .panel h3 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:0.08em; color:#475569; }
+                .panel strong { display:block; font-size:18px; margin-bottom:4px; color:#0f172a; }
                 table { width:100%; border-collapse:collapse; margin-top:18px; }
-                th, td { border:1px solid #e2e8f0; padding:10px; text-align:left; }
-                th { background:#f8fafc; }
+                th, td { border:1px solid #cbd5e1; padding:12px 14px; text-align:left; vertical-align:top; }
+                th { background:#eff6ff; font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:#334155; }
                 .right { text-align:right; }
+                .summary td { background:#fff7ed; font-weight:600; }
+                .total td { background:#0f172a; color:#ffffff; font-size:16px; font-weight:700; }
+                .foot { margin-top:18px; display:flex; justify-content:space-between; gap:24px; font-size:12px; color:#64748b; }
               </style>
             </head>
             <body>
-              <div class="header">
-                <div>
-                  <div class="brand">Textzy</div>
-                  <div class="muted">{{safeInvoiceLabel}} • {{safeTaxMode}}</div>
-                </div>
-                <div class="right">
-                  <div><b>{{safeInvoiceLabel}}:</b> {{safeInvoiceNo}}</div>
-                  <div class="muted">Created: {{inv.CreatedAtUtc:yyyy-MM-dd}}</div>
-                  <div class="muted">Status: {{inv.Status}}</div>
-                  <div class="muted">Paid: {{(inv.PaidAtUtc ?? inv.CreatedAtUtc):yyyy-MM-dd}}</div>
+              <div class="page">
+                <div class="band"></div>
+                <div class="wrap">
+                  <div class="header">
+                    <div>
+                      <div class="brand">{{safePlatformName}}</div>
+                      <div class="title">{{safeInvoiceLabel}}</div>
+                      <div class="muted">{{safeSellerLegalName}}</div>
+                    </div>
+                    <div class="right">
+                      <div class="label">{{safeInvoiceLabel}}</div>
+                      <div class="meta" style="margin-top:16px;">
+                        <div><span class="key">Invoice No</span><br /><strong style="display:inline; font-size:16px;">{{safeInvoiceNo}}</strong></div>
+                        <div><span class="key">Invoice Date</span><br />{{inv.IssuedAtUtc:yyyy-MM-dd}}</div>
+                        <div><span class="key">Status</span><br />{{inv.Status}}</div>
+                        <div><span class="key">Paid Date</span><br />{{(inv.PaidAtUtc ?? inv.IssuedAtUtc):yyyy-MM-dd}}</div>
+                        <div><span class="key">Reference</span><br />{{(string.IsNullOrWhiteSpace(inv.ReferenceNo) ? "-" : safeReference)}}</div>
+                        <div><span class="key">Supply Type</span><br />{{safeSupplyLabel}}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="section grid">
+                    <div class="panel">
+                      <h3>Supplier</h3>
+                      <strong>{{safeSellerLegalName}}</strong>
+                      <div class="muted">{{safeSellerAddress}}</div>
+                      <div class="muted">GSTIN: {{(string.IsNullOrWhiteSpace(branding.Gstin) ? "-" : safeSellerGstin)}}</div>
+                      <div class="muted">PAN: {{(string.IsNullOrWhiteSpace(branding.Pan) ? "-" : safeSellerPan)}}</div>
+                      <div class="muted">Email: {{(string.IsNullOrWhiteSpace(branding.BillingEmail) ? "-" : safeSellerEmail)}}</div>
+                      <div class="muted">Phone: {{(string.IsNullOrWhiteSpace(branding.BillingPhone) ? "-" : safeSellerPhone)}}</div>
+                      <div class="muted">Website: {{(string.IsNullOrWhiteSpace(branding.Website) ? "-" : safeSellerWebsite)}}</div>
+                    </div>
+                    <div class="panel">
+                      <h3>Bill To</h3>
+                      <strong>{{safeCompany}}</strong>
+                      <div class="muted">{{safeLegalName}}</div>
+                      <div class="muted">{{safeAddress}}</div>
+                      <div class="muted">GSTIN: {{(string.IsNullOrWhiteSpace(gstin) ? "-" : safeGstin)}}</div>
+                      <div class="muted">PAN: {{(string.IsNullOrWhiteSpace(pan) ? "-" : safePan)}}</div>
+                      <div class="muted">Billing Email: {{(string.IsNullOrWhiteSpace(billingEmail) ? "-" : safeEmail)}}</div>
+                      <div class="muted">Service Period: {{inv.PeriodStartUtc:yyyy-MM-dd}} to {{inv.PeriodEndUtc:yyyy-MM-dd}}</div>
+                      <div class="muted">Billing Cycle: {{safeBillingCycle}}</div>
+                    </div>
+                  </div>
+                  <div class="section">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style="width:72px;">S. No.</th>
+                          <th>Description of Service</th>
+                          <th style="width:140px;">HSN/SAC</th>
+                          <th style="width:160px;" class="right">Taxable Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>1</td>
+                          <td>
+                            <strong style="display:block; font-size:15px; margin:0; color:#0f172a;">{{safeDescription}}</strong>
+                            <span class="muted">Reference: {{(string.IsNullOrWhiteSpace(inv.ReferenceNo) ? "-" : safeReference)}} | Cycle: {{safeBillingCycle}}</span>
+                          </td>
+                          <td>998314</td>
+                          <td class="right">{{inv.Subtotal:0.00}}</td>
+                        </tr>
+                        <tr class="summary">
+                          <td colspan="3">{{safeTaxLineLabel}}</td>
+                          <td class="right">{{inv.TaxAmount:0.00}}</td>
+                        </tr>
+                        <tr class="total">
+                          <td colspan="3">Invoice Total</td>
+                          <td class="right">{{inv.Total:0.00}}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="foot">
+                    <div>
+                      <div><strong>Notes</strong></div>
+                      <div>{{safeFooter}}</div>
+                    </div>
+                    <div class="right">
+                      <div><strong>System generated document</strong></div>
+                      <div>Integrity: {{inv.IntegrityAlgo}} / {{inv.IntegrityHash}}</div>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div><b>Bill To:</b> {{safeCompany}}</div>
-              <div class="muted">{{safeLegalName}}</div>
-              <div class="muted">{{safeEmail}}</div>
-              <div class="muted">{{safeAddress}}</div>
-              <div class="muted">GSTIN: {{(string.IsNullOrWhiteSpace(gstin) ? "-" : safeGstin)}} | PAN: {{(string.IsNullOrWhiteSpace(pan) ? "-" : safePan)}}</div>
-              <div class="muted">Period: {{inv.PeriodStartUtc:yyyy-MM-dd}} to {{inv.PeriodEndUtc:yyyy-MM-dd}}</div>
-              <div class="muted">Reference: {{(string.IsNullOrWhiteSpace(inv.ReferenceNo) ? "-" : safeReference)}} | Cycle: {{inv.BillingCycle}}</div>
-              <table>
-                <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
-                <tbody>
-                  <tr><td>Subscription Charges</td><td class="right">{{inv.Subtotal:0.00}}</td></tr>
-                  <tr><td>Tax</td><td class="right">{{inv.TaxAmount:0.00}}</td></tr>
-                  <tr><td><b>Total</b></td><td class="right"><b>{{inv.Total:0.00}}</b></td></tr>
-                </tbody>
-              </table>
             </body>
             </html>
             """;
     }
+
+    private sealed class PlatformBrandingSnapshot
+    {
+        public string PlatformName { get; init; } = "Textzy";
+        public string LogoUrl { get; init; } = string.Empty;
+        public string LegalName { get; init; } = "Textzy";
+        public string Gstin { get; init; } = string.Empty;
+        public string Pan { get; init; } = string.Empty;
+        public string Cin { get; init; } = string.Empty;
+        public string BillingEmail { get; init; } = string.Empty;
+        public string BillingPhone { get; init; } = string.Empty;
+        public string Website { get; init; } = string.Empty;
+        public string Address { get; init; } = string.Empty;
+        public string InvoiceFooter { get; init; } = string.Empty;
+    }
 }
+

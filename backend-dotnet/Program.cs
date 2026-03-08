@@ -71,7 +71,7 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
-var allowedOrigins = ParseAllowedOrigins(builder.Configuration).ToArray();
+var allowedOrigins = ParseAllowedOrigins(builder.Configuration, builder.Environment.IsProduction()).ToArray();
 if (builder.Environment.IsProduction() && allowedOrigins.Length == 0)
 {
     throw new InvalidOperationException("AllowedOrigins is required in production. Set AllowedOrigins with full origin(s).");
@@ -229,30 +229,38 @@ using (var scope = app.Services.CreateScope())
     var controlDb = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
     var seedEnabled = app.Configuration.GetValue<bool?>("SeedData:Enabled") ?? !app.Environment.IsProduction();
+    var warmTenantSchemas = app.Configuration.GetValue<bool?>("Startup:WarmTenantSchemas") ?? !app.Environment.IsProduction();
 
     EnsureControlAuthSchema(controlDb);
     controlDb.Database.EnsureCreated();
     if (seedEnabled)
         SeedData.InitializeControl(controlDb, controlConnection);
 
-    var tenants = controlDb.Tenants.ToList();
-    foreach (var tenant in tenants)
+    if (warmTenantSchemas)
     {
-        try
+        var tenants = controlDb.Tenants.ToList();
+        foreach (var tenant in tenants)
         {
-            var tenantConn = string.IsNullOrWhiteSpace(tenant.DataConnectionString) ? controlConnection : tenant.DataConnectionString;
-            using var tenantDb = SeedData.CreateTenantDbContext(tenantConn);
-            tenantDb.Database.EnsureCreated();
-            EnsureTenantCoreSchema(tenantDb);
-            EnsureTenantWabaSchema(tenantDb);
-            EnsureTenantWorkflowPhase1PatchOnce(tenantDb);
-            if (seedEnabled)
-                SeedData.InitializeTenant(tenantDb, tenant.Id);
+            try
+            {
+                var tenantConn = string.IsNullOrWhiteSpace(tenant.DataConnectionString) ? controlConnection : tenant.DataConnectionString;
+                using var tenantDb = SeedData.CreateTenantDbContext(tenantConn);
+                tenantDb.Database.EnsureCreated();
+                EnsureTenantCoreSchema(tenantDb);
+                EnsureTenantWabaSchema(tenantDb);
+                EnsureTenantWorkflowPhase1PatchOnce(tenantDb);
+                if (seedEnabled)
+                    SeedData.InitializeTenant(tenantDb, tenant.Id);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning("Skipping tenant seed for {TenantSlug} due to DB connectivity/config issue. errorType={ErrorType}", tenant.Slug, ex.GetType().Name);
+            }
         }
-        catch (Exception ex)
-        {
-            logger.LogWarning("Skipping tenant seed for {TenantSlug} due to DB connectivity/config issue. errorType={ErrorType}", tenant.Slug, ex.GetType().Name);
-        }
+    }
+    else
+    {
+        logger.LogInformation("Skipping startup tenant schema warmup. Set Startup:WarmTenantSchemas=true to re-enable eager tenant initialization.");
     }
 }
 
@@ -396,6 +404,7 @@ static void EnsureControlAuthSchema(ControlDbContext db)
 
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantUsers_UserId" ON "TenantUsers" ("UserId");""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantUsers_TenantId" ON "TenantUsers" ("TenantId");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantUsers_TenantId_Role_CreatedAtUtc" ON "TenantUsers" ("TenantId","Role","CreatedAtUtc");""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "SessionTokens" (
@@ -806,6 +815,7 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantSubscriptions_TenantId" ON "TenantSubscriptions" ("TenantId");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantSubscriptions_TenantId_CreatedAtUtc" ON "TenantSubscriptions" ("TenantId","CreatedAtUtc" DESC);""");
 
     db.Database.ExecuteSqlRaw("""
         CREATE TABLE IF NOT EXISTS "TenantUsages" (
@@ -857,10 +867,14 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         );
         """);
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingInvoices_TenantId" ON "BillingInvoices" ("TenantId");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingInvoices_Status_PaidAtUtc" ON "BillingInvoices" ("Status","PaidAtUtc" DESC);""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingInvoices_IssuedAtUtc" ON "BillingInvoices" ("IssuedAtUtc" DESC);""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingInvoices_Tenant_ReferenceNo" ON "BillingInvoices" ("TenantId","ReferenceNo");""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "InvoiceKind" text NOT NULL DEFAULT 'tax_invoice';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "BillingCycle" text NOT NULL DEFAULT 'monthly';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "TaxMode" text NOT NULL DEFAULT 'exclusive';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "ReferenceNo" text NOT NULL DEFAULT '';""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "Description" text NOT NULL DEFAULT '';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "IntegrityAlgo" text NOT NULL DEFAULT 'SHA256';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "IntegrityHash" text NOT NULL DEFAULT '';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "BillingInvoices" ADD COLUMN IF NOT EXISTS "IssuedAtUtc" timestamp with time zone NOT NULL DEFAULT now();""");
@@ -888,9 +902,10 @@ static void EnsureControlAuthSchema(ControlDbContext db)
         """);
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_BillingPaymentAttempts_OrderId" ON "BillingPaymentAttempts" ("OrderId");""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingPaymentAttempts_TenantId_CreatedAtUtc" ON "BillingPaymentAttempts" ("TenantId","CreatedAtUtc");""");
+    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_BillingPaymentAttempts_Tenant_Order_PaidAtUtc" ON "BillingPaymentAttempts" ("TenantId","OrderId","PaidAtUtc" DESC,"UpdatedAtUtc" DESC);""");
 }
 
-static IEnumerable<string> ParseAllowedOrigins(IConfiguration config)
+static IEnumerable<string> ParseAllowedOrigins(IConfiguration config, bool isProduction)
 {
     var raw = config["AllowedOrigins"] ?? string.Empty;
     var parsed = raw
@@ -900,11 +915,8 @@ static IEnumerable<string> ParseAllowedOrigins(IConfiguration config)
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
 
-    // Production safety fallback to known Textzy frontend origins.
-    if (parsed.Count == 0)
+    if (parsed.Count == 0 && !isProduction)
     {
-        parsed.Add("https://textzy-frontend-production.up.railway.app");
-        parsed.Add("https://textzy-backend-production.up.railway.app");
         parsed.Add("http://localhost:3000");
         parsed.Add("http://localhost:5173");
     }
