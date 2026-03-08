@@ -25,6 +25,7 @@ import {
   CreditCard,
   Settings,
   Shield,
+  ShieldAlert,
   Palette,
   ChevronDown,
   Search,
@@ -318,6 +319,7 @@ const DashboardLayout = () => {
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
     { name: "Admin", href: "/dashboard/admin", icon: Shield },
+    { name: "Security Report", href: "/dashboard/platform-security-report", icon: ShieldAlert },
     { name: "Branding", href: "/dashboard/platform-branding", icon: Palette },
   ];
 

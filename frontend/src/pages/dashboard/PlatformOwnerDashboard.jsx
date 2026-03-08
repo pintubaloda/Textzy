@@ -250,6 +250,9 @@ export default function PlatformOwnerDashboard() {
               <Button variant="outline" className="border-white/20 bg-white/5 text-white hover:bg-white/10" onClick={() => navigate("/dashboard/platform-settings?tab=security-ops")}>
                 Security ops
               </Button>
+              <Button variant="outline" className="border-white/20 bg-white/5 text-white hover:bg-white/10" onClick={() => navigate("/dashboard/platform-security-report")}>
+                Security report
+              </Button>
             </div>
           </div>
           <div className="grid min-w-full grid-cols-2 gap-3 xl:min-w-[420px]">

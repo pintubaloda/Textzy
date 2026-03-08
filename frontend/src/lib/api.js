@@ -982,6 +982,38 @@ export async function getPlatformSecurityControls(tenantId) {
   return apiGet(`/api/platform/security/controls?${q.toString()}`)
 }
 
+export async function getPlatformSecurityReport({
+  tenantId = "",
+  userId = "",
+  actionContains = "",
+  sessionStatus = "all",
+  fromUtc = "",
+  toUtc = "",
+  limit = 200
+} = {}) {
+  const q = new URLSearchParams()
+  if (tenantId) q.set("tenantId", tenantId)
+  if (userId) q.set("userId", userId)
+  if (actionContains) q.set("actionContains", actionContains)
+  if (sessionStatus) q.set("sessionStatus", sessionStatus)
+  if (fromUtc) q.set("fromUtc", fromUtc)
+  if (toUtc) q.set("toUtc", toUtc)
+  q.set("limit", String(limit))
+  return apiGet(`/api/platform/security/report?${q.toString()}`)
+}
+
+export async function exportPlatformSecurityReport(filters = {}) {
+  const q = new URLSearchParams()
+  if (filters.tenantId) q.set("tenantId", filters.tenantId)
+  if (filters.userId) q.set("userId", filters.userId)
+  if (filters.actionContains) q.set("actionContains", filters.actionContains)
+  if (filters.sessionStatus) q.set("sessionStatus", filters.sessionStatus)
+  if (filters.fromUtc) q.set("fromUtc", filters.fromUtc)
+  if (filters.toUtc) q.set("toUtc", filters.toUtc)
+  q.set("limit", String(filters.limit || 1000))
+  return apiGetBlob(`/api/platform/security/report/export?${q.toString()}`)
+}
+
 export async function upsertPlatformSecurityControls(payload) {
   return apiPut("/api/platform/security/controls", payload)
 }
