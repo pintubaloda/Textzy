@@ -77,23 +77,16 @@ public class PlatformPurchasesController(
                 })
                 .First());
 
-        var latestSubscriptionQuery = db.TenantSubscriptions.AsNoTracking()
-            .GroupBy(x => x.TenantId)
-            .Select(g => g
-                .OrderByDescending(x => x.CreatedAtUtc)
-                .Select(x => new LatestSubscriptionSql
-                {
-                    TenantId = x.TenantId,
-                    PlanId = x.PlanId
-                })
-                .First());
-
         var baseQuery =
             from invoice in db.BillingInvoices.AsNoTracking()
             join tenant in db.Tenants.AsNoTracking() on invoice.TenantId equals tenant.Id
             from profile in db.TenantCompanyProfiles.AsNoTracking().Where(x => x.TenantId == invoice.TenantId).DefaultIfEmpty()
             from attempt in latestAttemptQuery.Where(x => x.TenantId == invoice.TenantId && x.OrderId == invoice.ReferenceNo).DefaultIfEmpty()
-            from subscription in latestSubscriptionQuery.Where(x => x.TenantId == invoice.TenantId).DefaultIfEmpty()
+            from subscription in db.TenantSubscriptions.AsNoTracking()
+                .Where(x => x.TenantId == invoice.TenantId && x.CreatedAtUtc <= (invoice.PaidAtUtc ?? invoice.IssuedAtUtc))
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .Take(1)
+                .DefaultIfEmpty()
             from attemptPlan in db.BillingPlans.AsNoTracking().Where(x => attempt != null && x.Id == attempt.PlanId).DefaultIfEmpty()
             from subscriptionPlan in db.BillingPlans.AsNoTracking().Where(x => subscription != null && x.Id == subscription.PlanId).DefaultIfEmpty()
             from ownerMembership in ownerMembershipQuery.Where(x => x.TenantId == invoice.TenantId).DefaultIfEmpty()
@@ -695,12 +688,6 @@ public class PlatformPurchasesController(
         public string OrderId { get; init; } = string.Empty;
         public Guid PlanId { get; init; }
         public string Currency { get; init; } = "INR";
-    }
-
-    private sealed class LatestSubscriptionSql
-    {
-        public Guid TenantId { get; init; }
-        public Guid PlanId { get; init; }
     }
 
     private sealed class OwnerSql

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -705,14 +707,26 @@ public class PlatformCustomersController(
         if (status is not ("active" or "trial" or "trialing" or "suspended" or "cancelled"))
             return BadRequest("status must be active, trial, suspended, or cancelled.");
         var trialDays = Math.Clamp(request.TrialDays, 0, 365);
+        var now = DateTime.UtcNow;
 
         var sub = await db.TenantSubscriptions
             .Where(x => x.TenantId == tenantId)
             .OrderByDescending(x => x.CreatedAtUtc)
             .FirstOrDefaultAsync(ct);
 
-        if (sub is null)
+        var shouldCreateNewSubscription = sub is null
+            || request.ResetStartDate
+            || sub.PlanId != plan.Id
+            || !string.Equals(sub.BillingCycle, cycle, StringComparison.OrdinalIgnoreCase);
+
+        if (shouldCreateNewSubscription)
         {
+            if (sub is not null)
+            {
+                sub.CancelledAtUtc = now;
+                sub.UpdatedAtUtc = now;
+            }
+
             sub = new TenantSubscription
             {
                 Id = Guid.NewGuid(),
@@ -720,23 +734,29 @@ public class PlatformCustomersController(
                 PlanId = plan.Id,
                 Status = status,
                 BillingCycle = cycle,
-                StartedAtUtc = DateTime.UtcNow,
+                StartedAtUtc = now,
                 RenewAtUtc = ResolveRenewAtUtc(cycle, status, trialDays),
-                CreatedAtUtc = DateTime.UtcNow,
-                UpdatedAtUtc = DateTime.UtcNow
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
             };
             db.TenantSubscriptions.Add(sub);
         }
         else
         {
-            sub.PlanId = plan.Id;
-            sub.Status = status;
-            sub.BillingCycle = cycle;
-            if (request.ResetStartDate) sub.StartedAtUtc = DateTime.UtcNow;
-            sub.RenewAtUtc = ResolveRenewAtUtc(cycle, status, trialDays);
-            sub.CancelledAtUtc = null;
-            sub.UpdatedAtUtc = DateTime.UtcNow;
+            var currentSubscription = sub!;
+            currentSubscription.PlanId = plan.Id;
+            currentSubscription.Status = status;
+            currentSubscription.BillingCycle = cycle;
+            currentSubscription.RenewAtUtc = ResolveRenewAtUtc(cycle, status, trialDays);
+            if (request.ResetStartDate) currentSubscription.StartedAtUtc = now;
+            currentSubscription.CancelledAtUtc = status == "cancelled" ? now : null;
+            currentSubscription.UpdatedAtUtc = now;
         }
+
+        var manualInvoiceId = status is "active" or "trial" or "trialing"
+            ? await CreateManualAssignmentInvoiceAsync(tenant, plan, sub!, now, ct)
+            : Guid.Empty;
+        var savedSubscription = sub!;
 
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync("platform.customer.assign_plan", $"tenant={tenantId}; plan={plan.Code}; cycle={cycle}; status={status}; trialDays={trialDays}", ct);
@@ -745,18 +765,66 @@ public class PlatformCustomersController(
         {
             assigned = true,
             tenantId,
+            invoiceId = manualInvoiceId == Guid.Empty ? (Guid?)null : manualInvoiceId,
             plan = new { plan.Id, plan.Code, plan.Name },
             subscription = new
             {
-                sub.Id,
-                sub.Status,
-                sub.BillingCycle,
-                sub.StartedAtUtc,
-                sub.RenewAtUtc,
-                sub.CancelledAtUtc,
-                sub.UpdatedAtUtc
+                savedSubscription.Id,
+                savedSubscription.Status,
+                savedSubscription.BillingCycle,
+                savedSubscription.StartedAtUtc,
+                savedSubscription.RenewAtUtc,
+                savedSubscription.CancelledAtUtc,
+                savedSubscription.UpdatedAtUtc
             }
         });
+    }
+
+    private async Task<Guid> CreateManualAssignmentInvoiceAsync(Tenant tenant, BillingPlan plan, TenantSubscription subscription, DateTime issuedAtUtc, CancellationToken ct)
+    {
+        var referenceNo = $"manual-plan:{subscription.Id:D}";
+        var existingInvoice = await db.BillingInvoices
+            .FirstOrDefaultAsync(x => x.TenantId == tenant.Id && x.ReferenceNo == referenceNo, ct);
+        if (existingInvoice is not null)
+            return existingInvoice.Id;
+
+        var profile = await db.TenantCompanyProfiles.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.TenantId == tenant.Id, ct);
+        var invoiceNo = $"INV-MAN-{issuedAtUtc:yyyyMMdd}-{subscription.Id.ToString("N")[..8].ToUpperInvariant()}";
+        var periodStartUtc = DateTime.SpecifyKind(subscription.StartedAtUtc, DateTimeKind.Utc);
+        var periodEndUtc = ResolvePeriodEndUtc(periodStartUtc, subscription.BillingCycle);
+        var invoiceAmounts = ComputeInvoiceAmounts(
+            ResolvePlanAmount(plan, subscription.BillingCycle),
+            profile?.TaxRatePercent ?? 18m,
+            plan.TaxMode,
+            profile?.IsTaxExempt ?? false,
+            profile?.IsReverseCharge ?? false);
+
+        var invoice = new BillingInvoice
+        {
+            Id = Guid.NewGuid(),
+            InvoiceNo = invoiceNo,
+            TenantId = tenant.Id,
+            InvoiceKind = "tax_invoice",
+            BillingCycle = subscription.BillingCycle,
+            TaxMode = plan.TaxMode,
+            ReferenceNo = referenceNo,
+            Description = ResolveInvoiceDescription(plan.Name, subscription.BillingCycle, plan.PricingModel),
+            PeriodStartUtc = periodStartUtc,
+            PeriodEndUtc = periodEndUtc,
+            Subtotal = invoiceAmounts.Subtotal,
+            TaxAmount = invoiceAmounts.TaxAmount,
+            Total = invoiceAmounts.Total,
+            Status = "issued",
+            PaidAtUtc = null,
+            PdfUrl = string.Empty,
+            IntegrityAlgo = "SHA256",
+            IssuedAtUtc = issuedAtUtc,
+            CreatedAtUtc = issuedAtUtc
+        };
+        invoice.IntegrityHash = ComputeInvoiceIntegrityHash(invoice);
+        db.BillingInvoices.Add(invoice);
+        return invoice.Id;
     }
 
     private static int RolePriority(string role)
@@ -771,6 +839,108 @@ public class PlatformCustomersController(
             "marketing" => 4,
             "finance" => 5,
             _ => 99
+        };
+    }
+
+    private readonly record struct InvoiceAmounts(decimal Subtotal, decimal TaxAmount, decimal Total);
+
+    private static InvoiceAmounts ComputeInvoiceAmounts(
+        decimal planAmount,
+        decimal taxRatePercent,
+        string? taxMode,
+        bool isTaxExempt,
+        bool isReverseCharge)
+    {
+        var normalizedTaxMode = string.Equals(taxMode, "inclusive", StringComparison.OrdinalIgnoreCase) ? "inclusive" : "exclusive";
+        var taxBlocked = isTaxExempt || isReverseCharge || taxRatePercent <= 0m;
+        if (taxBlocked)
+        {
+            var amount = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
+            return new InvoiceAmounts(amount, 0m, amount);
+        }
+
+        if (normalizedTaxMode == "inclusive")
+        {
+            var gross = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
+            var subtotal = Math.Round(gross / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
+            var tax = Math.Round(gross - subtotal, 2, MidpointRounding.AwayFromZero);
+            return new InvoiceAmounts(subtotal, tax, gross);
+        }
+
+        var subtotalExclusive = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
+        var taxExclusive = Math.Round(subtotalExclusive * (taxRatePercent / 100m), 2, MidpointRounding.AwayFromZero);
+        return new InvoiceAmounts(subtotalExclusive, taxExclusive, subtotalExclusive + taxExclusive);
+    }
+
+    private static decimal ResolvePlanAmount(BillingPlan plan, string billingCycle)
+    {
+        var cycle = (billingCycle ?? string.Empty).Trim().ToLowerInvariant();
+        return cycle switch
+        {
+            "yearly" => plan.PriceYearly > 0 ? plan.PriceYearly : plan.PriceMonthly,
+            "lifetime" => plan.PriceYearly > 0 ? plan.PriceYearly : plan.PriceMonthly,
+            "usage_based" => plan.PriceMonthly,
+            _ => plan.PriceMonthly
+        };
+    }
+
+    private static string ResolveInvoiceDescription(string? planName, string? billingCycle, string? pricingModel)
+    {
+        var name = (planName ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            if (string.Equals(pricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
+                return $"{name} purchase";
+
+            if (name.Contains("authenticator", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("integration", StringComparison.OrdinalIgnoreCase))
+                return $"{name} purchase";
+
+            return $"{name} plan purchase";
+        }
+
+        return (billingCycle ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "yearly" => "Yearly subscription purchase",
+            "monthly" => "Monthly subscription purchase",
+            "lifetime" => "Lifetime plan purchase",
+            "usage_based" => "Usage pack purchase",
+            _ => "Platform service purchase"
+        };
+    }
+
+    private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice)
+    {
+        var canonical = string.Join("|",
+            invoice.InvoiceNo,
+            invoice.TenantId.ToString("D"),
+            invoice.InvoiceKind,
+            invoice.BillingCycle,
+            invoice.TaxMode,
+            invoice.ReferenceNo,
+            invoice.Description,
+            invoice.PeriodStartUtc.ToUniversalTime().ToString("O"),
+            invoice.PeriodEndUtc.ToUniversalTime().ToString("O"),
+            invoice.Subtotal.ToString("0.00"),
+            invoice.TaxAmount.ToString("0.00"),
+            invoice.Total.ToString("0.00"),
+            (invoice.PaidAtUtc ?? DateTime.MinValue).ToUniversalTime().ToString("O"),
+            invoice.Status,
+            invoice.IssuedAtUtc.ToUniversalTime().ToString("O"));
+
+        var bytes = Encoding.UTF8.GetBytes(canonical);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static DateTime ResolvePeriodEndUtc(DateTime periodStartUtc, string cycle)
+    {
+        return cycle switch
+        {
+            "yearly" => periodStartUtc.AddYears(1).AddSeconds(-1),
+            "lifetime" => periodStartUtc.AddYears(100).AddSeconds(-1),
+            "usage_based" => periodStartUtc.AddMonths(1).AddSeconds(-1),
+            _ => periodStartUtc.AddMonths(1).AddSeconds(-1)
         };
     }
 

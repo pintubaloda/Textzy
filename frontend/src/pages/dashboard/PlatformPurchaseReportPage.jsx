@@ -73,13 +73,8 @@ function StatusBadge({ status }) {
 }
 
 export default function PlatformPurchaseReportPage() {
-  const today = useMemo(() => new Date(), []);
-  const defaultFrom = useMemo(() => {
-    const start = new Date(today);
-    start.setDate(today.getDate() - 30);
-    return start.toISOString().slice(0, 10);
-  }, [today]);
-  const defaultTo = useMemo(() => today.toISOString().slice(0, 10), [today]);
+  const defaultFrom = "";
+  const defaultTo = "";
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -222,6 +217,9 @@ export default function PlatformPurchaseReportPage() {
             <Button variant="outline" className="h-11 rounded-xl border-slate-300 bg-white/80 px-5" onClick={() => applyQuickRange(30)}>
               Last 30 days
             </Button>
+            <Button variant="outline" className="h-11 rounded-xl border-slate-300 bg-white/80 px-5" onClick={() => applyFilters({ fromDate: "", toDate: "" })}>
+              All time
+            </Button>
             <Button className="h-11 rounded-xl bg-blue-600 px-5 text-white hover:bg-blue-700" onClick={() => load(filters)} disabled={refreshing}>
               <RefreshCcw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
               Refresh report
@@ -243,7 +241,7 @@ export default function PlatformPurchaseReportPage() {
             <Filter className="h-5 w-5 text-blue-600" />
             Filters
           </CardTitle>
-          <CardDescription>Date and service filters are applied in SQL now, with paged results instead of the previous full-memory report load.</CardDescription>
+          <CardDescription>Date and service filters are applied in SQL with paged results. Leave dates blank to review the full purchase history.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
