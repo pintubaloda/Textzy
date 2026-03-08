@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Net;
 using System.Text;
 using Textzy.Api.Data;
+using Textzy.Api.Models;
 using Textzy.Api.Services;
 using static Textzy.Api.Services.PermissionCatalog;
 
@@ -13,6 +15,7 @@ public class PlatformSecurityController(
     ControlDbContext db,
     AuthContext auth,
     RbacService rbac,
+    SecurityIpRuleService ipRuleService,
     SecurityControlService controls,
     OutboundMessageQueueService outboundQueue,
     WabaWebhookQueueService webhookQueue,
@@ -99,6 +102,8 @@ public class PlatformSecurityController(
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Count());
 
+        var activeIpRules = await ipRuleService.ListAsync("session", true, ct);
+
         var loginHistory = loginHistoryRows
             .Select(x =>
             {
@@ -118,6 +123,25 @@ public class PlatformSecurityController(
                 if (missingMembership) suspiciousReasons.Add("Session tenant is not assigned to this user");
                 if (isPrivileged && missingTwoFactor) suspiciousReasons.Add("Privileged session without 2FA verification");
                 if (ipDiversity >= 3) suspiciousReasons.Add($"User seen from {ipDiversity} IPs in filtered range");
+
+                var ruleScope = activeIpRules
+                    .Where(rule => rule.TenantId == null || rule.TenantId == x.tenantId)
+                    .ToList();
+                var effectiveIp = SecurityIpRuleService.NormalizeIp(x.lastSeenIpAddress ?? x.ipAddress);
+                var matchingBlock = ruleScope.FirstOrDefault(rule =>
+                    string.Equals(rule.RuleType, "block", StringComparison.OrdinalIgnoreCase) &&
+                    SecurityIpRuleService.MatchesRule(effectiveIp, rule.IpRule));
+                var allowRules = ruleScope
+                    .Where(rule => string.Equals(rule.RuleType, "allow", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                var matchingAllow = allowRules.FirstOrDefault(rule => SecurityIpRuleService.MatchesRule(effectiveIp, rule.IpRule));
+                var ipPolicyStatus = matchingBlock is not null
+                    ? "blocked"
+                    : matchingAllow is not null
+                        ? "allowlisted"
+                        : allowRules.Count > 0
+                            ? "not_allowlisted"
+                            : "open";
 
                 return new
                 {
@@ -140,6 +164,8 @@ public class PlatformSecurityController(
                     x.hasMembership,
                     x.twoFactorVerifiedAtUtc,
                     x.stepUpVerifiedAtUtc,
+                    ipPolicyStatus,
+                    ipPolicyRule = matchingBlock?.IpRule ?? matchingAllow?.IpRule ?? string.Empty,
                     isSuspicious,
                     suspiciousReasons = string.Join("; ", suspiciousReasons)
                 };
@@ -251,8 +277,21 @@ public class PlatformSecurityController(
             notes = new
             {
                 location = "IP address, user agent, and derived device label are captured. Lat/long is not collected.",
-                sessionPolicy = "Sessions are pinned to their first captured IP. If a later request arrives from a different IP, the session is revoked."
+                sessionPolicy = "Sessions are pinned to their first captured IP. If a later request arrives from a different IP, the session is revoked.",
+                ipPolicy = "Session IP rules support allowlist and blocklist matching by exact IP or CIDR. Block rules win over allow rules."
             },
+            ipRules = activeIpRules.Select(x => new
+            {
+                x.Id,
+                x.TenantId,
+                x.Scope,
+                x.RuleType,
+                x.IpRule,
+                x.Note,
+                x.CreatedByUserId,
+                x.CreatedAtUtc,
+                x.UpdatedAtUtc
+            }),
             loginHistory,
             sessionsByUser,
             auditEvents = auditEventsWithSeverity
@@ -388,6 +427,165 @@ public class PlatformSecurityController(
         return Ok(new { ok = true });
     }
 
+    [HttpPost("sessions/{id:guid}/block-ip")]
+    public async Task<IActionResult> BlockSessionIp(Guid id, CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+
+        var session = await db.SessionTokens.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (session is null) return NotFound();
+
+        var ipAddress = SecurityIpRuleService.NormalizeIp(session.LastSeenIpAddress ?? session.CreatedIpAddress);
+        if (string.IsNullOrWhiteSpace(ipAddress)) return BadRequest("Session IP is empty.");
+
+        var exists = await db.SecurityIpRules.AnyAsync(x =>
+            x.IsActive &&
+            x.Scope == "session" &&
+            x.TenantId == session.TenantId &&
+            x.RuleType == "block" &&
+            x.IpRule == ipAddress, ct);
+        if (!exists)
+        {
+            db.SecurityIpRules.Add(new SecurityIpRule
+            {
+                Id = Guid.NewGuid(),
+                TenantId = session.TenantId,
+                Scope = "session",
+                RuleType = "block",
+                IpRule = ipAddress,
+                Note = $"Blocked from security report using session {session.Id}",
+                CreatedByUserId = auth.UserId
+            });
+        }
+
+        var activeSessions = await db.SessionTokens
+            .Where(x => x.TenantId == session.TenantId && x.RevokedAtUtc == null && (x.CreatedIpAddress == ipAddress || x.LastSeenIpAddress == ipAddress))
+            .ToListAsync(ct);
+        foreach (var row in activeSessions)
+            row.RevokedAtUtc = DateTime.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync("platform.security.ip.blocked", $"tenantId={session.TenantId}; ip={ipAddress}; sessionsRevoked={activeSessions.Count}", ct);
+        return Ok(new { ok = true, ipAddress, sessionsRevoked = activeSessions.Count });
+    }
+
+    [HttpGet("ip-rules")]
+    public async Task<IActionResult> ListIpRules(CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
+
+        var tenants = await db.Tenants.AsNoTracking().Select(x => new { x.Id, x.Name, x.Slug }).ToListAsync(ct);
+        var tenantMap = tenants.ToDictionary(x => x.Id, x => x);
+        var rules = await ipRuleService.ListAsync("session", true, ct);
+        return Ok(rules.Select(x =>
+        {
+            var tenantName = "All tenants";
+            var tenantSlug = string.Empty;
+            if (x.TenantId.HasValue && tenantMap.TryGetValue(x.TenantId.Value, out var tenant))
+            {
+                tenantName = tenant.Name;
+                tenantSlug = tenant.Slug;
+            }
+
+            return new
+            {
+                x.Id,
+                x.TenantId,
+                tenantName,
+                tenantSlug,
+                x.Scope,
+                x.RuleType,
+                x.IpRule,
+                x.Note,
+                x.CreatedByUserId,
+                x.CreatedAtUtc,
+                x.UpdatedAtUtc
+            };
+        }));
+    }
+
+    [HttpPost("ip-rules")]
+    public async Task<IActionResult> CreateIpRule([FromBody] UpsertIpRuleRequest request, CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+
+        var ipRule = InputGuardService.RequireTrimmed(request.IpRule, "IP rule", 120);
+        var ruleType = InputGuardService.RequireTrimmed(request.RuleType, "Rule type", 20).ToLowerInvariant();
+        if (ruleType != "allow" && ruleType != "block") return BadRequest("Rule type must be allow or block.");
+
+        if (!(IPAddress.TryParse(SecurityIpRuleService.NormalizeIp(ipRule), out _) || ipRule.Contains('/')))
+            return BadRequest("Enter a valid IP address or CIDR block.");
+
+        Guid? tenantId = null;
+        if (!string.IsNullOrWhiteSpace(request.TenantId) && !string.Equals(request.TenantId, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!Guid.TryParse(request.TenantId, out var parsedTenantId)) return BadRequest("Invalid tenantId.");
+            var tenantExists = await db.Tenants.AnyAsync(x => x.Id == parsedTenantId, ct);
+            if (!tenantExists) return NotFound("Tenant not found.");
+            tenantId = parsedTenantId;
+        }
+
+        var existing = await db.SecurityIpRules.FirstOrDefaultAsync(x =>
+            x.IsActive &&
+            x.Scope == "session" &&
+            x.RuleType == ruleType &&
+            x.TenantId == tenantId &&
+            x.IpRule == ipRule, ct);
+        if (existing is not null)
+            return Ok(new { ok = true, alreadyExists = true, id = existing.Id });
+
+        var row = new SecurityIpRule
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Scope = "session",
+            RuleType = ruleType,
+            IpRule = ipRule,
+            Note = (request.Note ?? string.Empty).Trim(),
+            CreatedByUserId = auth.UserId,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        db.SecurityIpRules.Add(row);
+
+        var revokedCount = 0;
+        if (ruleType == "block" && request.RevokeMatchingSessions)
+        {
+            var activeSessions = await db.SessionTokens
+                .Where(x => x.RevokedAtUtc == null && (!tenantId.HasValue || x.TenantId == tenantId.Value))
+                .ToListAsync(ct);
+            foreach (var session in activeSessions.Where(x =>
+                         SecurityIpRuleService.MatchesRule(x.LastSeenIpAddress ?? x.CreatedIpAddress, ipRule)))
+            {
+                session.RevokedAtUtc = DateTime.UtcNow;
+                revokedCount++;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync($"platform.security.ip.{ruleType}.created", $"tenantId={tenantId}; ipRule={ipRule}; revokedSessions={revokedCount}", ct);
+        return Ok(new { ok = true, id = row.Id, revokedSessions = revokedCount });
+    }
+
+    [HttpDelete("ip-rules/{id:guid}")]
+    public async Task<IActionResult> DeleteIpRule(Guid id, CancellationToken ct = default)
+    {
+        if (!auth.IsAuthenticated) return Unauthorized();
+        if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
+
+        var row = await db.SecurityIpRules.FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (row is null) return NotFound();
+        if (!row.IsActive) return NoContent();
+
+        row.IsActive = false;
+        row.UpdatedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync($"platform.security.ip.{row.RuleType}.removed", $"ruleId={row.Id}; ipRule={row.IpRule}; tenantId={row.TenantId}", ct);
+        return NoContent();
+    }
+
     [HttpGet("signals")]
     public async Task<IActionResult> Signals([FromQuery] string status = "open", [FromQuery] int limit = 100, CancellationToken ct = default)
     {
@@ -477,6 +675,15 @@ public class PlatformSecurityController(
     public sealed class PurgeQueueRequest
     {
         public string Queue { get; set; } = string.Empty;
+    }
+
+    public sealed class UpsertIpRuleRequest
+    {
+        public string TenantId { get; set; } = string.Empty;
+        public string RuleType { get; set; } = string.Empty;
+        public string IpRule { get; set; } = string.Empty;
+        public string? Note { get; set; }
+        public bool RevokeMatchingSessions { get; set; } = true;
     }
 
     private static string GetProp(object row, string name)

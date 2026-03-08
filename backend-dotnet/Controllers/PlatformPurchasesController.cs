@@ -39,37 +39,10 @@ public class PlatformPurchasesController(
         var requestedPage = Math.Max(1, page);
         var safePageSize = Math.Clamp(pageSize, 10, 200);
 
-        var ownerMembershipQuery = db.TenantUsers.AsNoTracking()
-            .Select(x => new
-            {
-                x.TenantId,
-                x.UserId,
-                x.CreatedAtUtc,
-                RoleRank =
-                    (x.Role ?? string.Empty).ToLower() == "owner" ? 0 :
-                    (x.Role ?? string.Empty).ToLower() == "admin" ? 1 :
-                    (x.Role ?? string.Empty).ToLower() == "manager" ? 2 :
-                    (x.Role ?? string.Empty).ToLower() == "support" ? 3 :
-                    (x.Role ?? string.Empty).ToLower() == "marketing" ? 4 :
-                    (x.Role ?? string.Empty).ToLower() == "finance" ? 5 : 99
-            })
-            .GroupBy(x => x.TenantId)
-            .Select(g => g
-                .OrderBy(x => x.RoleRank)
-                .ThenBy(x => x.CreatedAtUtc)
-                .Select(x => new OwnerSql
-                {
-                    TenantId = x.TenantId,
-                    UserId = x.UserId
-                })
-                .First());
-
         var baseQuery =
             from invoice in db.BillingInvoices.AsNoTracking()
             join tenant in db.Tenants.AsNoTracking() on invoice.TenantId equals tenant.Id
             from profile in db.TenantCompanyProfiles.AsNoTracking().Where(x => x.TenantId == invoice.TenantId).DefaultIfEmpty()
-            from ownerMembership in ownerMembershipQuery.Where(x => x.TenantId == invoice.TenantId).DefaultIfEmpty()
-            from owner in db.Users.AsNoTracking().Where(x => ownerMembership != null && x.Id == ownerMembership.UserId).DefaultIfEmpty()
             select new PurchaseInvoiceBaseRow
             {
                 InvoiceId = invoice.Id,
@@ -77,21 +50,16 @@ public class PlatformPurchasesController(
                 InvoiceNo = invoice.InvoiceNo,
                 InvoiceKind = invoice.InvoiceKind,
                 InvoiceStatus = invoice.Status,
-                UserName = owner != null && owner.FullName != string.Empty
-                    ? owner.FullName
-                    : owner != null
-                        ? owner.Email
-                        : profile != null && profile.BillingEmail != string.Empty
-                            ? profile.BillingEmail
-                            : "-",
-                UserEmail = owner != null
-                    ? owner.Email
-                    : profile != null
-                        ? profile.BillingEmail
-                        : string.Empty,
+                UserName = profile != null && profile.BillingEmail != string.Empty
+                    ? profile.BillingEmail
+                    : "-",
+                UserEmail = profile != null
+                    ? profile.BillingEmail
+                    : string.Empty,
                 CompanyName = profile != null && profile.CompanyName != string.Empty
                     ? profile.CompanyName
                     : tenant.Name,
+                TenantName = tenant.Name,
                 GstNo = profile != null ? profile.Gstin : string.Empty,
                 PurchaseDateUtc = invoice.PaidAtUtc ?? invoice.IssuedAtUtc,
                 InvoiceDateUtc = invoice.IssuedAtUtc,
@@ -135,14 +103,25 @@ public class PlatformPurchasesController(
 
         if (!string.IsNullOrWhiteSpace(normalizedQuery))
         {
+            var ownerTenantIds = await (
+                from membership in db.TenantUsers.AsNoTracking()
+                join user in db.Users.AsNoTracking() on membership.UserId equals user.Id
+                where (user.FullName ?? string.Empty).ToLower().Contains(normalizedQuery) ||
+                      (user.Email ?? string.Empty).ToLower().Contains(normalizedQuery)
+                select membership.TenantId)
+                .Distinct()
+                .ToListAsync(ct);
+
             baseQuery = baseQuery.Where(x =>
                 (x.InvoiceNo ?? string.Empty).ToLower().Contains(normalizedQuery) ||
                 (x.UserName ?? string.Empty).ToLower().Contains(normalizedQuery) ||
                 (x.UserEmail ?? string.Empty).ToLower().Contains(normalizedQuery) ||
                 (x.CompanyName ?? string.Empty).ToLower().Contains(normalizedQuery) ||
+                (x.TenantName ?? string.Empty).ToLower().Contains(normalizedQuery) ||
                 (x.GstNo ?? string.Empty).ToLower().Contains(normalizedQuery) ||
                 (x.ServiceName ?? string.Empty).ToLower().Contains(normalizedQuery) ||
-                (x.ReferenceNo ?? string.Empty).ToLower().Contains(normalizedQuery));
+                (x.ReferenceNo ?? string.Empty).ToLower().Contains(normalizedQuery) ||
+                ownerTenantIds.Contains(x.TenantId));
         }
 
         if (!string.IsNullOrWhiteSpace(normalizedService))
@@ -176,6 +155,41 @@ public class PlatformPurchasesController(
             .ToListAsync(ct);
 
         var tenantIds = pageRows.Select(x => x.TenantId).Distinct().ToList();
+        var ownerMembershipRows = tenantIds.Count == 0
+            ? new List<OwnerSql>()
+            : await db.TenantUsers.AsNoTracking()
+                .Where(x => tenantIds.Contains(x.TenantId))
+                .Select(x => new
+                {
+                    x.TenantId,
+                    x.UserId,
+                    x.CreatedAtUtc,
+                    RoleRank =
+                        (x.Role ?? string.Empty).ToLower() == "owner" ? 0 :
+                        (x.Role ?? string.Empty).ToLower() == "admin" ? 1 :
+                        (x.Role ?? string.Empty).ToLower() == "manager" ? 2 :
+                        (x.Role ?? string.Empty).ToLower() == "support" ? 3 :
+                        (x.Role ?? string.Empty).ToLower() == "marketing" ? 4 :
+                        (x.Role ?? string.Empty).ToLower() == "finance" ? 5 : 99
+                })
+                .OrderBy(x => x.RoleRank)
+                .ThenBy(x => x.CreatedAtUtc)
+                .GroupBy(x => x.TenantId)
+                .Select(g => new OwnerSql
+                {
+                    TenantId = g.Key,
+                    UserId = g.Select(x => x.UserId).First()
+                })
+                .ToListAsync(ct);
+        var ownerUserIds = ownerMembershipRows.Select(x => x.UserId).Distinct().ToList();
+        var ownerUsers = ownerUserIds.Count == 0
+            ? new Dictionary<Guid, Models.User>()
+            : await db.Users.AsNoTracking()
+                .Where(x => ownerUserIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, ct);
+        var ownerByTenant = ownerMembershipRows.ToDictionary(
+            x => x.TenantId,
+            x => ownerUsers.TryGetValue(x.UserId, out var user) ? user : null);
         var references = pageRows
             .Select(x => x.ReferenceNo)
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -251,6 +265,15 @@ public class PlatformPurchasesController(
             var serviceName = string.IsNullOrWhiteSpace(row.ServiceName)
                 ? ResolveServiceName(plan?.Name, row.BillingCycle)
                 : row.ServiceName;
+            ownerByTenant.TryGetValue(row.TenantId, out var owner);
+            var userName = owner is not null && !string.IsNullOrWhiteSpace(owner.FullName)
+                ? owner.FullName
+                : owner is not null && !string.IsNullOrWhiteSpace(owner.Email)
+                    ? owner.Email
+                    : string.IsNullOrWhiteSpace(row.UserName)
+                        ? "-"
+                        : row.UserName;
+            var userEmail = owner?.Email ?? row.UserEmail;
 
             return new
             {
@@ -260,8 +283,8 @@ public class PlatformPurchasesController(
                 row.InvoiceNo,
                 row.InvoiceKind,
                 invoiceStatus = row.InvoiceStatus,
-                row.UserName,
-                row.UserEmail,
+                UserName = userName,
+                UserEmail = userEmail,
                 row.CompanyName,
                 gstNo = row.GstNo,
                 row.PurchaseDateUtc,
@@ -771,6 +794,7 @@ public class PlatformPurchasesController(
         public string UserName { get; init; } = string.Empty;
         public string UserEmail { get; init; } = string.Empty;
         public string CompanyName { get; init; } = string.Empty;
+        public string TenantName { get; init; } = string.Empty;
         public string GstNo { get; init; } = string.Empty;
         public DateTime PurchaseDateUtc { get; init; }
         public DateTime InvoiceDateUtc { get; init; }

@@ -30,6 +30,7 @@ public class ControlDbContext(DbContextOptions<ControlDbContext> options) : DbCo
     public DbSet<SmsGatewayRequestLog> SmsGatewayRequestLogs => Set<SmsGatewayRequestLog>();
     public DbSet<WebhookReplayGuard> WebhookReplayGuards => Set<WebhookReplayGuard>();
     public DbSet<SecuritySignal> SecuritySignals => Set<SecuritySignal>();
+    public DbSet<SecurityIpRule> SecurityIpRules => Set<SecurityIpRule>();
     public DbSet<TenantSecurityControl> TenantSecurityControls => Set<TenantSecurityControl>();
     public DbSet<UserPushSubscription> UserPushSubscriptions => Set<UserPushSubscription>();
     public DbSet<UserNotificationPreference> UserNotificationPreferences => Set<UserNotificationPreference>();

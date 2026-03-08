@@ -1048,6 +1048,22 @@ export async function revokePlatformSession(sessionId) {
   return apiPost(`/api/platform/security/sessions/${sessionId}/revoke`, {})
 }
 
+export async function blockPlatformSessionIp(sessionId) {
+  return apiPost(`/api/platform/security/sessions/${sessionId}/block-ip`, {})
+}
+
+export async function getPlatformSecurityIpRules() {
+  return apiGet("/api/platform/security/ip-rules")
+}
+
+export async function createPlatformSecurityIpRule(payload) {
+  return apiPost("/api/platform/security/ip-rules", payload)
+}
+
+export async function deletePlatformSecurityIpRule(ruleId) {
+  return apiDelete(`/api/platform/security/ip-rules/${ruleId}`)
+}
+
 export async function upsertPlatformSecurityControls(payload) {
   return apiPut("/api/platform/security/controls", payload)
 }

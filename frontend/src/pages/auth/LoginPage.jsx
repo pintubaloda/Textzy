@@ -333,7 +333,7 @@ const LoginPage = () => {
                             <p className="mt-2 text-sm leading-6 text-slate-600">
                               Use the current 6-digit code from your authenticator app to finish signing in.
                             </p>
-                            <div className="mt-4 grid gap-3 rounded-2xl border border-orange-100/80 bg-white/90 p-4">
+                            <div className="mt-4 grid max-w-full gap-3 rounded-2xl border border-orange-100/80 bg-white/90 p-4">
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
                                   <Smartphone className="h-4 w-4 text-orange-500" />
@@ -345,19 +345,20 @@ const LoginPage = () => {
                                   </p>
                                 ) : null}
                               </div>
-                              <div className="flex justify-center sm:justify-start">
+                              <div className="flex w-full justify-center sm:justify-start">
                                 <InputOTP
                                   maxLength={6}
                                   value={twoFactor.code}
                                   onChange={(value) => setTwoFactor((prev) => ({ ...prev, code: value.replace(/\D/g, "").slice(0, 6) }))}
-                                  containerClassName="gap-2"
+                                  className="w-full"
+                                  containerClassName="w-full justify-center sm:justify-start"
                                 >
-                                  <InputOTPGroup className="gap-2">
+                                  <InputOTPGroup className="grid w-full max-w-[320px] grid-cols-6 gap-2">
                                     {[0, 1, 2, 3, 4, 5].map((index) => (
                                       <InputOTPSlot
                                         key={index}
                                         index={index}
-                                        className="h-12 w-12 rounded-2xl border border-orange-200 bg-orange-50 text-base font-semibold text-slate-900 shadow-none first:rounded-2xl first:border last:rounded-2xl"
+                                        className="h-11 w-full min-w-0 rounded-2xl border border-orange-200 bg-orange-50 text-base font-semibold text-slate-900 shadow-none first:rounded-2xl first:border last:rounded-2xl sm:h-12"
                                       />
                                     ))}
                                   </InputOTPGroup>

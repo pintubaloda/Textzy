@@ -137,7 +137,15 @@ public class AuthController(
             });
         }
 
-        var token = await sessions.CreateSessionAsync(user.Id, tenantId, ct);
+        string token;
+        try
+        {
+            token = await sessions.CreateSessionAsync(user.Id, tenantId, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
         authCookie.SetToken(HttpContext, token);
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(token);
@@ -166,7 +174,15 @@ public class AuthController(
         var now = DateTime.UtcNow;
         challenge.VerifiedAtUtc = now;
         challenge.ConsumedAtUtc = now;
-        var token = await sessions.CreateSessionAsync(user.Id, challenge.TenantId, ct, now, now);
+        string token;
+        try
+        {
+            token = await sessions.CreateSessionAsync(user.Id, challenge.TenantId, ct, now, now);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
         await db.SaveChangesAsync(ct);
 
         authCookie.SetToken(HttpContext, token);
@@ -543,12 +559,20 @@ public class AuthController(
         var memberCount = await db.TenantUsers.CountAsync(tu => tu.TenantId == invite.TenantId, ct);
         await billingGuard.SetAbsoluteUsageAsync(invite.TenantId, "teamMembers", memberCount, ct);
 
-        var sessionToken = await sessions.CreateSessionAsync(
-            user.Id,
-            invite.TenantId,
-            ct,
-            auth.TwoFactorVerifiedAtUtc,
-            auth.StepUpVerifiedAtUtc);
+        string sessionToken;
+        try
+        {
+            sessionToken = await sessions.CreateSessionAsync(
+                user.Id,
+                invite.TenantId,
+                ct,
+                auth.TwoFactorVerifiedAtUtc,
+                auth.StepUpVerifiedAtUtc);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
         authCookie.SetToken(HttpContext, sessionToken);
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(sessionToken);
@@ -936,12 +960,20 @@ public class AuthController(
         });
         await db.SaveChangesAsync(ct);
 
-        var token = await sessions.CreateSessionAsync(
-            auth.UserId,
-            tenant.Id,
-            ct,
-            auth.TwoFactorVerifiedAtUtc,
-            auth.StepUpVerifiedAtUtc);
+        string token;
+        try
+        {
+            token = await sessions.CreateSessionAsync(
+                auth.UserId,
+                tenant.Id,
+                ct,
+                auth.TwoFactorVerifiedAtUtc,
+                auth.StepUpVerifiedAtUtc);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
         authCookie.SetToken(HttpContext, token);
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(token);
@@ -963,12 +995,20 @@ public class AuthController(
             .FirstOrDefaultAsync(tu => tu.UserId == auth.UserId && tu.TenantId == tenant.Id, ct);
         if (membership is null) return Forbid();
 
-        var token = await sessions.CreateSessionAsync(
-            auth.UserId,
-            tenant.Id,
-            ct,
-            auth.TwoFactorVerifiedAtUtc,
-            auth.StepUpVerifiedAtUtc);
+        string token;
+        try
+        {
+            token = await sessions.CreateSessionAsync(
+                auth.UserId,
+                tenant.Id,
+                ct,
+                auth.TwoFactorVerifiedAtUtc,
+                auth.StepUpVerifiedAtUtc);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
         authCookie.SetToken(HttpContext, token);
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(token);

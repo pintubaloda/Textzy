@@ -159,6 +159,7 @@ else
 builder.Services.AddScoped<TenancyContext>();
 builder.Services.AddScoped<AuthContext>();
 builder.Services.AddScoped<PasswordHasher>();
+builder.Services.AddScoped<SecurityIpRuleService>();
 builder.Services.AddScoped<SessionService>();
 builder.Services.AddScoped<AuthenticatorTotpService>();
 builder.Services.AddScoped<RbacService>();
@@ -642,20 +643,37 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "ResolvedAtUtc" timestamp with time zone NULL
         );
         """);
-    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SecuritySignals_Status_CreatedAtUtc" ON "SecuritySignals" ("Status","CreatedAtUtc");""");
-    db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SecuritySignals_Tenant_CreatedAtUtc" ON "SecuritySignals" ("TenantId","CreatedAtUtc");""");
+db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SecuritySignals_Status_CreatedAtUtc" ON "SecuritySignals" ("Status","CreatedAtUtc");""");
+db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SecuritySignals_Tenant_CreatedAtUtc" ON "SecuritySignals" ("TenantId","CreatedAtUtc");""");
 
-    db.Database.ExecuteSqlRaw("""
-        CREATE TABLE IF NOT EXISTS "TenantSecurityControls" (
-            "Id" uuid PRIMARY KEY,
-            "TenantId" uuid NOT NULL,
-            "CircuitBreakerEnabled" boolean NOT NULL DEFAULT false,
-            "RatePerMinuteOverride" integer NOT NULL DEFAULT 0,
-            "Reason" text NOT NULL DEFAULT '',
-            "UpdatedAtUtc" timestamp with time zone NOT NULL,
-            "UpdatedByUserId" uuid NOT NULL
-        );
-        """);
+db.Database.ExecuteSqlRaw("""
+CREATE TABLE IF NOT EXISTS "SecurityIpRules" (
+    "Id" uuid PRIMARY KEY,
+    "TenantId" uuid NULL,
+    "Scope" text NOT NULL DEFAULT 'session',
+    "RuleType" text NOT NULL DEFAULT 'allow',
+    "IpRule" text NOT NULL DEFAULT '',
+    "Note" text NOT NULL DEFAULT '',
+    "IsActive" boolean NOT NULL DEFAULT true,
+    "CreatedByUserId" uuid NOT NULL,
+    "CreatedAtUtc" timestamp with time zone NOT NULL DEFAULT now(),
+    "UpdatedAtUtc" timestamp with time zone NULL
+);
+""");
+db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SecurityIpRules_Scope_IsActive" ON "SecurityIpRules" ("Scope","IsActive");""");
+db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SecurityIpRules_TenantId_Scope_IsActive" ON "SecurityIpRules" ("TenantId","Scope","IsActive");""");
+
+db.Database.ExecuteSqlRaw("""
+CREATE TABLE IF NOT EXISTS "TenantSecurityControls" (
+"Id" uuid PRIMARY KEY,
+"TenantId" uuid NOT NULL,
+"CircuitBreakerEnabled" boolean NOT NULL DEFAULT false,
+"RatePerMinuteOverride" integer NOT NULL DEFAULT 0,
+"Reason" text NOT NULL DEFAULT '',
+"UpdatedAtUtc" timestamp with time zone NOT NULL,
+"UpdatedByUserId" uuid NOT NULL
+);
+""");
     db.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_TenantSecurityControls_TenantId" ON "TenantSecurityControls" ("TenantId");""");
 
     db.Database.ExecuteSqlRaw("""

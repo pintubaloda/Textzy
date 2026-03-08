@@ -7,9 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AlertTriangle, Download, Filter, History, Laptop2, RefreshCcw, ShieldCheck, UserCircle2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { AlertTriangle, Ban, Download, Filter, History, Laptop2, RefreshCcw, ShieldCheck, ShieldPlus, Trash2, UserCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  blockPlatformSessionIp,
+  createPlatformSecurityIpRule,
+  deletePlatformSecurityIpRule,
   exportPlatformSecurityReport,
   getPlatformCustomers,
   getPlatformSecurityReport,
@@ -122,14 +126,44 @@ function SessionStateBadge({ row }) {
   return <Badge className={classes}>{stateText}</Badge>;
 }
 
+function IpPolicyBadge({ value }) {
+  const normalized = String(value || "open").toLowerCase();
+  const classes =
+    normalized === "blocked"
+      ? "bg-rose-100 text-rose-700"
+      : normalized === "allowlisted"
+      ? "bg-emerald-100 text-emerald-700"
+      : normalized === "not_allowlisted"
+      ? "bg-amber-100 text-amber-700"
+      : "bg-slate-100 text-slate-700";
+  const label =
+    normalized === "allowlisted"
+      ? "Allowlisted"
+      : normalized === "not_allowlisted"
+      ? "Missing allowlist"
+      : normalized === "blocked"
+      ? "Blocked"
+      : "Open";
+  return <Badge className={classes}>{label}</Badge>;
+}
+
 export default function PlatformSecurityReportPage() {
   const [tenants, setTenants] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [revokingSessionId, setRevokingSessionId] = useState("");
-  const [report, setReport] = useState({ summary: {}, loginHistory: [], sessionsByUser: [], auditEvents: [], notes: {} });
+  const [blockingSessionId, setBlockingSessionId] = useState("");
+  const [savingIpRule, setSavingIpRule] = useState(false);
+  const [deletingIpRuleId, setDeletingIpRuleId] = useState("");
+  const [report, setReport] = useState({ summary: {}, ipRules: [], loginHistory: [], sessionsByUser: [], auditEvents: [], notes: {} });
   const [selectedUser, setSelectedUser] = useState(null);
+  const [ipRuleForm, setIpRuleForm] = useState({
+    tenantId: "all",
+    ruleType: "block",
+    ipRule: "",
+    note: "",
+  });
   const [filters, setFilters] = useState({
     tenantId: "",
     userId: "",
@@ -150,7 +184,7 @@ export default function PlatformSecurityReportPage() {
       ]);
       setTenants(Array.isArray(tenantRows) ? tenantRows : []);
       setUsers(Array.isArray(userRows) ? userRows : []);
-      setReport(reportRows || { summary: {}, loginHistory: [], sessionsByUser: [], auditEvents: [], notes: {} });
+      setReport(reportRows || { summary: {}, ipRules: [], loginHistory: [], sessionsByUser: [], auditEvents: [], notes: {} });
     } catch (error) {
       toast.error(error?.message || "Failed to load security report");
     } finally {
@@ -210,11 +244,53 @@ export default function PlatformSecurityReportPage() {
     }
   };
 
+  const onCreateIpRule = async (payload) => {
+    try {
+      setSavingIpRule(true);
+      await createPlatformSecurityIpRule(payload);
+      toast.success(payload.ruleType === "allow" ? "IP added to allowlist." : "IP added to blocklist.");
+      setIpRuleForm((prev) => ({ ...prev, ipRule: "", note: "" }));
+      await applyFilters();
+    } catch (error) {
+      toast.error(error?.message || "Failed to save IP rule");
+    } finally {
+      setSavingIpRule(false);
+    }
+  };
+
+  const onDeleteIpRule = async (ruleId) => {
+    try {
+      setDeletingIpRuleId(ruleId);
+      await deletePlatformSecurityIpRule(ruleId);
+      toast.success("IP rule removed.");
+      await applyFilters();
+    } catch (error) {
+      toast.error(error?.message || "Failed to remove IP rule");
+    } finally {
+      setDeletingIpRuleId("");
+    }
+  };
+
+  const onBlockSessionIp = async (sessionId) => {
+    try {
+      setBlockingSessionId(sessionId);
+      const result = await blockPlatformSessionIp(sessionId);
+      toast.success(`IP blocked.${Number(result?.sessionsRevoked || 0) > 0 ? ` ${result.sessionsRevoked} session(s) revoked.` : ""}`);
+      await applyFilters();
+    } catch (error) {
+      toast.error(error?.message || "Failed to block session IP");
+    } finally {
+      setBlockingSessionId("");
+    }
+  };
+
   const summary = report?.summary || {};
+  const ipRules = useMemo(() => (Array.isArray(report?.ipRules) ? report.ipRules : []), [report]);
   const loginHistory = useMemo(() => (Array.isArray(report?.loginHistory) ? report.loginHistory : []), [report]);
   const sessionsByUser = useMemo(() => (Array.isArray(report?.sessionsByUser) ? report.sessionsByUser : []), [report]);
   const auditEvents = useMemo(() => (Array.isArray(report?.auditEvents) ? report.auditEvents : []), [report]);
   const note = report?.notes?.location || "IP address and device metadata are captured. Lat/long is not collected.";
+  const ipPolicyNote = report?.notes?.ipPolicy || "Block rules win over allow rules.";
 
   const tenantOptions = useMemo(() => (Array.isArray(tenants) ? tenants : []), [tenants]);
   const userOptions = useMemo(() => (Array.isArray(users) ? users : []), [users]);
@@ -260,6 +336,125 @@ export default function PlatformSecurityReportPage() {
         <KpiCard title="Audit Events" value={summary.auditEvents} hint="Action-level audit rows after filters" icon={ShieldCheck} tone="slate" />
         <KpiCard title="Suspicious" value={summary.suspiciousLogins} hint="Logins flagged by heuristics" icon={AlertTriangle} tone="rose" />
       </div>
+
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldPlus className="h-5 w-5 text-orange-500" />
+            IP Access Controls
+          </CardTitle>
+          <CardDescription>{ipPolicyNote}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Rule Type</Label>
+                  <Select value={ipRuleForm.ruleType} onValueChange={(value) => setIpRuleForm((prev) => ({ ...prev, ruleType: value }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="allow">Whitelist</SelectItem>
+                      <SelectItem value="block">Blocklist</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Tenant Scope</Label>
+                  <Select value={ipRuleForm.tenantId} onValueChange={(value) => setIpRuleForm((prev) => ({ ...prev, tenantId: value }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All tenants</SelectItem>
+                      {tenantOptions.map((tenant) => (
+                        <SelectItem key={tenant.tenantId} value={tenant.tenantId}>
+                          {tenant.tenantName || tenant.companyName || tenant.tenantSlug}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>IP or CIDR</Label>
+                  <Input
+                    value={ipRuleForm.ipRule}
+                    onChange={(e) => setIpRuleForm((prev) => ({ ...prev, ipRule: e.target.value }))}
+                    placeholder="203.0.113.10 or 198.51.100.0/24"
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Note</Label>
+                  <Textarea
+                    value={ipRuleForm.note}
+                    onChange={(e) => setIpRuleForm((prev) => ({ ...prev, note: e.target.value }))}
+                    placeholder="Reason for this rule"
+                    rows={3}
+                  />
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Button
+                  className="bg-orange-500 text-white hover:bg-orange-600"
+                  disabled={savingIpRule || !ipRuleForm.ipRule.trim()}
+                  onClick={() => onCreateIpRule({
+                    tenantId: ipRuleForm.tenantId,
+                    ruleType: ipRuleForm.ruleType,
+                    ipRule: ipRuleForm.ipRule.trim(),
+                    note: ipRuleForm.note.trim(),
+                    revokeMatchingSessions: ipRuleForm.ruleType === "block",
+                  })}
+                >
+                  {savingIpRule ? "Saving..." : ipRuleForm.ruleType === "allow" ? "Add to whitelist" : "Add to blocklist"}
+                </Button>
+                <p className="self-center text-xs text-slate-500">
+                  Use exact IPs or CIDR ranges. Removing a rule immediately restores normal access evaluation.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200">
+              <div className="border-b border-slate-200 px-4 py-3">
+                <p className="text-sm font-semibold text-slate-900">Active rules</p>
+                <p className="text-xs text-slate-500">{ipRules.length} session access rule(s)</p>
+              </div>
+              <div className="max-h-[320px] overflow-auto">
+                {ipRules.length ? ipRules.map((rule) => (
+                  <div key={rule.id} className="border-b border-slate-100 px-4 py-3 last:border-b-0">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge className={String(rule.ruleType).toLowerCase() === "block" ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}>
+                            {String(rule.ruleType).toLowerCase() === "block" ? "Blocklist" : "Whitelist"}
+                          </Badge>
+                          <span className="font-medium text-slate-900">{rule.ipRule}</span>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          {rule.tenantName || "All tenants"}{rule.tenantSlug ? ` (${rule.tenantSlug})` : ""}
+                        </p>
+                        <p className="text-xs text-slate-600">{rule.note || "No note"}</p>
+                        <p className="text-[11px] text-slate-400">Created {fmt(rule.createdAtUtc)}</p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-rose-200 text-rose-700 hover:bg-rose-50"
+                        disabled={deletingIpRuleId === rule.id}
+                        onClick={() => onDeleteIpRule(rule.id)}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        {deletingIpRuleId === rule.id ? "Removing..." : "Remove"}
+                      </Button>
+                    </div>
+                  </div>
+                )) : (
+                  <div className="px-4 py-10 text-center text-sm text-slate-500">
+                    No active session IP rules. Add a whitelist or blocklist entry to control login access.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="border-slate-200 shadow-sm">
         <CardHeader>
@@ -358,7 +553,7 @@ export default function PlatformSecurityReportPage() {
             </CardHeader>
             <CardContent>
               <TableShell
-                headers={["User", "Tenant", "State", "Risk", "Device / IP", "Created", "Last Seen", "2FA", "Actions"]}
+                headers={["User", "Tenant", "State", "Risk", "IP Policy", "Device / IP", "Created", "Last Seen", "2FA", "Actions"]}
                 empty={loading ? "Loading login history..." : "No login history found for the current filters."}
               >
                 {loginHistory.map((row) => (
@@ -388,6 +583,12 @@ export default function PlatformSecurityReportPage() {
                       )}
                     </td>
                     <td className="px-4 py-3">
+                      <div className="space-y-2">
+                        <IpPolicyBadge value={row.ipPolicyStatus} />
+                        <p className="max-w-[180px] text-xs text-slate-500">{row.ipPolicyRule || "No matching rule"}</p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
                       <p className="font-medium text-slate-900">{row.deviceLabel || row.userAgent || "-"}</p>
                       <p className="text-xs text-slate-500">Created: {row.ipAddress || "-"}</p>
                       <p className="text-xs text-slate-500">Last seen: {row.lastSeenIpAddress || "-"}</p>
@@ -408,6 +609,31 @@ export default function PlatformSecurityReportPage() {
                       <div className="flex flex-col gap-2">
                         <Button size="sm" variant="outline" onClick={() => setSelectedUser({ userId: row.userId, userName: row.userName, userEmail: row.userEmail })}>
                           View user
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!String(row.lastSeenIpAddress || row.ipAddress || "").trim() || savingIpRule}
+                          onClick={() => onCreateIpRule({
+                            tenantId: row.tenantId,
+                            ruleType: "allow",
+                            ipRule: String(row.lastSeenIpAddress || row.ipAddress || "").trim(),
+                            note: `Allowlisted from session ${row.sessionId}`,
+                            revokeMatchingSessions: false,
+                          })}
+                        >
+                          <ShieldCheck className="mr-2 h-4 w-4" />
+                          Allow IP
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-amber-200 text-amber-700 hover:bg-amber-50"
+                          disabled={!String(row.lastSeenIpAddress || row.ipAddress || "").trim() || blockingSessionId === row.sessionId}
+                          onClick={() => onBlockSessionIp(row.sessionId)}
+                        >
+                          <Ban className="mr-2 h-4 w-4" />
+                          {blockingSessionId === row.sessionId ? "Blocking..." : "Block IP"}
                         </Button>
                         {!row.revokedAtUtc ? (
                           <Button

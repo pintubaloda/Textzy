@@ -6,7 +6,7 @@ using Textzy.Api.Models;
 
 namespace Textzy.Api.Services;
 
-public class SessionService(ControlDbContext db, IHttpContextAccessor httpContextAccessor)
+public class SessionService(ControlDbContext db, IHttpContextAccessor httpContextAccessor, SecurityIpRuleService ipRules)
 {
     private const int SessionHours = 12;
 
@@ -23,14 +23,34 @@ public class SessionService(ControlDbContext db, IHttpContextAccessor httpContex
             .Replace('/', '_')
             .TrimEnd('=');
 
+        var currentIp = SecurityIpRuleService.NormalizeIp(RequestMetadata.GetClientIp(httpContextAccessor.HttpContext));
+        var createDecision = ipRules.EvaluateSessionIp(currentIp, tenantId, userId);
+        if (!createDecision.IsAllowed)
+        {
+            db.SecuritySignals.Add(new SecuritySignal
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                SignalType = string.Equals(createDecision.Message, "This IP address is blocked for platform login.", StringComparison.OrdinalIgnoreCase)
+                    ? "session_ip_blocked"
+                    : "session_ip_not_allowlisted",
+                Severity = "high",
+                Status = "open",
+                CountValue = 1,
+                Details = $"Login denied for user {userId} from IP {currentIp} for tenant {tenantId}. {createDecision.Message}"
+            });
+            await db.SaveChangesAsync(ct);
+            throw new InvalidOperationException(createDecision.Message);
+        }
+
         var session = new SessionToken
         {
             Id = Guid.NewGuid(),
             UserId = userId,
             TenantId = tenantId,
             TokenHash = HashToken(opaqueToken),
-            CreatedIpAddress = RequestMetadata.GetClientIp(httpContextAccessor.HttpContext),
-            LastSeenIpAddress = RequestMetadata.GetClientIp(httpContextAccessor.HttpContext),
+            CreatedIpAddress = currentIp,
+            LastSeenIpAddress = currentIp,
             UserAgent = RequestMetadata.GetUserAgent(httpContextAccessor.HttpContext),
             DeviceLabel = RequestMetadata.GetDeviceLabel(httpContextAccessor.HttpContext),
             ExpiresAtUtc = DateTime.UtcNow.AddHours(SessionHours),
@@ -57,6 +77,27 @@ public class SessionService(ControlDbContext db, IHttpContextAccessor httpContex
         var ip = NormalizeIp(RequestMetadata.GetClientIp(httpContextAccessor.HttpContext));
         if (!string.IsNullOrWhiteSpace(ip))
         {
+            var ruleDecision = ipRules.EvaluateSessionIp(ip, session.TenantId, session.UserId);
+            if (!ruleDecision.IsAllowed)
+            {
+                session.LastSeenIpAddress = ip;
+                session.RevokedAtUtc = now;
+                db.SecuritySignals.Add(new SecuritySignal
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = session.TenantId,
+                    SignalType = string.Equals(ruleDecision.Message, "This IP address is blocked for platform login.", StringComparison.OrdinalIgnoreCase)
+                        ? "session_ip_blocked"
+                        : "session_ip_not_allowlisted",
+                    Severity = "high",
+                    Status = "open",
+                    CountValue = 1,
+                    Details = $"Session {session.Id} revoked for user {session.UserId} from IP {ip}. {ruleDecision.Message}"
+                });
+                db.SaveChanges();
+                return null;
+            }
+
             var baselineIp = NormalizeIp(!string.IsNullOrWhiteSpace(session.CreatedIpAddress)
                 ? session.CreatedIpAddress
                 : session.LastSeenIpAddress);
