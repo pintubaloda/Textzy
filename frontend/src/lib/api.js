@@ -1204,6 +1204,29 @@ export async function assignPlatformCustomerPlan(tenantId, payload) {
   return apiPost(`/api/platform/customers/${tenantId}/assign-plan`, payload)
 }
 
+export async function getPlatformPurchaseReport(filters = {}) {
+  const qs = new URLSearchParams()
+  if (filters.fromUtc) qs.set('fromUtc', filters.fromUtc)
+  if (filters.toUtc) qs.set('toUtc', filters.toUtc)
+  if (filters.service) qs.set('service', filters.service)
+  if (filters.q) qs.set('q', filters.q)
+  if (filters.status) qs.set('status', filters.status)
+  if (filters.take) qs.set('take', String(filters.take))
+  return apiGet(`/api/platform/purchases${qs.toString() ? `?${qs.toString()}` : ''}`)
+}
+
+export async function viewPlatformPurchaseInvoice(invoiceId) {
+  return apiGetBlob(`/api/platform/purchases/${encodeURIComponent(invoiceId)}/view`)
+}
+
+export async function sendPlatformPurchaseInvoice(invoiceId, payload = {}) {
+  return apiPost(`/api/platform/purchases/${encodeURIComponent(invoiceId)}/send`, payload)
+}
+
+export async function updatePlatformPurchaseInvoice(invoiceId, payload = {}) {
+  return apiPut(`/api/platform/purchases/${encodeURIComponent(invoiceId)}`, payload)
+}
+
 export async function archivePlatformBillingPlan(id) {
   return apiDelete(`/api/platform/billing/plans/${id}`)
 }

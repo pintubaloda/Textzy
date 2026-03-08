@@ -25,6 +25,7 @@ import {
   Database,
   Layers3,
   RefreshCcw,
+  ReceiptText,
   Rocket,
   ServerCog,
   ShieldAlert,
@@ -253,6 +254,9 @@ export default function PlatformOwnerDashboard() {
               <Button variant="outline" className="border-white/20 bg-white/5 text-white hover:bg-white/10" onClick={() => navigate("/dashboard/platform-security-report")}>
                 Security report
               </Button>
+              <Button variant="outline" className="border-white/20 bg-white/5 text-white hover:bg-white/10" onClick={() => navigate("/dashboard/platform-purchases")}>
+                Purchase report
+              </Button>
             </div>
           </div>
           <div className="grid min-w-full grid-cols-2 gap-3 xl:min-w-[420px]">
@@ -473,6 +477,7 @@ export default function PlatformOwnerDashboard() {
           <CardContent className="grid gap-3 sm:grid-cols-2">
             {[
               { label: "Customer admin", hint: "Plans, invoices, tenant users", icon: Users, href: "/dashboard/admin" },
+              { label: "Purchase report", hint: "Date and service filtered billing ledger", icon: ReceiptText, href: "/dashboard/platform-purchases" },
               { label: "WABA master", hint: "Meta app, tokens, onboarding", icon: Rocket, href: "/dashboard/platform-settings?tab=waba-master" },
               { label: "SMTP and email", hint: "Delivery, sender, reports", icon: Wifi, href: "/dashboard/platform-settings?tab=smtp-settings" },
               { label: "SMS gateway", hint: "Tata config and request logs", icon: ServerCog, href: "/dashboard/platform-settings?tab=sms-gateway" },

@@ -26,6 +26,7 @@ import {
   Settings,
   Shield,
   ShieldAlert,
+  ReceiptText,
   Palette,
   ChevronDown,
   Search,
@@ -196,6 +197,7 @@ const DashboardLayout = () => {
     ];
     const platformOnly = [
       "/dashboard/admin",
+      "/dashboard/platform-purchases",
       "/dashboard/platform-settings",
       "/dashboard/platform-branding",
     ];
@@ -319,6 +321,7 @@ const DashboardLayout = () => {
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
     { name: "Admin", href: "/dashboard/admin", icon: Shield },
+    { name: "Purchase Report", href: "/dashboard/platform-purchases", icon: ReceiptText },
     { name: "Security Report", href: "/dashboard/platform-security-report", icon: ShieldAlert },
     { name: "Branding", href: "/dashboard/platform-branding", icon: Palette },
   ];
