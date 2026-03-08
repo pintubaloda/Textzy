@@ -383,6 +383,19 @@ const IntegrationsPage = () => {
                                     <Button variant="outline" disabled={setupState.busy} onClick={() => setSetupState({ provider: "", qrUrl: "", code: "", busy: false })}>Cancel</Button>
                                   </div>
                                 </div>
+                              ) : String(item.activationStatus || "") === "not_purchased" ? (
+                                <div className="space-y-3">
+                                  <p className="text-sm text-slate-600">
+                                    Pay securely with Razorpay to activate {item.name} for this tenant. After purchase, you can scan the QR and complete setup here.
+                                  </p>
+                                  <Button
+                                    className="bg-orange-500 hover:bg-orange-600"
+                                    disabled={checkoutBusySlug === item.slug}
+                                    onClick={() => handlePurchaseIntegration(item)}
+                                  >
+                                    {checkoutBusySlug === item.slug ? "Processing..." : `Buy ${item.name}`}
+                                  </Button>
+                                </div>
                               ) : (
                                 <div className="space-y-3">
                                   <p className="text-sm text-slate-600">
