@@ -24,6 +24,7 @@ public class BillingController(
     BillingGuardService billingGuard,
     SecretCryptoService crypto,
     EmailService emailService,
+    InvoiceAttachmentService invoiceAttachmentService,
     IConfiguration config,
     SensitiveDataRedactor redactor,
     AuditLogService audit,
@@ -1519,7 +1520,8 @@ public class BillingController(
                     ["Total"] = FormatCurrency(invoiceBreakdown.Total, attempt.Currency),
                     ["Invoice Type"] = "Tax Invoice"
                 },
-                ct);
+                ct,
+                invoice);
         }
 
         if (string.Equals(plan.PricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
@@ -1616,7 +1618,8 @@ public class BillingController(
                     ["Total"] = FormatCurrency(invoiceBreakdown.Total, attempt.Currency),
                     ["Invoice Type"] = "Tax Invoice"
                 },
-                ct);
+                ct,
+                invoice);
         }
 
         var featureKey = $"integration:{slug}";
@@ -1637,13 +1640,16 @@ public class BillingController(
         flag.UpdatedByUserId = auth.UserId;
     }
 
-    private async Task TrySendBillingEventAsync(Guid tenantId, string title, string description, Dictionary<string, string> details, CancellationToken ct)
+    private async Task TrySendBillingEventAsync(Guid tenantId, string title, string description, Dictionary<string, string> details, CancellationToken ct, BillingInvoice? invoice = null)
     {
         try
         {
             var recipient = await ResolveBillingRecipientAsync(tenantId, ct);
             if (string.IsNullOrWhiteSpace(recipient.email)) return;
-            await emailService.SendBillingEventAsync(recipient.email, recipient.name, recipient.companyName, title, description, details, ct);
+            var attachments = invoice is null
+                ? null
+                : new[] { await invoiceAttachmentService.BuildPdfAttachmentAsync(invoice, Request, ct) };
+            await emailService.SendBillingEventAsync(recipient.email, recipient.name, recipient.companyName, title, description, details, ct, attachments);
         }
         catch (Exception ex)
         {

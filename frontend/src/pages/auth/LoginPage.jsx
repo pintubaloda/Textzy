@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { MessageSquare, Eye, EyeOff, ArrowRight, Download, ShieldCheck, Smartphone } from "lucide-react";
 import { toast } from "sonner";
-import { authLogin, authRequestEmailOtp, authEmailOtpStatus, authVerifyEmailOtp, checkApiHealth, getLastTenantSlug, getPublicMobileDownloadInfo, initializeMe, verifyLoginTwoFactor } from "@/lib/api";
+import { authLogin, authRequestEmailOtp, authEmailOtpStatus, authVerifyEmailOtp, checkApiHealth, consumeAuthRedirectReason, getLastTenantSlug, getPublicMobileDownloadInfo, initializeMe, verifyLoginTwoFactor } from "@/lib/api";
 
 const formatTwoFactorProvider = (value) => {
   const normalized = String(value || "authenticator")
@@ -20,6 +20,8 @@ const formatTwoFactorProvider = (value) => {
 
 const LoginPage = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [storedAuthReason] = useState(() => consumeAuthRedirectReason());
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [otpRequestBusy, setOtpRequestBusy] = useState(false);
@@ -40,6 +42,14 @@ const LoginPage = () => {
     password: "",
     rememberMe: false,
   });
+  const authReason = (searchParams.get("reason") || storedAuthReason || "").trim().toLowerCase();
+  const authReasonMessage = authReason === "ip_changed"
+    ? "Your IP changed. Please login again."
+    : authReason === "idle_timeout"
+      ? "Your session expired due to inactivity. Please login again."
+      : authReason === "ip_rejected"
+        ? "Your current IP is not allowed. Please login again."
+        : "";
 
   const completeLogin = async (emailVerificationId = "") => {
     const preferredTenantSlug = getLastTenantSlug();
@@ -205,6 +215,14 @@ const LoginPage = () => {
       .catch(() => {});
   }, [healthChecked]);
 
+  useEffect(() => {
+    if (!authReasonMessage) return;
+    toast.error(authReasonMessage);
+    const next = new URLSearchParams(searchParams);
+    next.delete("reason");
+    setSearchParams(next, { replace: true });
+  }, [authReasonMessage, searchParams, setSearchParams]);
+
   return (
     <div className="min-h-screen bg-slate-50 flex" data-testid="login-page">
       {/* Left Side - Form */}
@@ -225,6 +243,11 @@ const LoginPage = () => {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {authReasonMessage ? (
+                <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {authReasonMessage}
+                </div>
+              ) : null}
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>

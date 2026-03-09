@@ -74,14 +74,21 @@ public class SessionService(
     }
 
     public SessionToken? Validate(string opaqueToken)
+        => ValidateDetailed(opaqueToken).Session;
+
+    public SessionValidationResult ValidateDetailed(string opaqueToken)
     {
+        if (string.IsNullOrWhiteSpace(opaqueToken))
+            return new SessionValidationResult(null, SessionValidationFailure.InvalidOrExpired, "Invalid or expired session.");
+
         var hash = HashToken(opaqueToken);
         var now = DateTime.UtcNow;
         var session = db.SessionTokens.FirstOrDefault(s =>
             s.TokenHash == hash &&
             s.RevokedAtUtc == null &&
             s.ExpiresAtUtc > now);
-        if (session is null) return null;
+        if (session is null)
+            return new SessionValidationResult(null, SessionValidationFailure.InvalidOrExpired, "Invalid or expired session.");
 
         var idleTimeout = GetIdleTimeout();
         var lastSeenAtUtc = session.LastSeenAtUtc ?? session.CreatedAtUtc;
@@ -89,7 +96,7 @@ public class SessionService(
         {
             session.RevokedAtUtc = now;
             db.SaveChanges();
-            return null;
+            return new SessionValidationResult(null, SessionValidationFailure.IdleTimeout, "Session expired due to inactivity.");
         }
 
         session.LastSeenAtUtc = now;
@@ -118,7 +125,7 @@ public class SessionService(
                     Details = $"Session {session.Id} revoked for user {session.UserId} from IP {ip}. {ruleDecision.Message}"
                 });
                 db.SaveChanges();
-                return null;
+                return new SessionValidationResult(null, SessionValidationFailure.IpRejected, ruleDecision.Message);
             }
 
             var baselineIp = NormalizeIp(!string.IsNullOrWhiteSpace(session.CreatedIpAddress)
@@ -144,7 +151,7 @@ public class SessionService(
                     Details = $"Session {session.Id} revoked because IP changed from {baselineIp} to {ip} for user {session.UserId}."
                 });
                 db.SaveChanges();
-                return null;
+                return new SessionValidationResult(null, SessionValidationFailure.IpChanged, "Your IP changed. Please login again.");
             }
             else
             {
@@ -158,21 +165,26 @@ public class SessionService(
             session.DeviceLabel = RequestMetadata.GetDeviceLabel(httpContextAccessor.HttpContext);
         }
         db.SaveChanges();
-        return session;
+        return new SessionValidationResult(session, SessionValidationFailure.None, string.Empty);
     }
 
     public async Task RevokeAsync(string opaqueToken, CancellationToken ct = default)
     {
-        var session = Validate(opaqueToken);
+        var session = ValidateDetailed(opaqueToken).Session;
         if (session is null) return;
         session.RevokedAtUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
     }
 
     public async Task<string?> RotateAsync(string opaqueToken, CancellationToken ct = default)
+        => (await RotateDetailedAsync(opaqueToken, ct)).Token;
+
+    public async Task<SessionRotationResult> RotateDetailedAsync(string opaqueToken, CancellationToken ct = default)
     {
-        var session = Validate(opaqueToken);
-        if (session is null) return null;
+        var validation = ValidateDetailed(opaqueToken);
+        var session = validation.Session;
+        if (session is null)
+            return new SessionRotationResult(null, validation.Failure, validation.Message);
 
         session.RevokedAtUtc = DateTime.UtcNow;
         var newToken = await CreateSessionAsync(
@@ -182,7 +194,7 @@ public class SessionService(
             session.TwoFactorVerifiedAtUtc,
             session.StepUpVerifiedAtUtc,
             session.AllowlistBypassEnabled);
-        return newToken;
+        return new SessionRotationResult(newToken, SessionValidationFailure.None, string.Empty);
     }
 
     public async Task MarkStepUpVerifiedAsync(Guid sessionId, CancellationToken ct = default)

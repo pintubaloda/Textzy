@@ -13,6 +13,7 @@ const WABA_STATUS_CACHE_PREFIX = 'textzy.wabaStatus'
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 const DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES = 30
 const DEFAULT_SESSION_IDLE_WARNING_SECONDS = 60
+const AUTH_REDIRECT_REASON_KEY = 'textzy.authRedirectReason'
 let refreshPromise = null
 let authRedirected = false
 let stepUpUiHandler = null
@@ -91,6 +92,44 @@ export function setSession(next) {
 export function clearSession() {
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(CSRF_STORAGE_KEY)
+}
+
+function getAuthRedirectMessage(reason) {
+  const normalized = String(reason || '').trim().toLowerCase()
+  if (normalized === 'ip_changed') return 'Your IP changed. Please login again.'
+  if (normalized === 'idle_timeout') return 'Your session expired due to inactivity. Please login again.'
+  if (normalized === 'ip_rejected') return 'Your current IP is not allowed. Please login again.'
+  return ''
+}
+
+function persistAuthRedirectReason(reason) {
+  if (!reason) return
+  try {
+    localStorage.setItem(AUTH_REDIRECT_REASON_KEY, String(reason).trim().toLowerCase())
+  } catch {
+    // ignore storage failures
+  }
+}
+
+export function consumeAuthRedirectReason() {
+  try {
+    const reason = (localStorage.getItem(AUTH_REDIRECT_REASON_KEY) || '').trim().toLowerCase()
+    if (reason) localStorage.removeItem(AUTH_REDIRECT_REASON_KEY)
+    return reason
+  } catch {
+    return ''
+  }
+}
+
+function redirectToLogin(reason = '') {
+  clearSession()
+  if (!authRedirected && typeof window !== 'undefined' && window.location.pathname !== '/login') {
+    authRedirected = true
+    const normalizedReason = String(reason || '').trim().toLowerCase()
+    if (normalizedReason) persistAuthRedirectReason(normalizedReason)
+    const nextUrl = normalizedReason ? `/login?reason=${encodeURIComponent(normalizedReason)}` : '/login'
+    window.location.assign(nextUrl)
+  }
 }
 
 export function getSessionIdleTimeoutMs() {
@@ -340,7 +379,11 @@ async function refresh() {
   if (refreshPromise) return refreshPromise
   refreshPromise = (async () => {
     const res = await baseFetch('/api/auth/refresh', { method: 'POST' }, true)
-    if (!res.ok) return false
+    if (!res.ok) {
+      const reason = (res.headers.get('x-auth-reason') || '').trim().toLowerCase()
+      if (res.status === 401) redirectToLogin(reason)
+      return false
+    }
     await res.json().catch(() => ({}))
     return true
   })()
@@ -358,22 +401,16 @@ export async function refreshSession() {
 export async function apiRequest(path, options = {}) {
   let res = await baseFetch(path, options, true)
   if (res.status !== 401) return res
+  const firstFailureReason = (res.headers.get('x-auth-reason') || '').trim().toLowerCase()
   const ok = await refresh()
   if (!ok) {
-    clearSession()
-    if (!authRedirected && typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      authRedirected = true
-      window.location.assign('/login')
-    }
+    redirectToLogin(firstFailureReason)
     return res
   }
   res = await baseFetch(path, options, true)
   if (res.status === 401) {
-    clearSession()
-    if (!authRedirected && typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      authRedirected = true
-      window.location.assign('/login')
-    }
+    const secondFailureReason = (res.headers.get('x-auth-reason') || '').trim().toLowerCase()
+    redirectToLogin(secondFailureReason || firstFailureReason)
   }
   return res
 }

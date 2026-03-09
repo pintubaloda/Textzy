@@ -16,6 +16,7 @@ public class PaymentWebhookController(
     ControlDbContext db,
     SecretCryptoService crypto,
     EmailService emailService,
+    InvoiceAttachmentService invoiceAttachmentService,
     BillingGuardService billingGuard,
     AuditLogService audit,
     SensitiveDataRedactor redactor,
@@ -450,7 +451,8 @@ public class PaymentWebhookController(
                     ["Total"] = $"{invoiceBreakdown.Total:0.00} {attempt.Currency}",
                     ["Invoice Type"] = "Tax Invoice"
                 },
-                ct);
+                ct,
+                invoice);
         }
 
         if (string.Equals(plan.PricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
@@ -574,13 +576,16 @@ public class PaymentWebhookController(
         };
     }
 
-    private async Task TrySendBillingEventAsync(Guid tenantId, string title, string description, Dictionary<string, string> details, CancellationToken ct)
+    private async Task TrySendBillingEventAsync(Guid tenantId, string title, string description, Dictionary<string, string> details, CancellationToken ct, BillingInvoice? invoice = null)
     {
         try
         {
             var recipient = await ResolveBillingRecipientAsync(tenantId, ct);
             if (string.IsNullOrWhiteSpace(recipient.email)) return;
-            await emailService.SendBillingEventAsync(recipient.email, recipient.name, recipient.companyName, title, description, details, ct);
+            var attachments = invoice is null
+                ? null
+                : new[] { await invoiceAttachmentService.BuildPdfAttachmentAsync(invoice, Request, ct) };
+            await emailService.SendBillingEventAsync(recipient.email, recipient.name, recipient.companyName, title, description, details, ct, attachments);
         }
         catch (Exception ex)
         {

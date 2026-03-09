@@ -16,6 +16,7 @@ public class PlatformPurchasesController(
     RbacService rbac,
     AuditLogService audit,
     EmailService emailService,
+    InvoiceAttachmentService invoiceAttachmentService,
     SecretCryptoService crypto,
     IConfiguration config) : ControllerBase
 {
@@ -385,7 +386,7 @@ public class PlatformPurchasesController(
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsWrite)) return Forbid();
 
-        var invoice = await db.BillingInvoices.AsNoTracking().FirstOrDefaultAsync(x => x.Id == invoiceId, ct);
+        var invoice = await db.BillingInvoices.FirstOrDefaultAsync(x => x.Id == invoiceId, ct);
         if (invoice is null) return NotFound("Invoice not found.");
 
         var tenant = await db.Tenants.AsNoTracking().FirstOrDefaultAsync(x => x.Id == invoice.TenantId, ct);
@@ -406,6 +407,7 @@ public class PlatformPurchasesController(
             : invoice.Description.Trim();
         var currency = string.IsNullOrWhiteSpace(attempt?.Currency) ? "INR" : attempt!.Currency.Trim().ToUpperInvariant();
         var companyName = string.IsNullOrWhiteSpace(profile?.CompanyName) ? (tenant?.Name ?? "Textzy Workspace") : profile!.CompanyName;
+        var attachments = new[] { await invoiceAttachmentService.BuildPdfAttachmentAsync(invoice, Request, ct) };
 
         await emailService.SendBillingEventAsync(
             recipient.email,
@@ -423,7 +425,8 @@ public class PlatformPurchasesController(
                 ["Total"] = FormatCurrency(invoice.Total, currency),
                 ["Status"] = invoice.Status
             },
-            ct);
+            ct,
+            attachments);
 
         await audit.WriteAsync("platform.purchase.invoice.resent", $"invoice={invoiceId}; tenant={invoice.TenantId}; email={recipient.email}", ct);
         return Ok(new { sent = true, invoiceId });

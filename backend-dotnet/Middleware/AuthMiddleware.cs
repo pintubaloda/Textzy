@@ -121,11 +121,14 @@ public class AuthMiddleware(RequestDelegate next)
             await context.Response.WriteAsync("Missing bearer token.");
             return;
         }
-        var session = sessions.Validate(opaqueToken);
+        var validation = sessions.ValidateDetailed(opaqueToken);
+        var session = validation.Session;
         if (session is null)
         {
+            authCookie.Clear(context);
+            WriteAuthFailure(context, validation);
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await context.Response.WriteAsync("Invalid or expired session.");
+            await context.Response.WriteAsync(validation.Message);
             return;
         }
 
@@ -457,5 +460,17 @@ public class AuthMiddleware(RequestDelegate next)
         }
 
         return parsed;
+    }
+
+    private static void WriteAuthFailure(HttpContext context, SessionValidationResult validation)
+    {
+        var reason = validation.Failure switch
+        {
+            SessionValidationFailure.IpChanged => "ip_changed",
+            SessionValidationFailure.IdleTimeout => "idle_timeout",
+            SessionValidationFailure.IpRejected => "ip_rejected",
+            _ => "session_invalid"
+        };
+        context.Response.Headers["X-Auth-Reason"] = reason;
     }
 }

@@ -169,6 +169,7 @@ builder.Services.AddScoped<AuthCookieService>();
 builder.Services.AddScoped<ContactPiiService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<EmailService>();
+builder.Services.AddScoped<InvoiceAttachmentService>();
 builder.Services.AddScoped<BillingGuardService>();
 builder.Services.AddScoped<SecurityControlService>();
 builder.Services.AddScoped<IMessageProvider, TataSmsMessageProvider>();

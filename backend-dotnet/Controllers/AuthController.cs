@@ -497,14 +497,27 @@ public class AuthController(
             : string.Empty;
         var cookieToken = authCookie.ReadToken(HttpContext) ?? string.Empty;
 
-        string? rotated = null;
+        SessionRotationResult? rotation = null;
         if (!string.IsNullOrWhiteSpace(bearerToken))
-            rotated = await sessions.RotateAsync(bearerToken, ct);
+            rotation = await sessions.RotateDetailedAsync(bearerToken, ct);
         // Fallback to cookie token when bearer is stale/missing.
-        if (rotated is null && !string.IsNullOrWhiteSpace(cookieToken))
-            rotated = await sessions.RotateAsync(cookieToken, ct);
+        if ((rotation is null || !rotation.Succeeded) && !string.IsNullOrWhiteSpace(cookieToken))
+            rotation = await sessions.RotateDetailedAsync(cookieToken, ct);
 
-        if (rotated is null) return Unauthorized("Invalid or expired session.");
+        if (rotation is null || !rotation.Succeeded)
+        {
+            authCookie.Clear(HttpContext);
+            Response.Headers["X-Auth-Reason"] = rotation?.Failure switch
+            {
+                SessionValidationFailure.IpChanged => "ip_changed",
+                SessionValidationFailure.IdleTimeout => "idle_timeout",
+                SessionValidationFailure.IpRejected => "ip_rejected",
+                _ => "session_invalid"
+            };
+            return Unauthorized(rotation?.Message ?? "Invalid or expired session.");
+        }
+
+        var rotated = rotation.Token!;
         authCookie.SetToken(HttpContext, rotated);
         authCookie.EnsureCsrfToken(HttpContext);
         WriteAuthHeaders(rotated);
