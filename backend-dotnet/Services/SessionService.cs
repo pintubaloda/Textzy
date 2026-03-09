@@ -196,6 +196,16 @@ public class SessionService(
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<bool> GetAllowlistBypassEnabledAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        if (sessionId == Guid.Empty) return false;
+        return await db.SessionTokens
+            .AsNoTracking()
+            .Where(x => x.Id == sessionId)
+            .Select(x => x.AllowlistBypassEnabled)
+            .FirstOrDefaultAsync(ct);
+    }
+
     private static string HashToken(string opaqueToken)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(opaqueToken));

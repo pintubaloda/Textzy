@@ -1002,6 +1002,7 @@ public class AuthController(
         });
         await db.SaveChangesAsync(ct);
 
+        var allowlistBypassEnabled = await sessions.GetAllowlistBypassEnabledAsync(auth.SessionId, ct);
         string token;
         try
         {
@@ -1010,7 +1011,8 @@ public class AuthController(
                 tenant.Id,
                 ct,
                 auth.TwoFactorVerifiedAtUtc,
-                auth.StepUpVerifiedAtUtc);
+                auth.StepUpVerifiedAtUtc,
+                allowlistBypassEnabled);
         }
         catch (InvalidOperationException ex)
         {
@@ -1037,6 +1039,7 @@ public class AuthController(
             .FirstOrDefaultAsync(tu => tu.UserId == auth.UserId && tu.TenantId == tenant.Id, ct);
         if (membership is null) return Forbid();
 
+        var allowlistBypassEnabled = await sessions.GetAllowlistBypassEnabledAsync(auth.SessionId, ct);
         string token;
         try
         {
@@ -1045,7 +1048,8 @@ public class AuthController(
                 tenant.Id,
                 ct,
                 auth.TwoFactorVerifiedAtUtc,
-                auth.StepUpVerifiedAtUtc);
+                auth.StepUpVerifiedAtUtc,
+                allowlistBypassEnabled);
         }
         catch (InvalidOperationException ex)
         {
