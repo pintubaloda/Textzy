@@ -7,7 +7,7 @@ namespace Textzy.Api.Services;
 
 public class SecurityIpRuleService(ControlDbContext db)
 {
-    public IpRuleDecision EvaluateSessionIp(string? ipAddress, Guid tenantId, Guid userId)
+    public IpRuleDecision EvaluateSessionIp(string? ipAddress, Guid tenantId, Guid userId, bool enforceAllowlist = true)
     {
         var normalizedIp = NormalizeIp(ipAddress);
         var rules = db.SecurityIpRules
@@ -33,7 +33,7 @@ public class SecurityIpRuleService(ControlDbContext db)
         var allowRules = rules
             .Where(x => string.Equals(x.RuleType, "allow", StringComparison.OrdinalIgnoreCase))
             .ToList();
-        if (allowRules.Count == 0)
+        if (!enforceAllowlist || allowRules.Count == 0)
             return new IpRuleDecision(true, normalizedIp, string.Empty, string.Empty, null, null, string.Empty);
 
         var matchingAllow = allowRules.FirstOrDefault(x => MatchesRule(normalizedIp, x.IpRule));

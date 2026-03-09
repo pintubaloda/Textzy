@@ -11,6 +11,8 @@ const CSRF_STORAGE_KEY = 'textzy.csrf'
 const LAST_TENANT_KEY = 'textzy.lastTenantSlug'
 const WABA_STATUS_CACHE_PREFIX = 'textzy.wabaStatus'
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
+const DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES = 30
+const DEFAULT_SESSION_IDLE_WARNING_SECONDS = 60
 let refreshPromise = null
 let authRedirected = false
 let stepUpUiHandler = null
@@ -89,6 +91,38 @@ export function setSession(next) {
 export function clearSession() {
   localStorage.removeItem(STORAGE_KEY)
   localStorage.removeItem(CSRF_STORAGE_KEY)
+}
+
+export function getSessionIdleTimeoutMs() {
+  const raw =
+    runtimeConfig.SESSION_IDLE_TIMEOUT_MINUTES ||
+    process.env.REACT_APP_SESSION_IDLE_TIMEOUT_MINUTES ||
+    process.env.VITE_SESSION_IDLE_TIMEOUT_MINUTES ||
+    String(DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES)
+  const parsed = Number.parseInt(String(raw || '').trim(), 10)
+  const minutes = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES
+  return minutes * 60 * 1000
+}
+
+export function getSessionIdleWarningMs() {
+  const raw =
+    runtimeConfig.SESSION_IDLE_WARNING_SECONDS ||
+    process.env.REACT_APP_SESSION_IDLE_WARNING_SECONDS ||
+    process.env.VITE_SESSION_IDLE_WARNING_SECONDS ||
+    String(DEFAULT_SESSION_IDLE_WARNING_SECONDS)
+  const parsed = Number.parseInt(String(raw || '').trim(), 10)
+  const seconds = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SESSION_IDLE_WARNING_SECONDS
+  return seconds * 1000
+}
+
+export async function authLogout() {
+  try {
+    await baseFetch('/api/auth/logout', { method: 'POST' }, true)
+  } catch {
+    // Local cleanup still needs to happen when the server session is already gone.
+  } finally {
+    clearSession()
+  }
 }
 
 export function registerStepUpUiHandler(handler) {
@@ -315,6 +349,10 @@ async function refresh() {
   } finally {
     refreshPromise = null
   }
+}
+
+export async function refreshSession() {
+  return refresh()
 }
 
 export async function apiRequest(path, options = {}) {

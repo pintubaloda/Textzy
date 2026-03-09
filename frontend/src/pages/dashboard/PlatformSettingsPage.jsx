@@ -232,6 +232,7 @@ const PlatformSettingsPage = () => {
   const [securitySignals, setSecuritySignals] = useState([]);
   const [securityTenantId, setSecurityTenantId] = useState("");
   const [securityControls, setSecurityControls] = useState({ circuitBreakerEnabled: false, ratePerMinuteOverride: 0, reason: "" });
+  const [authSecurity, setAuthSecurity] = useState({ sessionIdleTimeoutMinutes: "30", sessionIdleWarningSeconds: "60" });
   const [securityStatusFilter, setSecurityStatusFilter] = useState("open");
   const [requestLogs, setRequestLogs] = useState([]);
   const [wabaWebhookHealth, setWabaWebhookHealth] = useState(null);
@@ -557,9 +558,10 @@ const PlatformSettingsPage = () => {
             setTenants(list);
             const selected = securityTenantId || list[0]?.tenantId || "";
             setSecurityTenantId(selected);
-            const [signals, controls] = await Promise.all([
+            const [signals, controls, authSettings] = await Promise.all([
               getPlatformSecuritySignals({ status: securityStatusFilter, limit: 200 }).catch(() => []),
-              selected ? getPlatformSecurityControls(selected).catch(() => null) : Promise.resolve(null)
+              selected ? getPlatformSecurityControls(selected).catch(() => null) : Promise.resolve(null),
+              getPlatformSettings("auth-security").catch(() => ({ values: {} }))
             ]);
             if (!active) return;
             setSecuritySignals(signals || []);
@@ -567,6 +569,11 @@ const PlatformSettingsPage = () => {
               circuitBreakerEnabled: !!controls?.circuitBreakerEnabled,
               ratePerMinuteOverride: Number(controls?.ratePerMinuteOverride || 0),
               reason: controls?.reason || ""
+            });
+            const authValues = authSettings?.values || {};
+            setAuthSecurity({
+              sessionIdleTimeoutMinutes: authValues.sessionIdleTimeoutMinutes || "30",
+              sessionIdleWarningSeconds: authValues.sessionIdleWarningSeconds || "60",
             });
           } else if (tab === "waba-policies") {
             const rows = await listWabaErrorPolicies();
@@ -2908,6 +2915,57 @@ const PlatformSettingsPage = () => {
                   <Button variant="outline" size="sm" onClick={() => window.location.assign("/dashboard/platform-security-report")}>
                     Open Security Report
                   </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-950">Session Timeout Policy</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Control idle logout timing for web sessions and the warning popup shown before automatic sign-out.
+                  </p>
+                </div>
+                <Button
+                  className="bg-orange-500 hover:bg-orange-600"
+                  onClick={async () => {
+                    try {
+                      await savePlatformSettings("auth-security", {
+                        sessionIdleTimeoutMinutes: authSecurity.sessionIdleTimeoutMinutes || "30",
+                        sessionIdleWarningSeconds: authSecurity.sessionIdleWarningSeconds || "60",
+                      });
+                      toast.success("Session timeout policy saved.");
+                    } catch {
+                      toast.error("Failed to save session timeout policy.");
+                    }
+                  }}
+                >
+                  Save Session Policy
+                </Button>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Idle timeout (minutes)</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="1440"
+                    value={authSecurity.sessionIdleTimeoutMinutes}
+                    onChange={(e) => setAuthSecurity((p) => ({ ...p, sessionIdleTimeoutMinutes: e.target.value }))}
+                  />
+                  <p className="text-xs text-slate-500">After this much inactivity, the web session expires.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Warning popup before logout (seconds)</Label>
+                  <Input
+                    type="number"
+                    min="10"
+                    max="600"
+                    value={authSecurity.sessionIdleWarningSeconds}
+                    onChange={(e) => setAuthSecurity((p) => ({ ...p, sessionIdleWarningSeconds: e.target.value }))}
+                  />
+                  <p className="text-xs text-slate-500">Users can click Continue to refresh and extend the session.</p>
                 </div>
               </div>
             </div>

@@ -140,7 +140,11 @@ public class AuthController(
         string token;
         try
         {
-            token = await sessions.CreateSessionAsync(user.Id, tenantId, ct);
+            token = await sessions.CreateSessionAsync(
+                user.Id,
+                tenantId,
+                ct,
+                allowlistBypassEnabled: requireOtp);
         }
         catch (InvalidOperationException ex)
         {
@@ -177,7 +181,13 @@ public class AuthController(
         string token;
         try
         {
-            token = await sessions.CreateSessionAsync(user.Id, challenge.TenantId, ct, now, now);
+            token = await sessions.CreateSessionAsync(
+                user.Id,
+                challenge.TenantId,
+                ct,
+                now,
+                now,
+                allowlistBypassEnabled: true);
         }
         catch (InvalidOperationException ex)
         {
@@ -687,11 +697,18 @@ public class AuthController(
         if (!auth.IsAuthenticated) return Unauthorized();
 
         var entries = await db.PlatformSettings
-            .Where(x => x.Scope == "mobile-app")
+            .Where(x => x.Scope == "mobile-app" || x.Scope == "auth-security")
             .ToListAsync(ct);
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var authSecurityValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var e in entries)
-            values[e.Key] = crypto.Decrypt(e.ValueEncrypted);
+        {
+            var decrypted = crypto.Decrypt(e.ValueEncrypted);
+            if (string.Equals(e.Scope, "auth-security", StringComparison.OrdinalIgnoreCase))
+                authSecurityValues[e.Key] = decrypted;
+            else
+                values[e.Key] = decrypted;
+        }
 
         var appName = GetSetting(values, "appName", "Textzy");
         var baseDomain = GetSetting(values, "baseDomain", string.Empty);
@@ -715,6 +732,26 @@ public class AuthController(
         var pairCodeTtlSeconds = ParseInt(GetSetting(values, "pairCodeTtlSeconds", "180"), 180, 60, 600);
         var minSupportedAppVersion = GetSetting(values, "minSupportedAppVersion", string.Empty);
         var pairSchemaVersion = GetSetting(values, "pairSchemaVersion", "1");
+        var sessionIdleTimeoutMinutes = ParseInt(
+            GetSetting(
+                authSecurityValues,
+                "sessionIdleTimeoutMinutes",
+                config["Auth:SessionIdleTimeoutMinutes"],
+                config["SESSION_IDLE_TIMEOUT_MINUTES"],
+                "30"),
+            30,
+            1,
+            1440);
+        var sessionIdleWarningSeconds = ParseInt(
+            GetSetting(
+                authSecurityValues,
+                "sessionIdleWarningSeconds",
+                config["Auth:SessionIdleWarningSeconds"],
+                config["SESSION_IDLE_WARNING_SECONDS"],
+                "60"),
+            60,
+            10,
+            600);
 
         return Ok(new
         {
@@ -742,6 +779,11 @@ public class AuthController(
                 pairCodeTtlSeconds,
                 minSupportedAppVersion,
                 pairSchemaVersion
+            },
+            session = new
+            {
+                idleTimeoutMinutes = sessionIdleTimeoutMinutes,
+                idleWarningSeconds = sessionIdleWarningSeconds
             },
             auth = new
             {
@@ -1091,6 +1133,20 @@ public class AuthController(
         return values.TryGetValue(key, out var raw) && !string.IsNullOrWhiteSpace(raw)
             ? raw.Trim()
             : fallback;
+    }
+
+    private static string GetSetting(Dictionary<string, string> values, string key, params string?[] fallbacks)
+    {
+        if (values.TryGetValue(key, out var raw) && !string.IsNullOrWhiteSpace(raw))
+            return raw.Trim();
+
+        foreach (var fallback in fallbacks)
+        {
+            if (!string.IsNullOrWhiteSpace(fallback))
+                return fallback.Trim();
+        }
+
+        return string.Empty;
     }
 
     private static string[] ParseApiCatalog(Dictionary<string, string> values, string[] fallback)

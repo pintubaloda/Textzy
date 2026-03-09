@@ -6,16 +6,24 @@ using Textzy.Api.Models;
 
 namespace Textzy.Api.Services;
 
-public class SessionService(ControlDbContext db, IHttpContextAccessor httpContextAccessor, SecurityIpRuleService ipRules)
+public class SessionService(
+    ControlDbContext db,
+    IHttpContextAccessor httpContextAccessor,
+    SecurityIpRuleService ipRules,
+    IConfiguration config,
+    SecretCryptoService crypto)
 {
     private const int SessionHours = 12;
+    private const int DefaultIdleTimeoutMinutes = 30;
+    private const int MaxIdleTimeoutMinutes = 24 * 60;
 
     public async Task<string> CreateSessionAsync(
         Guid userId,
         Guid tenantId,
         CancellationToken ct = default,
         DateTime? twoFactorVerifiedAtUtc = null,
-        DateTime? stepUpVerifiedAtUtc = null)
+        DateTime? stepUpVerifiedAtUtc = null,
+        bool allowlistBypassEnabled = false)
     {
         var tokenBytes = RandomNumberGenerator.GetBytes(32);
         var opaqueToken = Convert.ToBase64String(tokenBytes)
@@ -24,7 +32,7 @@ public class SessionService(ControlDbContext db, IHttpContextAccessor httpContex
             .TrimEnd('=');
 
         var currentIp = SecurityIpRuleService.NormalizeIp(RequestMetadata.GetClientIp(httpContextAccessor.HttpContext));
-        var createDecision = ipRules.EvaluateSessionIp(currentIp, tenantId, userId);
+        var createDecision = ipRules.EvaluateSessionIp(currentIp, tenantId, userId, enforceAllowlist: !allowlistBypassEnabled);
         if (!createDecision.IsAllowed)
         {
             db.SecuritySignals.Add(new SecuritySignal
@@ -56,7 +64,8 @@ public class SessionService(ControlDbContext db, IHttpContextAccessor httpContex
             ExpiresAtUtc = DateTime.UtcNow.AddHours(SessionHours),
             LastSeenAtUtc = DateTime.UtcNow,
             TwoFactorVerifiedAtUtc = twoFactorVerifiedAtUtc,
-            StepUpVerifiedAtUtc = stepUpVerifiedAtUtc
+            StepUpVerifiedAtUtc = stepUpVerifiedAtUtc,
+            AllowlistBypassEnabled = allowlistBypassEnabled
         };
 
         db.SessionTokens.Add(session);
@@ -73,11 +82,25 @@ public class SessionService(ControlDbContext db, IHttpContextAccessor httpContex
             s.RevokedAtUtc == null &&
             s.ExpiresAtUtc > now);
         if (session is null) return null;
+
+        var idleTimeout = GetIdleTimeout();
+        var lastSeenAtUtc = session.LastSeenAtUtc ?? session.CreatedAtUtc;
+        if (idleTimeout > TimeSpan.Zero && lastSeenAtUtc.Add(idleTimeout) <= now)
+        {
+            session.RevokedAtUtc = now;
+            db.SaveChanges();
+            return null;
+        }
+
         session.LastSeenAtUtc = now;
         var ip = NormalizeIp(RequestMetadata.GetClientIp(httpContextAccessor.HttpContext));
         if (!string.IsNullOrWhiteSpace(ip))
         {
-            var ruleDecision = ipRules.EvaluateSessionIp(ip, session.TenantId, session.UserId);
+            var ruleDecision = ipRules.EvaluateSessionIp(
+                ip,
+                session.TenantId,
+                session.UserId,
+                enforceAllowlist: !session.AllowlistBypassEnabled);
             if (!ruleDecision.IsAllowed)
             {
                 session.LastSeenIpAddress = ip;
@@ -157,7 +180,8 @@ public class SessionService(ControlDbContext db, IHttpContextAccessor httpContex
             session.TenantId,
             ct,
             session.TwoFactorVerifiedAtUtc,
-            session.StepUpVerifiedAtUtc);
+            session.StepUpVerifiedAtUtc,
+            session.AllowlistBypassEnabled);
         return newToken;
     }
 
@@ -180,4 +204,44 @@ public class SessionService(ControlDbContext db, IHttpContextAccessor httpContex
 
     private static string NormalizeIp(string? value)
         => (value ?? string.Empty).Trim();
+
+    private TimeSpan GetIdleTimeout()
+    {
+        var raw = FirstNonEmpty(
+            ReadAuthSecuritySetting("sessionIdleTimeoutMinutes"),
+            config["Auth:SessionIdleTimeoutMinutes"],
+            config["SESSION_IDLE_TIMEOUT_MINUTES"]);
+        if (!int.TryParse(raw, out var minutes))
+            minutes = DefaultIdleTimeoutMinutes;
+        if (minutes <= 0) return TimeSpan.Zero;
+        if (minutes > MaxIdleTimeoutMinutes) minutes = MaxIdleTimeoutMinutes;
+        return TimeSpan.FromMinutes(minutes);
+    }
+
+    private string ReadAuthSecuritySetting(string key)
+    {
+        var row = db.PlatformSettings
+            .AsNoTracking()
+            .FirstOrDefault(x => x.Scope == "auth-security" && x.Key == key);
+        if (row is null) return string.Empty;
+        try
+        {
+            return crypto.Decrypt(row.ValueEncrypted);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+
+        return string.Empty;
+    }
 }

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -50,13 +51,18 @@ import StepUpAuthHost from "@/components/security/StepUpAuthHost";
 import {
   apiGet,
   authProjects,
+  authLogout,
   clearSession,
+  getAppBootstrap,
+  getSessionIdleTimeoutMs,
+  getSessionIdleWarningMs,
   getBillingUsage,
   getCurrentBillingPlan,
   getPlatformSettings,
   getSession,
   hasPermission,
   initializeMe,
+  refreshSession,
   switchProject,
 } from "@/lib/api";
 import { isNotificationAudioUnlocked, isNotificationSoundEnabled, unlockNotificationAudio } from "@/lib/notificationAudio";
@@ -84,6 +90,18 @@ const DashboardLayout = () => {
     smsUsed: 0,
     smsLimit: 0,
   });
+  const [sessionPolicy, setSessionPolicy] = useState({
+    idleTimeoutMs: getSessionIdleTimeoutMs(),
+    warningMs: getSessionIdleWarningMs(),
+  });
+  const [sessionExpiryDialog, setSessionExpiryDialog] = useState({
+    open: false,
+    secondsLeft: 0,
+    extending: false,
+  });
+  const lastActivityRef = useRef(Date.now());
+  const idleLogoutRef = useRef(false);
+  const warningShownRef = useRef(false);
   const session = getSession();
   const role = (session.role || "").toLowerCase();
   const canAccessPlatformSettings = role === "super_admin";
@@ -159,6 +177,24 @@ const DashboardLayout = () => {
       active = false;
     };
   }, [navigate, isPlatformOwner, isPlatformView, tenantHomePath]);
+  useEffect(() => {
+    if (!session?.email) return;
+    let active = true;
+    getAppBootstrap()
+      .then((bootstrap) => {
+        if (!active) return;
+        const timeoutMinutes = Number(bootstrap?.session?.idleTimeoutMinutes || 0);
+        const warningSeconds = Number(bootstrap?.session?.idleWarningSeconds || 0);
+        setSessionPolicy((prev) => ({
+          idleTimeoutMs: Number.isFinite(timeoutMinutes) && timeoutMinutes > 0 ? timeoutMinutes * 60 * 1000 : prev.idleTimeoutMs,
+          warningMs: Number.isFinite(warningSeconds) && warningSeconds > 0 ? warningSeconds * 1000 : prev.warningMs,
+        }));
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [session?.email]);
   useEffect(() => {
     let active = true;
     apiGet("/api/inbox/conversations")
@@ -272,6 +308,73 @@ const DashboardLayout = () => {
     };
   }, [canViewBilling, session.tenantSlug]);
 
+  const logoutToLogin = useCallback(async () => {
+    if (idleLogoutRef.current) return;
+    idleLogoutRef.current = true;
+    await authLogout();
+    navigate("/login", { replace: true });
+  }, [navigate]);
+
+  const handleContinueSession = useCallback(async () => {
+    setSessionExpiryDialog((prev) => ({ ...prev, extending: true }));
+    const ok = await refreshSession();
+    if (!ok) {
+      await logoutToLogin();
+      return;
+    }
+    idleLogoutRef.current = false;
+    lastActivityRef.current = Date.now();
+    warningShownRef.current = false;
+    setSessionExpiryDialog({ open: false, secondsLeft: 0, extending: false });
+  }, [logoutToLogin]);
+
+  useEffect(() => {
+    if (!session?.email) return;
+
+    idleLogoutRef.current = false;
+    warningShownRef.current = false;
+    lastActivityRef.current = Date.now();
+    const idleTimeoutMs = Math.max(1000, Number(sessionPolicy.idleTimeoutMs || getSessionIdleTimeoutMs()));
+    const warningMsRaw = Math.max(0, Number(sessionPolicy.warningMs || getSessionIdleWarningMs()));
+    const warningMs = Math.min(warningMsRaw, Math.max(0, idleTimeoutMs - 1000));
+    if (idleTimeoutMs <= 0) return;
+    setSessionExpiryDialog({ open: false, secondsLeft: 0, extending: false });
+
+    const markActivity = () => {
+      lastActivityRef.current = Date.now();
+    };
+
+    const activityEvents = ["mousedown", "mousemove", "keydown", "scroll", "touchstart", "click"];
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, markActivity, { passive: true }));
+    document.addEventListener("visibilitychange", markActivity);
+
+    const timer = window.setInterval(() => {
+      const remainingMs = idleTimeoutMs - (Date.now() - lastActivityRef.current);
+      if (remainingMs <= 0) {
+        logoutToLogin();
+        return;
+      }
+
+      if (warningMs > 0 && remainingMs <= warningMs) {
+        warningShownRef.current = true;
+        setSessionExpiryDialog((prev) => ({
+          open: true,
+          secondsLeft: Math.max(1, Math.ceil(remainingMs / 1000)),
+          extending: prev.extending,
+        }));
+      } else if (warningShownRef.current) {
+        warningShownRef.current = false;
+        setSessionExpiryDialog({ open: false, secondsLeft: 0, extending: false });
+      }
+    }, 1000);
+
+    return () => {
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, markActivity));
+      document.removeEventListener("visibilitychange", markActivity);
+      window.clearInterval(timer);
+    };
+  }, [logoutToLogin, session?.email, sessionPolicy.idleTimeoutMs, sessionPolicy.warningMs]);
+
   const sidebarPct = (used, limit) => {
     const u = Number(used || 0);
     const l = Number(limit || 0);
@@ -340,9 +443,9 @@ const DashboardLayout = () => {
     return location.pathname.startsWith(href);
   };
 
-  const handleLogout = () => {
-    clearSession();
-    navigate("/login");
+  const handleLogout = async () => {
+    await authLogout();
+    navigate("/login", { replace: true });
   };
 
   const handleEnableNotificationSound = async () => {
@@ -927,6 +1030,31 @@ const DashboardLayout = () => {
           <Outlet />
         </div>
         <StepUpAuthHost />
+        <Dialog open={sessionExpiryDialog.open}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Session expiring soon</DialogTitle>
+              <DialogDescription>
+                You will be signed out in {sessionExpiryDialog.secondsLeft} second{sessionExpiryDialog.secondsLeft === 1 ? "" : "s"} due to inactivity.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm text-slate-700">
+              Click Continue Session to refresh your login and keep working.
+            </div>
+            <DialogFooter className="sm:justify-between">
+              <Button variant="outline" onClick={async () => { await authLogout(); navigate("/login", { replace: true }); }}>
+                Logout now
+              </Button>
+              <Button
+                className="bg-orange-500 hover:bg-orange-600"
+                disabled={sessionExpiryDialog.extending}
+                onClick={handleContinueSession}
+              >
+                {sessionExpiryDialog.extending ? "Extending..." : "Continue Session"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );

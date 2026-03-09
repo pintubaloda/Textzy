@@ -415,7 +415,8 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "TokenHash" text NOT NULL,
             "ExpiresAtUtc" timestamp with time zone NOT NULL,
             "CreatedAtUtc" timestamp with time zone NOT NULL,
-            "RevokedAtUtc" timestamp with time zone NULL
+            "RevokedAtUtc" timestamp with time zone NULL,
+            "AllowlistBypassEnabled" boolean NOT NULL DEFAULT false
         );
         """);
 
@@ -433,6 +434,7 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "RevokedAtUtc" timestamp with time zone NULL;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "TwoFactorVerifiedAtUtc" timestamp with time zone NULL;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "StepUpVerifiedAtUtc" timestamp with time zone NULL;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "SessionTokens" ADD COLUMN IF NOT EXISTS "AllowlistBypassEnabled" boolean NOT NULL DEFAULT false;""");
 
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_SessionTokens_TokenHash" ON "SessionTokens" ("TokenHash");""");
     db.Database.ExecuteSqlRaw("""
