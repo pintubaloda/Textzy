@@ -16,8 +16,7 @@ public class PlatformCustomersController(
     ControlDbContext db,
     AuthContext auth,
     RbacService rbac,
-    AuditLogService audit,
-    SecretCryptoService crypto) : ControllerBase
+    AuditLogService audit) : ControllerBase
 {
     private const string TenantSmsGatewayReportFeatureKey = "tenant.smsGatewayReport.enabled";
     private static readonly TimeSpan StepUpFreshWindow = TimeSpan.FromMinutes(10);
@@ -442,11 +441,9 @@ public class PlatformCustomersController(
                 legalName = tenant.Name,
                 billingEmail = string.Empty,
                 billingPhone = string.Empty,
-                publicApiEnabled = false,
-                apiUsername = string.Empty,
-                apiPassword = string.Empty,
-                apiKey = string.Empty,
+                publicApiEnabled = true,
                 apiIpWhitelist = string.Empty,
+                ownerGroupSmsProviderRoute = "tata",
                 taxRatePercent = 18m,
                 isTaxExempt = false,
                 isReverseCharge = false,
@@ -464,10 +461,8 @@ public class PlatformCustomersController(
             billingEmail = profile.BillingEmail,
             billingPhone = profile.BillingPhone,
             publicApiEnabled = profile.PublicApiEnabled,
-            apiUsername = profile.ApiUsername,
-            apiPassword = crypto.Decrypt(profile.ApiPasswordEncrypted),
-            apiKey = crypto.Decrypt(profile.ApiKeyEncrypted),
             apiIpWhitelist = profile.ApiIpWhitelist,
+            ownerGroupSmsProviderRoute = await db.TenantOwnerGroups.AsNoTracking().Where(x => x.Id == tenant.OwnerGroupId).Select(x => x.SmsProviderRoute).FirstOrDefaultAsync(ct) ?? "tata",
             taxRatePercent = profile.TaxRatePercent,
             isTaxExempt = profile.IsTaxExempt,
             isReverseCharge = profile.IsReverseCharge,
@@ -513,21 +508,21 @@ public class PlatformCustomersController(
 
         profile.BillingEmail = InputGuardService.ValidateEmailOrEmpty(request.BillingEmail, "Billing email");
         profile.BillingPhone = (request.BillingPhone ?? string.Empty).Trim();
-        profile.PublicApiEnabled = request.PublicApiEnabled;
-        profile.ApiUsername = (request.ApiUsername ?? string.Empty).Trim();
-        profile.ApiPasswordEncrypted = crypto.Encrypt((request.ApiPassword ?? string.Empty).Trim());
-        profile.ApiKeyEncrypted = crypto.Encrypt((request.ApiKey ?? string.Empty).Trim());
+        profile.PublicApiEnabled = true;
         profile.ApiIpWhitelist = (request.ApiIpWhitelist ?? string.Empty).Trim();
         profile.TaxRatePercent = Math.Clamp(request.TaxRatePercent, 0m, 100m);
         profile.IsTaxExempt = request.IsTaxExempt;
         profile.IsReverseCharge = request.IsReverseCharge;
         profile.UpdatedAtUtc = now;
 
-        if (profile.PublicApiEnabled)
+        if (tenant.OwnerGroupId.HasValue && tenant.OwnerGroupId.Value != Guid.Empty)
         {
-            if (string.IsNullOrWhiteSpace(profile.ApiUsername)) return BadRequest("API username is required when public API is enabled.");
-            if (string.IsNullOrWhiteSpace(request.ApiPassword)) return BadRequest("API password is required when public API is enabled.");
-            if (string.IsNullOrWhiteSpace(request.ApiKey)) return BadRequest("API key is required when public API is enabled.");
+            var ownerGroup = await db.TenantOwnerGroups.FirstOrDefaultAsync(x => x.Id == tenant.OwnerGroupId.Value, ct);
+            if (ownerGroup is not null)
+            {
+                ownerGroup.SmsProviderRoute = NormalizeSmsProvider(request.OwnerGroupSmsProviderRoute);
+                ownerGroup.UpdatedAtUtc = now;
+            }
         }
 
         await db.SaveChangesAsync(ct);
@@ -546,10 +541,8 @@ public class PlatformCustomersController(
             billingEmail = profile.BillingEmail,
             billingPhone = profile.BillingPhone,
             publicApiEnabled = profile.PublicApiEnabled,
-            apiUsername = profile.ApiUsername,
-            apiPassword = crypto.Decrypt(profile.ApiPasswordEncrypted),
-            apiKey = crypto.Decrypt(profile.ApiKeyEncrypted),
             apiIpWhitelist = profile.ApiIpWhitelist,
+            ownerGroupSmsProviderRoute = await db.TenantOwnerGroups.AsNoTracking().Where(x => x.Id == tenant.OwnerGroupId).Select(x => x.SmsProviderRoute).FirstOrDefaultAsync(ct) ?? "tata",
             taxRatePercent = profile.TaxRatePercent,
             isTaxExempt = profile.IsTaxExempt,
             isReverseCharge = profile.IsReverseCharge,
@@ -867,25 +860,8 @@ public class PlatformCustomersController(
         bool isTaxExempt,
         bool isReverseCharge)
     {
-        var normalizedTaxMode = string.Equals(taxMode, "inclusive", StringComparison.OrdinalIgnoreCase) ? "inclusive" : "exclusive";
-        var taxBlocked = isTaxExempt || isReverseCharge || taxRatePercent <= 0m;
-        if (taxBlocked)
-        {
-            var amount = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
-            return new InvoiceAmounts(amount, 0m, amount);
-        }
-
-        if (normalizedTaxMode == "inclusive")
-        {
-            var gross = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
-            var subtotal = Math.Round(gross / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
-            var tax = Math.Round(gross - subtotal, 2, MidpointRounding.AwayFromZero);
-            return new InvoiceAmounts(subtotal, tax, gross);
-        }
-
-        var subtotalExclusive = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
-        var taxExclusive = Math.Round(subtotalExclusive * (taxRatePercent / 100m), 2, MidpointRounding.AwayFromZero);
-        return new InvoiceAmounts(subtotalExclusive, taxExclusive, subtotalExclusive + taxExclusive);
+        var amounts = BillingComputation.ComputeInvoiceAmounts(planAmount, taxRatePercent, taxMode, isTaxExempt, isReverseCharge);
+        return new InvoiceAmounts(amounts.Subtotal, amounts.TaxAmount, amounts.Total);
     }
 
     private static decimal ResolvePlanAmount(BillingPlan plan, string billingCycle)
@@ -1032,9 +1008,16 @@ public class PlatformCustomersController(
         public string ApiPassword { get; set; } = string.Empty;
         public string ApiKey { get; set; } = string.Empty;
         public string ApiIpWhitelist { get; set; } = string.Empty;
+        public string OwnerGroupSmsProviderRoute { get; set; } = "tata";
         public decimal TaxRatePercent { get; set; } = 18m;
         public bool IsTaxExempt { get; set; }
         public bool IsReverseCharge { get; set; }
+    }
+
+    private static string NormalizeSmsProvider(string? provider)
+    {
+        var value = (provider ?? string.Empty).Trim().ToLowerInvariant();
+        return value == "equence" ? "equence" : "tata";
     }
 
     private bool HasFreshStepUp()

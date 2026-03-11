@@ -168,11 +168,15 @@ builder.Services.AddScoped<SensitiveDataRedactor>();
 builder.Services.AddScoped<AuthCookieService>();
 builder.Services.AddScoped<ContactPiiService>();
 builder.Services.AddScoped<AuditLogService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<EmailService>();
+builder.Services.AddScoped<IRazorpayPaymentValidator, RazorpayPaymentValidator>();
 builder.Services.AddScoped<InvoiceAttachmentService>();
 builder.Services.AddScoped<BillingGuardService>();
 builder.Services.AddScoped<SecurityControlService>();
-builder.Services.AddScoped<IMessageProvider, TataSmsMessageProvider>();
+builder.Services.AddScoped<TataSmsMessageProvider>();
+builder.Services.AddScoped<EquenceSmsMessageProvider>();
+builder.Services.AddScoped<IMessageProvider, SmsProviderRouter>();
 builder.Services.AddScoped<MessagingService>();
 builder.Services.AddScoped<TriggerEvaluationService>();
 builder.Services.AddScoped<WorkflowExecutionEngine>();
@@ -333,11 +337,13 @@ static void EnsureControlAuthSchema(ControlDbContext db)
             "Id" uuid PRIMARY KEY,
             "OwnerUserId" uuid NOT NULL,
             "Name" text NOT NULL,
+            "SmsProviderRoute" text NOT NULL DEFAULT 'tata',
             "IsActive" boolean NOT NULL DEFAULT true,
             "CreatedAtUtc" timestamp with time zone NOT NULL,
             "UpdatedAtUtc" timestamp with time zone NOT NULL
         );
         """);
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantOwnerGroups" ADD COLUMN IF NOT EXISTS "SmsProviderRoute" text NOT NULL DEFAULT 'tata';""");
     db.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_TenantOwnerGroups_OwnerUserId" ON "TenantOwnerGroups" ("OwnerUserId");""");
 
     db.Database.ExecuteSqlRaw("""
@@ -365,7 +371,9 @@ static void EnsureControlAuthSchema(ControlDbContext db)
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "TaxRatePercent" numeric(5,2) NOT NULL DEFAULT 18;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "IsTaxExempt" boolean NOT NULL DEFAULT false;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "IsReverseCharge" boolean NOT NULL DEFAULT false;""");
-    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "PublicApiEnabled" boolean NOT NULL DEFAULT false;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "PublicApiEnabled" boolean NOT NULL DEFAULT true;""");
+    db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ALTER COLUMN "PublicApiEnabled" SET DEFAULT true;""");
+    db.Database.ExecuteSqlRaw("""UPDATE "TenantCompanyProfiles" SET "PublicApiEnabled" = true WHERE "PublicApiEnabled" = false;""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "ApiUsername" text NOT NULL DEFAULT '';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "ApiPasswordEncrypted" text NOT NULL DEFAULT '';""");
     db.Database.ExecuteSqlRaw("""ALTER TABLE "TenantCompanyProfiles" ADD COLUMN IF NOT EXISTS "ApiKeyEncrypted" text NOT NULL DEFAULT '';""");

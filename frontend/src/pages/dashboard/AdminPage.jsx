@@ -147,6 +147,7 @@ export default function AdminPage() {
     apiPassword: "",
     apiKey: "",
     apiIpWhitelist: "",
+    ownerGroupSmsProviderRoute: "tata",
     taxRatePercent: 18,
     isTaxExempt: false,
     isReverseCharge: false,
@@ -203,6 +204,7 @@ export default function AdminPage() {
         apiPassword: customerCompanySettings?.apiPassword || "",
         apiKey: customerCompanySettings?.apiKey || "",
         apiIpWhitelist: customerCompanySettings?.apiIpWhitelist || "",
+        ownerGroupSmsProviderRoute: customerCompanySettings?.ownerGroupSmsProviderRoute || "tata",
         taxRatePercent: Number(customerCompanySettings?.taxRatePercent ?? 18),
         isTaxExempt: !!customerCompanySettings?.isTaxExempt,
         isReverseCharge: !!customerCompanySettings?.isReverseCharge,
@@ -652,81 +654,11 @@ export default function AdminPage() {
                 </div>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-slate-900">Tenant Public API</p>
-                    <p className="text-xs text-slate-500">Simple tenant-scoped credentials for SMS and WhatsApp API use. Tenant slug stays explicit, but credentials are isolated per tenant.</p>
-                  </div>
-                  <Switch
-                    checked={!!companySettings.publicApiEnabled}
-                    onCheckedChange={(value) => setCompanySettings((prev) => ({ ...prev, publicApiEnabled: !!value }))}
-                    disabled={!selectedTenantId}
-                  />
+                <div>
+                  <p className="font-medium text-slate-900">Tenant Public API</p>
+                  <p className="text-xs text-slate-500">Tenant API credentials are managed from the tenant integrations page. Platform admin no longer sees or edits those secrets here.</p>
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <Label>API Username</Label>
-                      <div className="flex gap-2">
-                        <Button type="button" size="sm" variant="outline" onClick={() => setCompanySettings((prev) => ({ ...prev, apiUsername: generateToken("tx_user_", 10) }))}>
-                          <RefreshCcw className="mr-2 h-4 w-4" />
-                          Generate
-                        </Button>
-                        <Button type="button" size="sm" variant="outline" onClick={() => copyValue("API username", companySettings.apiUsername)}>
-                          <KeyRound className="mr-2 h-4 w-4" />
-                          Copy
-                        </Button>
-                      </div>
-                    </div>
-                    <Input
-                      value={companySettings.apiUsername}
-                      onChange={(event) => setCompanySettings((prev) => ({ ...prev, apiUsername: event.target.value }))}
-                      placeholder="tx_user_xxxx"
-                      disabled={!selectedTenantId}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <Label>API Password</Label>
-                      <div className="flex gap-2">
-                        <Button type="button" size="sm" variant="outline" onClick={() => setCompanySettings((prev) => ({ ...prev, apiPassword: generateToken("tx_pw_", 28) }))}>
-                          <RefreshCcw className="mr-2 h-4 w-4" />
-                          Generate
-                        </Button>
-                        <Button type="button" size="sm" variant="outline" onClick={() => copyValue("API password", companySettings.apiPassword)}>
-                          <KeyRound className="mr-2 h-4 w-4" />
-                          Copy
-                        </Button>
-                      </div>
-                    </div>
-                    <Input
-                      value={companySettings.apiPassword}
-                      onChange={(event) => setCompanySettings((prev) => ({ ...prev, apiPassword: event.target.value }))}
-                      placeholder="tx_pw_xxxx"
-                      disabled={!selectedTenantId}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <Label>API Key</Label>
-                      <div className="flex gap-2">
-                        <Button type="button" size="sm" variant="outline" onClick={() => setCompanySettings((prev) => ({ ...prev, apiKey: generateToken("tx_live_sk_", 30) }))}>
-                          <RefreshCcw className="mr-2 h-4 w-4" />
-                          Generate
-                        </Button>
-                        <Button type="button" size="sm" variant="outline" onClick={() => copyValue("API key", companySettings.apiKey)}>
-                          <KeyRound className="mr-2 h-4 w-4" />
-                          Copy
-                        </Button>
-                      </div>
-                    </div>
-                    <Input
-                      value={companySettings.apiKey}
-                      onChange={(event) => setCompanySettings((prev) => ({ ...prev, apiKey: event.target.value }))}
-                      placeholder="tx_live_sk_xxxx"
-                      disabled={!selectedTenantId}
-                    />
-                  </div>
                   <div className="space-y-2">
                     <Label>IP Whitelist</Label>
                     <Input
@@ -735,6 +667,23 @@ export default function AdminPage() {
                       placeholder="203.0.113.10, 198.51.100.0/24"
                       disabled={!selectedTenantId}
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Owner Group SMS Route</Label>
+                    <Select
+                      value={companySettings.ownerGroupSmsProviderRoute || "tata"}
+                      onValueChange={(value) => setCompanySettings((prev) => ({ ...prev, ownerGroupSmsProviderRoute: value }))}
+                      disabled={!selectedTenantId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select SMS provider" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="tata">Tata</SelectItem>
+                        <SelectItem value="equence">Equence</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-slate-500">All tenants under this owner group will use the selected SMS route by default.</p>
                   </div>
                 </div>
               </div>
@@ -753,6 +702,7 @@ export default function AdminPage() {
                       apiPassword: updated?.apiPassword || "",
                       apiKey: updated?.apiKey || "",
                       apiIpWhitelist: updated?.apiIpWhitelist || "",
+                      ownerGroupSmsProviderRoute: updated?.ownerGroupSmsProviderRoute || "tata",
                       taxRatePercent: Number(updated?.taxRatePercent ?? 18),
                       isTaxExempt: !!updated?.isTaxExempt,
                       isReverseCharge: !!updated?.isReverseCharge,

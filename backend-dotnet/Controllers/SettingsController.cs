@@ -11,7 +11,8 @@ namespace Textzy.Api.Controllers;
 public class SettingsController(
     ControlDbContext db,
     AuthContext auth,
-    TenancyContext tenancy) : ControllerBase
+    TenancyContext tenancy,
+    SecretCryptoService crypto) : ControllerBase
 {
     [HttpGet("notifications")]
     public async Task<IActionResult> GetNotifications(CancellationToken ct)
@@ -80,6 +81,7 @@ public class SettingsController(
                 CompanyName = tenant.Name,
                 LegalName = tenant.Name,
                 BillingEmail = auth.Email ?? string.Empty,
+                PublicApiEnabled = true,
                 CreatedAtUtc = DateTime.UtcNow,
                 UpdatedAtUtc = DateTime.UtcNow
             };
@@ -87,7 +89,7 @@ public class SettingsController(
             await db.SaveChangesAsync(ct);
         }
 
-        return Ok(Map(profile));
+        return Ok(Map(profile, crypto));
     }
 
     [HttpGet("security")]
@@ -167,11 +169,17 @@ public class SettingsController(
         profile.Address = (request.Address ?? string.Empty).Trim();
         profile.BillingEmail = InputGuardService.ValidateEmailOrEmpty(request.BillingEmail, "Billing email");
         profile.BillingPhone = (request.BillingPhone ?? string.Empty).Trim();
+        profile.PublicApiEnabled = true;
+        profile.ApiIpWhitelist = (request.ApiIpWhitelist ?? string.Empty).Trim();
         profile.TaxRatePercent = Math.Clamp(request.TaxRatePercent, 0m, 100m);
         profile.IsTaxExempt = request.IsTaxExempt;
         profile.IsReverseCharge = request.IsReverseCharge;
         profile.IsActive = request.IsActive;
         profile.UpdatedAtUtc = now;
+
+        if (!string.IsNullOrWhiteSpace(request.ApiUsername)) profile.ApiUsername = request.ApiUsername.Trim();
+        if (!string.IsNullOrWhiteSpace(request.ApiPassword)) profile.ApiPasswordEncrypted = crypto.Encrypt(request.ApiPassword.Trim());
+        if (!string.IsNullOrWhiteSpace(request.ApiKey)) profile.ApiKeyEncrypted = crypto.Encrypt(request.ApiKey.Trim());
 
         if (string.IsNullOrWhiteSpace(profile.CompanyName))
             return BadRequest("Company name is required.");
@@ -183,7 +191,7 @@ public class SettingsController(
             return BadRequest("Address is too long.");
 
         await db.SaveChangesAsync(ct);
-        return Ok(Map(profile));
+        return Ok(Map(profile, crypto));
     }
 
     private async Task<Guid> EnsureOwnerGroupAsync(Tenant tenant, Guid actorUserId, CancellationToken ct)
@@ -221,7 +229,7 @@ public class SettingsController(
         return existing.Id;
     }
 
-    private static object Map(TenantCompanyProfile p) => new
+    private static object Map(TenantCompanyProfile p, SecretCryptoService crypto) => new
     {
         p.TenantId,
         p.OwnerGroupId,
@@ -235,6 +243,11 @@ public class SettingsController(
         p.Address,
         p.BillingEmail,
         p.BillingPhone,
+        p.PublicApiEnabled,
+        p.ApiUsername,
+        apiPassword = string.IsNullOrWhiteSpace(p.ApiPasswordEncrypted) ? string.Empty : crypto.Decrypt(p.ApiPasswordEncrypted),
+        apiKey = string.IsNullOrWhiteSpace(p.ApiKeyEncrypted) ? string.Empty : crypto.Decrypt(p.ApiKeyEncrypted),
+        p.ApiIpWhitelist,
         p.TaxRatePercent,
         p.IsTaxExempt,
         p.IsReverseCharge,
@@ -293,6 +306,10 @@ public class SettingsController(
         public string Address { get; set; } = string.Empty;
         public string BillingEmail { get; set; } = string.Empty;
         public string BillingPhone { get; set; } = string.Empty;
+        public string ApiUsername { get; set; } = string.Empty;
+        public string ApiPassword { get; set; } = string.Empty;
+        public string ApiKey { get; set; } = string.Empty;
+        public string ApiIpWhitelist { get; set; } = string.Empty;
         public decimal TaxRatePercent { get; set; } = 18m;
         public bool IsTaxExempt { get; set; }
         public bool IsReverseCharge { get; set; }

@@ -9,6 +9,8 @@ import ApiDocsViewer from "@/components/docs/ApiDocsViewer";
 import {
   BookOpenText,
   CreditCard,
+  Eye,
+  EyeOff,
   ExternalLink,
   FileText,
   LockKeyhole,
@@ -23,8 +25,10 @@ import {
   disableAuthenticator,
   getAuthenticatorStatus,
   getBillingPaymentConfig,
+  getCompanySettings,
   getIntegrationCatalog,
   getSession,
+  saveCompanySettings,
   setupAuthenticator,
   verifyRazorpayPayment,
   verifyAuthenticator,
@@ -45,6 +49,18 @@ const PROVIDER_LABEL = {
   google_authenticator: "Google Authenticator",
   microsoft_authenticator: "Microsoft Authenticator",
 };
+
+function generateToken(prefix, length) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  let value = prefix;
+  for (let i = 0; i < length; i += 1) value += chars.charAt(Math.floor(Math.random() * chars.length));
+  return value;
+}
+
+function maskCredential(value) {
+  if (!value) return "";
+  return "X".repeat(Math.max(12, value.length));
+}
 
 function priceLabel(item) {
   if (String(item.pricingType || "free").toLowerCase() !== "paid") return "Free";
@@ -90,7 +106,6 @@ function resolveStatusMeta(item) {
 
 const IntegrationsPage = () => {
   const session = getSession();
-  const isSuperAdmin = String(session?.role || "").toLowerCase() === "super_admin";
   const [catalog, setCatalog] = useState([]);
   const [catalogBusy, setCatalogBusy] = useState(true);
   const [paymentConfig, setPaymentConfig] = useState(null);
@@ -99,6 +114,27 @@ const IntegrationsPage = () => {
   const [setupState, setSetupState] = useState({ provider: "", qrUrl: "", code: "", busy: false });
   const [category, setCategory] = useState("all");
   const [docViewer, setDocViewer] = useState({ open: false, type: "sms" });
+  const [tenantApiSettings, setTenantApiSettings] = useState({
+    companyName: "",
+    legalName: "",
+    publicApiEnabled: true,
+    apiUsername: "",
+    apiPassword: "",
+    apiKey: "",
+    apiIpWhitelist: "",
+    billingEmail: "",
+    billingPhone: "",
+    taxRatePercent: 18,
+    isTaxExempt: false,
+    isReverseCharge: false,
+    isActive: true,
+  });
+  const [savingTenantApi, setSavingTenantApi] = useState(false);
+  const [tenantApiVisibility, setTenantApiVisibility] = useState({
+    apiUsername: false,
+    apiPassword: false,
+    apiKey: false,
+  });
 
   const categories = useMemo(() => {
     const values = new Set(["all"]);
@@ -132,10 +168,22 @@ const IntegrationsPage = () => {
           getBillingPaymentConfig().catch(() => null),
           getAuthenticatorStatus().catch(() => ({ enabled: false, provider: "", enrolledAtUtc: "" })),
         ]);
+        const company = await getCompanySettings().catch(() => null);
         if (!alive) return;
         setCatalog(Array.isArray(catalogRows) ? catalogRows : []);
         setPaymentConfig(paymentCfg || null);
         setAuthenticator(authStatus || { enabled: false, provider: "", enrolledAtUtc: "" });
+        if (company) {
+          setTenantApiSettings((prev) => ({
+            ...prev,
+            ...company,
+            publicApiEnabled: company.publicApiEnabled !== false,
+            apiUsername: company.apiUsername || "",
+            apiPassword: company.apiPassword || "",
+            apiKey: company.apiKey || "",
+            apiIpWhitelist: company.apiIpWhitelist || "",
+          }));
+        }
       } catch (e) {
         if (!alive) return;
         toast.error(e?.message || "Failed to load integrations");
@@ -256,12 +304,53 @@ const IntegrationsPage = () => {
     }
   };
 
+  const copyValue = async (label, value) => {
+    if (!value) {
+      toast.error(`${label} is empty.`);
+      return;
+    }
+    await navigator.clipboard.writeText(value);
+    toast.success(`${label} copied.`);
+  };
+
+  const toggleTenantApiVisibility = (field) => {
+    setTenantApiVisibility((prev) => ({ ...prev, [field]: !prev[field] }));
+  };
+
+  const saveTenantPublicApi = async () => {
+    try {
+      setSavingTenantApi(true);
+      const payload = {
+        ...tenantApiSettings,
+        apiUsername: String(tenantApiSettings.apiUsername || "").trim(),
+        apiPassword: String(tenantApiSettings.apiPassword || "").trim(),
+        apiKey: String(tenantApiSettings.apiKey || "").trim(),
+        apiIpWhitelist: String(tenantApiSettings.apiIpWhitelist || "").trim(),
+      };
+      const updated = await saveCompanySettings(payload);
+      setTenantApiSettings((prev) => ({
+        ...prev,
+        ...updated,
+          publicApiEnabled: updated.publicApiEnabled !== false,
+        apiUsername: updated.apiUsername || "",
+        apiPassword: updated.apiPassword || "",
+        apiKey: updated.apiKey || "",
+        apiIpWhitelist: updated.apiIpWhitelist || "",
+      }));
+      toast.success("Tenant public API settings saved.");
+    } catch (e) {
+      toast.error(e?.message || "Failed to save tenant public API settings");
+    } finally {
+      setSavingTenantApi(false);
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="integrations-page">
       <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-heading font-bold text-slate-900">Integrations</h1>
-          <p className="text-slate-600">Platform-managed add-ons, security connectors, and public API access for project <strong>{session?.tenantSlug || "n/a"}</strong>.</p>
+            <p className="text-slate-600">Security connectors, paid add-ons, and public API access for project <strong>{session?.tenantSlug || "n/a"}</strong>.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Badge variant="outline" className="rounded-full border-slate-200 px-3 py-1 text-slate-700">
@@ -546,25 +635,81 @@ const IntegrationsPage = () => {
           <Card className="border-slate-200 shadow-sm">
             <CardHeader>
               <CardTitle>Public API Access</CardTitle>
-              <CardDescription>Tenant-scoped API credentials are now managed from platform admin, not from this tenant screen.</CardDescription>
+              <CardDescription>Tenant-scoped credentials for public SMS and WhatsApp API use. Tenant slug stays explicit, but credentials remain isolated per tenant.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                {isSuperAdmin ? (
-                  <>
-                    Tenant-scoped API credentials are managed from <strong>Platform Admin</strong> for each company. This prevents one credential set from being reused across tenants.
-                  </>
-                ) : (
-                  <>
-                    Public API credentials are controlled by platform owner. Use project slug <strong>{session?.tenantSlug || "n/a"}</strong> and request the tenant-specific credentials from platform admin.
-                  </>
-                )}
+              <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div>
+                  <p className="font-medium text-slate-900">Tenant Public API</p>
+                  <p className="text-sm text-slate-500">Project slug: <strong>{session?.tenantSlug || "n/a"}</strong></p>
+                </div>
+                <Badge className={tenantApiSettings.publicApiEnabled ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-50" : "bg-slate-100 text-slate-600 hover:bg-slate-100"}>
+                  {tenantApiSettings.publicApiEnabled ? "Enabled" : "Disabled"}
+                </Badge>
               </div>
-              {isSuperAdmin ? (
-                <Button className="w-full bg-orange-500 hover:bg-orange-600" onClick={() => window.location.assign("/dashboard/admin")}>
-                  Open Platform Admin
+
+              <div className="grid gap-4">
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label>API Username</Label>
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={() => setTenantApiSettings((prev) => ({ ...prev, apiUsername: generateToken("tx_user_", 10) }))}>Generate</Button>
+                      <Button type="button" size="icon" variant="outline" aria-label={tenantApiVisibility.apiUsername ? "Hide API username" : "Show API username"} onClick={() => toggleTenantApiVisibility("apiUsername")}>
+                        {tenantApiVisibility.apiUsername ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" disabled={!tenantApiSettings.apiUsername} onClick={() => copyValue("API username", tenantApiSettings.apiUsername)}>Copy</Button>
+                    </div>
+                  </div>
+                  <Input value={tenantApiVisibility.apiUsername ? tenantApiSettings.apiUsername : maskCredential(tenantApiSettings.apiUsername)} readOnly placeholder="Generated tenant API username" />
+                </div>
+
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label>API Password</Label>
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={() => setTenantApiSettings((prev) => ({ ...prev, apiPassword: generateToken("tx_pw_", 28) }))}>Generate</Button>
+                      <Button type="button" size="icon" variant="outline" aria-label={tenantApiVisibility.apiPassword ? "Hide API password" : "Show API password"} onClick={() => toggleTenantApiVisibility("apiPassword")}>
+                        {tenantApiVisibility.apiPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" disabled={!tenantApiSettings.apiPassword} onClick={() => copyValue("API password", tenantApiSettings.apiPassword)}>Copy</Button>
+                    </div>
+                  </div>
+                  <Input value={tenantApiVisibility.apiPassword ? tenantApiSettings.apiPassword : maskCredential(tenantApiSettings.apiPassword)} readOnly placeholder="Generated tenant API password" />
+                </div>
+
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label>API Key</Label>
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={() => setTenantApiSettings((prev) => ({ ...prev, apiKey: generateToken("tx_live_sk_", 30) }))}>Generate</Button>
+                      <Button type="button" size="icon" variant="outline" aria-label={tenantApiVisibility.apiKey ? "Hide API key" : "Show API key"} onClick={() => toggleTenantApiVisibility("apiKey")}>
+                        {tenantApiVisibility.apiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" disabled={!tenantApiSettings.apiKey} onClick={() => copyValue("API key", tenantApiSettings.apiKey)}>Copy</Button>
+                    </div>
+                  </div>
+                  <Input value={tenantApiVisibility.apiKey ? tenantApiSettings.apiKey : maskCredential(tenantApiSettings.apiKey)} readOnly placeholder="Generated tenant API key" />
+                </div>
+
+                <div className="grid gap-2">
+                  <Label>IP Whitelist</Label>
+                  <Input
+                    value={tenantApiSettings.apiIpWhitelist}
+                    onChange={(event) => setTenantApiSettings((prev) => ({ ...prev, apiIpWhitelist: event.target.value }))}
+                    placeholder="203.0.113.10, 198.51.100.0/24"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                Public API is enabled for this tenant by default. Use Generate to rotate credentials safely and the eye icon to reveal a value only when needed.
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button className="bg-orange-500 hover:bg-orange-600" disabled={savingTenantApi} onClick={saveTenantPublicApi}>
+                  {savingTenantApi ? "Saving..." : "Save Public API"}
                 </Button>
-              ) : null}
+              </div>
             </CardContent>
           </Card>
         </div>
