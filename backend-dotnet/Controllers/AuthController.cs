@@ -16,7 +16,7 @@ public class AuthController(
     ControlDbContext db,
     PasswordHasher hasher,
     SessionService sessions,
-    EmailService emailService,
+    IEmailService emailService,
     BillingGuardService billingGuard,
     TenancyContext tenancy,
     AuthContext auth,

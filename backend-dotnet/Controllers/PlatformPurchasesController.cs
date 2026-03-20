@@ -15,7 +15,7 @@ public class PlatformPurchasesController(
     AuthContext auth,
     RbacService rbac,
     AuditLogService audit,
-    EmailService emailService,
+    IEmailService emailService,
     InvoiceAttachmentService invoiceAttachmentService,
     SecretCryptoService crypto,
     IConfiguration config) : ControllerBase

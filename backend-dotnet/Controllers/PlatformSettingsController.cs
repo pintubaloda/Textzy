@@ -419,7 +419,7 @@ public class PlatformSettingsController(
             .Where(x => x.Scope == "sms-gateway")
             .ToDictionaryAsync(x => x.Key, x => crypto.Decrypt(x.ValueEncrypted), StringComparer.OrdinalIgnoreCase, ct);
 
-        var provider = "tata";
+        var provider = Pick(values, "provider", config["Sms:Provider"], "tata").Trim().ToLowerInvariant();
         var timeoutMs = ParseTimeout(Pick(values, "timeoutMs", config["Sms:TimeoutMs"], "15000"));
         var recipient = InputGuardService.ValidatePhone(request.Phone, "Phone");
         var message = string.IsNullOrWhiteSpace(request.Message)
@@ -428,42 +428,92 @@ public class PlatformSettingsController(
 
         try
         {
-            var tataBaseUrl = Pick(values, "tataBaseUrl", config["Sms:Tata:BaseUrl"], "https://smsgw.tatatel.co.in:9095/campaignService/campaigns/qs");
-            var tataUsername = Pick(values, "tataUsername", config["Sms:Tata:Username"]);
-            var tataPassword = Pick(values, "tataPassword", config["Sms:Tata:Password"]);
             var sender = Pick(values, "defaultSenderAddress", config["Sms:Tata:SenderAddress"]);
             var peId = Pick(values, "defaultPeId", config["Sms:Tata:PeId"]);
             var templateId = Pick(values, "defaultTemplateId", config["Sms:Tata:TemplateId"], request.TemplateId);
+            var startedAt = DateTime.UtcNow;
+            var currentTenantId = auth.TenantId == Guid.Empty ? (Guid?)null : auth.TenantId;
+            if (string.IsNullOrWhiteSpace(sender) || string.IsNullOrWhiteSpace(peId) || string.IsNullOrWhiteSpace(templateId))
+                return BadRequest("SMS gateway settings missing. Require senderAddress, PEID, TemplateID.");
 
-            if (string.IsNullOrWhiteSpace(tataUsername) || string.IsNullOrWhiteSpace(tataPassword) ||
-                string.IsNullOrWhiteSpace(sender) || string.IsNullOrWhiteSpace(peId) || string.IsNullOrWhiteSpace(templateId))
+            string url;
+            if (provider == "equence")
             {
-                return BadRequest("TATA settings missing. Require username, password, senderAddress, PEID, TemplateID.");
+                var equenceBaseUrl = Pick(values, "equenceBaseUrl", config["Sms:Equence:BaseUrl"], "https://api.equence.in/pushsms");
+                var equenceUsername = Pick(values, "equenceUsername", config["Sms:Equence:Username"]);
+                var equencePassword = Pick(values, "equencePassword", config["Sms:Equence:Password"]);
+
+                if (string.IsNullOrWhiteSpace(equenceUsername) || string.IsNullOrWhiteSpace(equencePassword))
+                    return BadRequest("Equence settings missing. Require username and password.");
+
+                var query = new[]
+                {
+                    $"username={Uri.EscapeDataString(equenceUsername)}",
+                    $"peId={Uri.EscapeDataString(peId)}",
+                    $"tmplId={Uri.EscapeDataString(templateId)}",
+                    $"password={Uri.EscapeDataString(equencePassword)}",
+                    $"to={Uri.EscapeDataString(recipient)}",
+                    $"from={Uri.EscapeDataString(sender)}",
+                    $"text={Uri.EscapeDataString(message)}",
+                };
+                url = $"{equenceBaseUrl.TrimEnd('?')}{(equenceBaseUrl.Contains('?') ? "&" : "?")}{string.Join("&", query)}";
             }
-
-            var query = new[]
+            else
             {
-                $"recipient={Uri.EscapeDataString(recipient)}",
-                "dr=false",
-                $"msg={Uri.EscapeDataString(message)}",
-                $"user={Uri.EscapeDataString(tataUsername)}",
-                $"pswd={Uri.EscapeDataString(tataPassword)}",
-                $"sender={Uri.EscapeDataString(sender)}",
-                $"PE_ID={Uri.EscapeDataString(peId)}",
-                $"Template_ID={Uri.EscapeDataString(templateId)}",
-            };
-            var url = $"{tataBaseUrl.TrimEnd('?')}{(tataBaseUrl.Contains('?') ? "&" : "?")}{string.Join("&", query)}";
+                provider = "tata";
+                var tataBaseUrl = Pick(values, "tataBaseUrl", config["Sms:Tata:BaseUrl"], "https://smsgw.tatatel.co.in:9095/campaignService/campaigns/qs");
+                var tataUsername = Pick(values, "tataUsername", config["Sms:Tata:Username"]);
+                var tataPassword = Pick(values, "tataPassword", config["Sms:Tata:Password"]);
+
+                if (string.IsNullOrWhiteSpace(tataUsername) || string.IsNullOrWhiteSpace(tataPassword))
+                    return BadRequest("Tata settings missing. Require username and password.");
+
+                var query = new[]
+                {
+                    $"recipient={Uri.EscapeDataString(recipient)}",
+                    "dr=false",
+                    $"msg={Uri.EscapeDataString(message)}",
+                    $"user={Uri.EscapeDataString(tataUsername)}",
+                    $"pswd={Uri.EscapeDataString(tataPassword)}",
+                    $"sender={Uri.EscapeDataString(sender)}",
+                    $"PE_ID={Uri.EscapeDataString(peId)}",
+                    $"Template_ID={Uri.EscapeDataString(templateId)}",
+                };
+                url = $"{tataBaseUrl.TrimEnd('?')}{(tataBaseUrl.Contains('?') ? "&" : "?")}{string.Join("&", query)}";
+            }
 
             using var smsTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             smsTimeoutCts.CancelAfter(timeoutMs);
             var http = httpClientFactory.CreateClient();
-            using var resTata = await http.GetAsync(url, smsTimeoutCts.Token);
-            var rawBody = await resTata.Content.ReadAsStringAsync(smsTimeoutCts.Token);
-            if (!resTata.IsSuccessStatusCode)
-                throw new InvalidOperationException($"TATA test failed ({(int)resTata.StatusCode}): {rawBody}");
+            using var resGateway = await http.GetAsync(url, smsTimeoutCts.Token);
+            var statusCode = (int)resGateway.StatusCode;
+            var rawBody = await resGateway.Content.ReadAsStringAsync(smsTimeoutCts.Token);
+            var providerMessageId = ExtractSmsProviderMessageId(rawBody);
+            await SaveSmsGatewayRequestLogAsync(new SmsGatewayRequestLog
+            {
+                Id = Guid.NewGuid(),
+                CreatedAtUtc = DateTime.UtcNow,
+                Provider = provider,
+                TenantId = currentTenantId,
+                Recipient = Truncate(recipient, 64),
+                Sender = Truncate(sender, 32),
+                PeId = Truncate(peId, 64),
+                TemplateId = Truncate(templateId, 64),
+                HttpMethod = "GET",
+                RequestUrlMasked = Truncate(MaskSensitiveQueryString(url), 4000),
+                RequestPayloadMasked = Truncate($"test=true;recipient={recipient};sender={sender};peId={peId};templateId={templateId};messageLength={message.Length}", 2000),
+                HttpStatusCode = statusCode,
+                ResponseBody = Truncate(rawBody, 4000),
+                IsSuccess = resGateway.IsSuccessStatusCode,
+                Error = resGateway.IsSuccessStatusCode ? string.Empty : Truncate($"{provider.ToUpperInvariant()} test failed ({statusCode})", 2000),
+                DurationMs = Math.Max(1, (int)(DateTime.UtcNow - startedAt).TotalMilliseconds),
+                ProviderMessageId = Truncate(providerMessageId, 256)
+            }, ct);
+            if (!resGateway.IsSuccessStatusCode)
+                throw new InvalidOperationException($"{provider.ToUpperInvariant()} test failed ({statusCode}): {rawBody}");
 
-            await audit.WriteAsync("platform.sms.test.success", $"provider=tata; to={recipient}", ct);
-            return Ok(new { ok = true, provider = "tata", message = "TATA test SMS submitted.", raw = rawBody });
+            await audit.WriteAsync("platform.sms.test.success", $"provider={provider}; to={recipient}", ct);
+            return Ok(new { ok = true, provider, message = $"{provider.ToUpperInvariant()} test SMS submitted.", raw = rawBody });
         }
         catch (Exception ex)
         {
@@ -595,6 +645,52 @@ public class PlatformSettingsController(
         var key = (value ?? string.Empty).Trim();
         if (key.Length <= 8) return key;
         return $"{key[..6]}...{key[^4..]}";
+    }
+
+    private async Task SaveSmsGatewayRequestLogAsync(SmsGatewayRequestLog log, CancellationToken ct)
+    {
+        try
+        {
+            db.SmsGatewayRequestLogs.Add(log);
+            await db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            // Diagnostics logging should never break the test SMS flow.
+        }
+    }
+
+    private static string MaskSensitiveQueryString(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return string.Empty;
+        var masked = System.Text.RegularExpressions.Regex.Replace(url, @"([?&]pswd=)[^&]*", "$1***", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        masked = System.Text.RegularExpressions.Regex.Replace(masked, @"([?&]user=)[^&]*", "$1***", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return masked;
+    }
+
+    private static string Truncate(string? value, int max)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        return value.Length <= max ? value : value[..max];
+    }
+
+    private static string ExtractSmsProviderMessageId(string responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody)) return string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            foreach (var key in new[] { "jobId", "jobid", "campaignId", "campaign_id", "cusTmId", "custmId", "msgid", "messageid" })
+            {
+                if (doc.RootElement.TryGetProperty(key, out var value))
+                    return value.ToString().Trim();
+            }
+        }
+        catch
+        {
+        }
+
+        return string.Empty;
     }
 
     public sealed class SmtpTestRequest

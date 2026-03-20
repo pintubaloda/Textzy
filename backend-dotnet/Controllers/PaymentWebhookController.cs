@@ -15,7 +15,7 @@ namespace Textzy.Api.Controllers;
 public class PaymentWebhookController(
     ControlDbContext db,
     SecretCryptoService crypto,
-    EmailService emailService,
+    IEmailService emailService,
     InvoiceAttachmentService invoiceAttachmentService,
     BillingGuardService billingGuard,
     AuditLogService audit,
@@ -498,29 +498,7 @@ public class PaymentWebhookController(
     }
 
     private static string ResolveInvoiceDescription(string? planName, string? billingCycle, string? pricingModel)
-    {
-        var name = (planName ?? string.Empty).Trim();
-        if (!string.IsNullOrWhiteSpace(name))
-        {
-            if (string.Equals(pricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
-                return $"{name} purchase";
-
-            if (name.Contains("authenticator", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("integration", StringComparison.OrdinalIgnoreCase))
-                return $"{name} purchase";
-
-            return $"{name} plan purchase";
-        }
-
-        return (billingCycle ?? string.Empty).Trim().ToLowerInvariant() switch
-        {
-            "yearly" => "Yearly subscription purchase",
-            "monthly" => "Monthly subscription purchase",
-            "lifetime" => "Lifetime plan purchase",
-            "usage_based" => "Usage pack purchase",
-            _ => "Platform service purchase"
-        };
-    }
+        => BillingComputation.ResolveInvoiceDescription(planName, billingCycle, pricingModel);
 
     private static string ComputeInvoiceIntegrityHash(BillingInvoice invoice) => InvoiceIntegrityHasher.Compute(invoice);
 
@@ -533,20 +511,8 @@ public class PaymentWebhookController(
         bool isTaxExempt,
         bool isReverseCharge)
     {
-        var normalizedTaxMode = string.Equals(taxMode, "inclusive", StringComparison.OrdinalIgnoreCase) ? "inclusive" : "exclusive";
-        if (isTaxExempt || isReverseCharge || taxRatePercent <= 0m)
-            return new InvoiceAmounts(totalCharged, 0m, totalCharged);
-
-        if (normalizedTaxMode == "inclusive")
-        {
-            var subtotal = Math.Round(totalCharged / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
-            var tax = Math.Round(totalCharged - subtotal, 2, MidpointRounding.AwayFromZero);
-            return new InvoiceAmounts(subtotal, tax, totalCharged);
-        }
-
-        var subtotalExclusive = Math.Round(totalCharged / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
-        var taxExclusive = Math.Round(totalCharged - subtotalExclusive, 2, MidpointRounding.AwayFromZero);
-        return new InvoiceAmounts(subtotalExclusive, taxExclusive, totalCharged);
+        var amounts = BillingComputation.ComputeInvoiceAmounts(totalCharged, taxRatePercent, taxMode, isTaxExempt, isReverseCharge, amountIsGross: true);
+        return new InvoiceAmounts(amounts.Subtotal, amounts.TaxAmount, amounts.Total);
     }
 
     private static int ResolvePackUnitsFromLimits(string json, string? usageUnitName)

@@ -23,7 +23,8 @@ public class BillingController(
     RbacService rbac,
     BillingGuardService billingGuard,
     SecretCryptoService crypto,
-    EmailService emailService,
+    IEmailService emailService,
+    IRazorpayPaymentValidator razorpayPaymentValidator,
     InvoiceAttachmentService invoiceAttachmentService,
     IConfiguration config,
     SensitiveDataRedactor redactor,
@@ -852,7 +853,7 @@ public class BillingController(
         attempt.PaymentId = request.RazorpayPaymentId;
         attempt.Signature = request.RazorpaySignature;
 
-        var validation = await ValidateRazorpayPaymentAsync(
+        var validation = await razorpayPaymentValidator.ValidateAsync(
             keyId,
             keySecret,
             request.RazorpayPaymentId,
@@ -860,12 +861,12 @@ public class BillingController(
             attempt.Amount,
             attempt.Currency,
             ct);
-        if (!validation.ok)
+        if (!validation.Ok)
         {
             attempt.Status = "payment_validation_failed";
-            attempt.LastError = validation.error;
+            attempt.LastError = validation.Error;
             attempt.UpdatedAtUtc = DateTime.UtcNow;
-            attempt.RawResponse = validation.raw ?? attempt.RawResponse;
+            attempt.RawResponse = validation.Raw ?? attempt.RawResponse;
             await db.SaveChangesAsync(ct);
             await TrySendBillingEventAsync(
                 tenancy.TenantId,
@@ -875,16 +876,16 @@ public class BillingController(
                 {
                     ["Order ID"] = request.RazorpayOrderId,
                     ["Payment ID"] = request.RazorpayPaymentId,
-                    ["Reason"] = validation.error
+                    ["Reason"] = validation.Error
                 },
                 ct);
-            return BadRequest(validation.error);
+            return BadRequest(validation.Error);
         }
 
         attempt.Status = "paid";
         attempt.PaidAtUtc = DateTime.UtcNow;
         attempt.UpdatedAtUtc = DateTime.UtcNow;
-        attempt.RawResponse = validation.raw ?? attempt.RawResponse;
+        attempt.RawResponse = validation.Raw ?? attempt.RawResponse;
 
         await ActivatePurchaseFromPaymentAsync(attempt, ct);
         await db.SaveChangesAsync(ct);
@@ -1151,38 +1152,8 @@ public class BillingController(
         bool isReverseCharge,
         bool amountIsGross = false)
     {
-        var normalizedTaxMode = string.Equals(taxMode, "inclusive", StringComparison.OrdinalIgnoreCase) ? "inclusive" : "exclusive";
-        var taxBlocked = isTaxExempt || isReverseCharge || taxRatePercent <= 0m;
-        if (taxBlocked)
-            return new InvoiceAmounts(Math.Round(planAmount, 2, MidpointRounding.AwayFromZero), 0m, Math.Round(planAmount, 2, MidpointRounding.AwayFromZero));
-
-        if (normalizedTaxMode == "inclusive")
-        {
-            var gross = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
-            if (amountIsGross)
-            {
-                var subtotal = Math.Round(gross / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
-                var tax = Math.Round(gross - subtotal, 2, MidpointRounding.AwayFromZero);
-                return new InvoiceAmounts(subtotal, tax, gross);
-            }
-
-            var total = gross;
-            var subtotalInc = Math.Round(total / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
-            var taxInc = Math.Round(total - subtotalInc, 2, MidpointRounding.AwayFromZero);
-            return new InvoiceAmounts(subtotalInc, taxInc, total);
-        }
-
-        var subtotalExclusive = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
-        if (amountIsGross)
-        {
-            var totalGross = Math.Round(planAmount, 2, MidpointRounding.AwayFromZero);
-            var subtotalGross = Math.Round(totalGross / (1m + (taxRatePercent / 100m)), 2, MidpointRounding.AwayFromZero);
-            var taxGross = Math.Round(totalGross - subtotalGross, 2, MidpointRounding.AwayFromZero);
-            return new InvoiceAmounts(subtotalGross, taxGross, totalGross);
-        }
-
-        var taxExclusive = Math.Round(subtotalExclusive * (taxRatePercent / 100m), 2, MidpointRounding.AwayFromZero);
-        return new InvoiceAmounts(subtotalExclusive, taxExclusive, subtotalExclusive + taxExclusive);
+        var amounts = BillingComputation.ComputeInvoiceAmounts(planAmount, taxRatePercent, taxMode, isTaxExempt, isReverseCharge, amountIsGross);
+        return new InvoiceAmounts(amounts.Subtotal, amounts.TaxAmount, amounts.Total);
     }
 
     private static int ResolvePackUnitsFromLimits(string json, string? usageUnitName)
@@ -1338,96 +1309,14 @@ public class BillingController(
     private static string ComputeInvoiceIntegrityHashLegacy(BillingInvoice invoice) => InvoiceIntegrityHasher.ComputeLegacy(invoice);
 
     private static string? NormalizeBillingCycle(string? billingCycle)
-    {
-        var cycle = (billingCycle ?? "monthly").Trim().ToLowerInvariant();
-        return cycle switch
-        {
-            "monthly" => "monthly",
-            "yearly" => "yearly",
-            "lifetime" => "lifetime",
-            "usage_based" => "usage_based",
-            "usagebased" => "usage_based",
-            _ => null
-        };
-    }
+        => BillingComputation.NormalizeBillingCycle(billingCycle);
 
     private static DateTime ResolveRenewAtUtc(DateTime startUtc, string cycle)
-    {
-        return cycle switch
-        {
-            "yearly" => startUtc.AddYears(1),
-            "lifetime" => DateTime.MaxValue,
-            "usage_based" => DateTime.MaxValue,
-            _ => startUtc.AddMonths(1)
-        };
-    }
+        => BillingComputation.ResolveRenewAtUtc(startUtc, cycle);
 
     private static DateTime ResolvePeriodEndUtc(DateTime periodStartUtc, string cycle)
-    {
-        return cycle switch
-        {
-            "yearly" => periodStartUtc.AddYears(1).AddSeconds(-1),
-            "lifetime" => periodStartUtc.AddYears(100).AddSeconds(-1),
-            "usage_based" => periodStartUtc.AddMonths(1).AddSeconds(-1),
-            _ => periodStartUtc.AddMonths(1).AddSeconds(-1)
-        };
-    }
+        => BillingComputation.ResolvePeriodEndUtc(periodStartUtc, cycle);
 
-    private static async Task<(bool ok, string error, string raw)> ValidateRazorpayPaymentAsync(
-        string keyId,
-        string keySecret,
-        string paymentId,
-        string expectedOrderId,
-        decimal expectedAmount,
-        string expectedCurrency,
-        CancellationToken ct)
-    {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        var authBytes = Encoding.UTF8.GetBytes($"{keyId}:{keySecret}");
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
-        using var resp = await client.GetAsync($"https://api.razorpay.com/v1/payments/{Uri.EscapeDataString(paymentId)}", ct);
-        var raw = await resp.Content.ReadAsStringAsync(ct);
-        if (!resp.IsSuccessStatusCode)
-            return (false, "Could not validate payment with Razorpay API.", raw);
-
-        var expectedPaise = (int)Math.Round(expectedAmount * 100m, MidpointRounding.AwayFromZero);
-        using var doc = JsonDocument.Parse(raw);
-        var root = doc.RootElement;
-
-        var status = root.TryGetProperty("status", out var st) ? (st.GetString() ?? string.Empty).Trim().ToLowerInvariant() : string.Empty;
-        if (string.Equals(status, "authorized", StringComparison.OrdinalIgnoreCase))
-        {
-            var capturePayload = JsonSerializer.Serialize(new
-            {
-                amount = expectedPaise,
-                currency = string.IsNullOrWhiteSpace(expectedCurrency) ? "INR" : expectedCurrency.ToUpperInvariant()
-            });
-            using var captureContent = new StringContent(capturePayload, Encoding.UTF8, "application/json");
-            using var captureResp = await client.PostAsync($"https://api.razorpay.com/v1/payments/{Uri.EscapeDataString(paymentId)}/capture", captureContent, ct);
-            raw = await captureResp.Content.ReadAsStringAsync(ct);
-            if (!captureResp.IsSuccessStatusCode)
-                return (false, "Payment was authorized but capture failed.", raw);
-
-            using var captureDoc = JsonDocument.Parse(raw);
-            root = captureDoc.RootElement.Clone();
-            status = root.TryGetProperty("status", out st) ? (st.GetString() ?? string.Empty).Trim().ToLowerInvariant() : string.Empty;
-        }
-
-        var orderId = root.TryGetProperty("order_id", out var ord) ? (ord.GetString() ?? string.Empty) : string.Empty;
-        var amountPaise = root.TryGetProperty("amount", out var amt) && amt.TryGetInt32(out var vAmt) ? vAmt : -1;
-        var currency = root.TryGetProperty("currency", out var cur) ? (cur.GetString() ?? string.Empty) : string.Empty;
-
-        if (!string.Equals(status, "captured", StringComparison.OrdinalIgnoreCase))
-            return (false, $"Payment status is '{status}'.", raw);
-        if (!string.Equals(orderId, expectedOrderId, StringComparison.Ordinal))
-            return (false, "Payment order mismatch.", raw);
-        if (amountPaise != expectedPaise)
-            return (false, "Payment amount mismatch.", raw);
-        if (!string.Equals(currency, expectedCurrency, StringComparison.OrdinalIgnoreCase))
-            return (false, "Payment currency mismatch.", raw);
-
-        return (true, string.Empty, raw);
-    }
 
     private static int ResolveGraceDaysForApi(IConfiguration config)
     {
@@ -1691,38 +1580,10 @@ public class BillingController(
     }
 
     private static string ResolveInvoiceDescription(string? planName, string? billingCycle, string? pricingModel)
-    {
-        var name = (planName ?? string.Empty).Trim();
-        if (!string.IsNullOrWhiteSpace(name))
-        {
-            if (string.Equals(pricingModel, "usage_pack", StringComparison.OrdinalIgnoreCase))
-                return $"{name} purchase";
-
-            if (name.Contains("authenticator", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("integration", StringComparison.OrdinalIgnoreCase))
-                return $"{name} purchase";
-
-            return $"{name} plan purchase";
-        }
-
-        return (billingCycle ?? string.Empty).Trim().ToLowerInvariant() switch
-        {
-            "yearly" => "Yearly subscription purchase",
-            "monthly" => "Monthly subscription purchase",
-            "lifetime" => "Lifetime plan purchase",
-            "usage_based" => "Usage pack purchase",
-            _ => "Platform service purchase"
-        };
-    }
+        => BillingComputation.ResolveInvoiceDescription(planName, billingCycle, pricingModel);
 
     private static string BuildRazorpayReceipt(string kind, Guid tenantId)
-    {
-        var safeKind = string.IsNullOrWhiteSpace(kind) ? "txn" : Regex.Replace(kind.Trim().ToLowerInvariant(), @"[^a-z0-9]", string.Empty);
-        if (safeKind.Length > 4) safeKind = safeKind[..4];
-        var tenant = tenantId.ToString("N")[..8];
-        var stamp = DateTime.UtcNow.ToString("yyMMddHHmmss");
-        return $"tz{safeKind}{tenant}{stamp}";
-    }
+        => BillingComputation.BuildRazorpayReceipt(kind, tenantId);
 
     private static Dictionary<string, string> ParseAttemptNotes(string json)
     {
@@ -1737,11 +1598,7 @@ public class BillingController(
     }
 
     private static DateTime ResolveAddOnPeriodEndUtc(DateTime periodStartUtc, string billingCycle)
-    {
-        return string.Equals(billingCycle, "one_time", StringComparison.OrdinalIgnoreCase)
-            ? periodStartUtc.AddYears(100).AddSeconds(-1)
-            : ResolvePeriodEndUtc(periodStartUtc, NormalizeBillingCycle(billingCycle) ?? "monthly");
-    }
+        => BillingComputation.ResolveAddOnPeriodEndUtc(periodStartUtc, billingCycle);
 
     private static string Csv(string value)
     {

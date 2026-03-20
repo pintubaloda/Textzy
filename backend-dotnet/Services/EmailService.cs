@@ -13,7 +13,7 @@ public class EmailService(
     IConfiguration config,
     ControlDbContext db,
     SecretCryptoService crypto,
-    IHttpClientFactory httpClientFactory)
+    IHttpClientFactory httpClientFactory) : IEmailService
 {
     private sealed class EmailRuntimeSettings
     {

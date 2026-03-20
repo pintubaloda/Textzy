@@ -195,25 +195,40 @@ public class PlatformCustomersController(
     }
 
     [HttpGet("users")]
-    public async Task<IActionResult> Users([FromQuery] string q = "", CancellationToken ct = default)
+    public async Task<IActionResult> Users([FromQuery] string q = "", [FromQuery] bool ownersOnly = false, CancellationToken ct = default)
     {
         if (!auth.IsAuthenticated) return Unauthorized();
         if (!rbac.HasPermission(PlatformSettingsRead)) return Forbid();
 
         var search = (q ?? string.Empty).Trim().ToLowerInvariant();
-        var query = db.Users.Where(u => !u.IsSuperAdmin);
+        var baseQuery = db.Users.AsQueryable();
         if (!string.IsNullOrWhiteSpace(search))
         {
-            query = query.Where(u => u.Email.ToLower().Contains(search) || u.FullName.ToLower().Contains(search));
+            baseQuery = baseQuery.Where(u => u.Email.ToLower().Contains(search) || u.FullName.ToLower().Contains(search));
         }
 
-        var users = await query
+        var users = await baseQuery
             .OrderByDescending(u => u.CreatedAtUtc)
             .Take(500)
             .ToListAsync(ct);
 
         var userIds = users.Select(u => u.Id).ToList();
         var memberships = await db.TenantUsers.Where(x => userIds.Contains(x.UserId)).ToListAsync(ct);
+
+        if (ownersOnly)
+        {
+            var ownerUserIds = memberships
+                .Where(x => string.Equals(x.Role, "owner", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.UserId)
+                .Distinct()
+                .ToHashSet();
+
+            users = users.Where(u => ownerUserIds.Contains(u.Id)).ToList();
+        }
+        else
+        {
+            users = users.Where(u => !u.IsSuperAdmin).ToList();
+        }
 
         var rows = users.Select(u =>
         {
